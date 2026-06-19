@@ -1,0 +1,16 @@
+import { requireRole } from "@/lib/session";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export default async function SalesPersonnelPage() {
+  await requireRole(["SALES_MANAGER", "ADMIN"]);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>销售人员配置</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-muted-foreground">模块脚手架已就绪，后续迭代中完善。</p>
+      </CardContent>
+    </Card>
+  );
+}

@@ -1,0 +1,630 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum UserRole {
+  SALES
+  SALES_MANAGER
+  PROJECT_ADMIN
+  PROJECT_MANAGER
+  PROJECT_STAFF
+  ADMIN
+}
+
+enum StaffCategory {
+  SALES
+  IMPLEMENTATION
+}
+
+enum PersonnelType {
+  PROJECT_MANAGER
+  CONSULTANT
+  IMPLEMENTER
+  DEVELOPER
+}
+
+enum CustomerCategory {
+  HOSPITAL
+  COMPANY
+  INDIVIDUAL
+}
+
+enum HospitalLevel {
+  GRADE_3A
+  GRADE_3B
+  GRADE_3
+  GRADE_2A
+  GRADE_2B
+  GRADE_2
+  OTHER
+}
+
+enum ContactRole {
+  DECISION_MAKER
+  TECHNICAL
+  OTHER
+}
+
+enum FollowUpMethod {
+  PHONE
+  WECHAT
+  FACE_VISIT
+  ONLINE_MEETING
+  OTHER
+}
+
+enum SigningType {
+  DIRECT
+  INDIRECT
+}
+
+enum ContractStatus {
+  PENDING_SIGN
+  SIGNED_PENDING_IMPL
+  IMPLEMENTING
+  ACCEPTED
+  MAINTAINING
+  TERMINATED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum ProjectStatus {
+  PENDING_START
+  IMPLEMENTING
+  ACCEPTED
+  MAINTAINING
+  CLOSED
+}
+
+enum PhaseStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  BLOCKED
+}
+
+enum TaskStatus {
+  PENDING_APPROVAL
+  PENDING
+  IN_PROGRESS
+  PENDING_REVIEW
+  COMPLETED
+  BLOCKED
+  REJECTED
+}
+
+enum TaskPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum SalesCostType {
+  PERSONAL_TRAVEL
+  PRESALES
+  BUSINESS
+}
+
+enum SalesTaskType {
+  VISIT
+  COMMUNICATE
+  FOLLOW_UP
+}
+
+enum SalesDailyLogStatus {
+  IN_PROGRESS
+  PENDING_CONFIRM
+  SUBMITTED
+  RISK_SUBMITTED
+}
+
+enum SalesDailyLogRiskFlag {
+  NONE
+  RISK
+}
+
+enum PresalesAssignmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CustomerClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─── User & Personnel ────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String
+  role          UserRole  @default(SALES)
+  wecomUserId   String?   @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  personnelProfile   PersonnelProfile?
+  ownedCustomers     Customer[]           @relation("CustomerOwner")
+  followUps          FollowUp[]
+  contracts          Contract[]           @relation("ContractOwner")
+  salesTargets       SalesTarget[]
+  salesTasks         SalesTask[]
+  salesDailyLogs     SalesDailyLog[]
+  salesCostsIncurred SalesCost[]          @relation("SalesCostSalesUser")
+  salesCostsRecorded SalesCost[]          @relation("SalesCostRecorder")
+  projectMembers     ProjectMember[]
+  assignedTasks      Task[]               @relation("TaskAssignee")
+  createdTasks       Task[]               @relation("TaskCreator")
+  managedProjects    Project[]            @relation("ProjectManager")
+  presalesAssigned   PresalesAssignment[] @relation("PresalesStaff")
+  presalesCreated    PresalesAssignment[] @relation("PresalesAssigner")
+  presalesCostFor    SalesCost[]          @relation("PresalesCostUser")
+  presalesSalesFor   PresalesAssignment[] @relation("PresalesSalesUser")
+  projectCosts       ProjectCost[]
+  customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
+  customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
+}
+
+model PersonnelProfile {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  staffCategory  StaffCategory
+  personnelType  PersonnelType?
+  isPresales     Boolean        @default(false)
+  dailyRate      Decimal?
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── CRM: Customer ───────────────────────────────────────
+
+model Customer {
+  id              String           @id @default(cuid())
+  name            String
+  category        CustomerCategory
+  hospitalLevel   HospitalLevel?
+  province        String?
+  city            String?
+  district        String?
+  bedCount        Int?
+  existingSystem  String?
+  source          String?
+  customerType    String?
+  customerGrade   String?
+  ownerId         String?
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  owner              User?              @relation("CustomerOwner", fields: [ownerId], references: [id])
+  contacts           Contact[]
+  followUps          FollowUp[]
+  contractsAsSign    Contract[]         @relation("SignCustomer")
+  contractsAsEndUser Contract[]         @relation("EndUserCustomer")
+  projects           Project[]
+  salesTasks         SalesTask[]
+  salesCosts         SalesCost[]        @relation("BusinessExpenseCustomer")
+  presalesAssignments PresalesAssignment[]
+
+  relationsFrom CustomerRelation[] @relation("CustomerFrom")
+  relationsTo   CustomerRelation[] @relation("CustomerTo")
+  claimRequests CustomerClaimRequest[]
+}
+
+model CustomerClaimRequest {
+  id          String              @id @default(cuid())
+  customerId  String
+  requesterId String
+  status      CustomerClaimStatus @default(PENDING)
+  message     String?
+  reviewerId  String?
+  reviewNote  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  requester User     @relation("ClaimRequester", fields: [requesterId], references: [id])
+  reviewer  User?    @relation("ClaimReviewer", fields: [reviewerId], references: [id])
+
+  @@index([status])
+  @@index([customerId])
+  @@index([requesterId])
+}
+
+model CustomerRelation {
+  id                String   @id @default(cuid())
+  customerId        String
+  relatedCustomerId String
+  relationNote      String?
+  createdAt         DateTime @default(now())
+
+  customer        Customer @relation("CustomerFrom", fields: [customerId], references: [id], onDelete: Cascade)
+  relatedCustomer Customer @relation("CustomerTo", fields: [relatedCustomerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, relatedCustomerId])
+}
+
+model Contact {
+  id          String      @id @default(cuid())
+  customerId  String
+  name        String
+  title       String?
+  department  String?
+  phone       String?
+  email       String?
+  role        ContactRole @default(OTHER)
+  isPrimary   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  followUps FollowUp[]
+}
+
+// ─── CRM: Follow-up & Face Visit ─────────────────────────
+
+model FollowUp {
+  id                    String         @id @default(cuid())
+  customerId            String
+  contactId             String?
+  userId                String
+  method                FollowUpMethod
+  content               String
+  result                String?
+  followUpAt            DateTime
+  nextFollowUpAt        DateTime?
+  suggestedGrade        String?
+  gradeApplied          Boolean        @default(false)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contact        Contact?         @relation(fields: [contactId], references: [id])
+  user           User             @relation(fields: [userId], references: [id])
+  faceVisit      FaceVisitDetail?
+  salesTask      SalesTask?
+  salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
+  salesDailyLogId String?
+}
+
+model FaceVisitDetail {
+  id            String  @id @default(cuid())
+  followUpId    String  @unique
+  location      String
+  department    String?
+  companions    String?
+  departAt      DateTime?
+  returnAt      DateTime?
+  detailedNotes String
+  latitude      Float?
+  longitude     Float?
+
+  followUp FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+}
+
+// ─── CRM: Contract ───────────────────────────────────────
+
+model Contract {
+  id                String         @id @default(cuid())
+  title             String
+  totalAmount       Decimal
+  signingType       SigningType
+  status            ContractStatus @default(PENDING_SIGN)
+  signCustomerId    String
+  endUserCustomerId String
+  ownerId           String
+  signedAt          DateTime?
+  effectiveAt       DateTime?
+  expiresAt         DateTime?
+  notes             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  signCustomer    Customer            @relation("SignCustomer", fields: [signCustomerId], references: [id])
+  endUserCustomer Customer            @relation("EndUserCustomer", fields: [endUserCustomerId], references: [id])
+  owner           User                @relation("ContractOwner", fields: [ownerId], references: [id])
+  products        ContractProduct[]
+  installments    PaymentInstallment[]
+  project         Project?
+}
+
+model ContractProduct {
+  id                   String  @id @default(cuid())
+  contractId           String
+  productServiceId     String?
+  productName          String
+  description          String?
+  salesAmount          Decimal
+  baselineCostPrice    Decimal
+  actualCostPrice      Decimal
+  costAdjustment       Decimal @default(0)
+  costAdjustmentReason String?
+
+  contract       Contract               @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  productService ProductServiceTemplate? @relation(fields: [productServiceId], references: [id])
+}
+
+model PaymentInstallment {
+  id            String        @id @default(cuid())
+  contractId    String
+  periodNumber  Int
+  amount        Decimal
+  condition     String?
+  phaseId       String?
+  dueAt         DateTime?
+  paymentStatus PaymentStatus @default(UNPAID)
+  paidAmount    Decimal       @default(0)
+  paidAt        DateTime?
+  notes         String?
+
+  contract Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  phase    ProjectPhase?  @relation(fields: [phaseId], references: [id])
+}
+
+// ─── PM: Project ─────────────────────────────────────────
+
+model Project {
+  id              String        @id @default(cuid())
+  name            String
+  contractId      String?       @unique
+  customerId      String
+  projectManagerId String?
+  status          ProjectStatus @default(PENDING_START)
+  progressPercent Int           @default(0)
+  plannedStartAt  DateTime?
+  plannedEndAt    DateTime?
+  actualStartAt   DateTime?
+  actualEndAt     DateTime?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  contract       Contract?       @relation(fields: [contractId], references: [id])
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  projectManager User?           @relation("ProjectManager", fields: [projectManagerId], references: [id])
+  phases         ProjectPhase[]
+  members        ProjectMember[]
+  tasks          Task[]
+  costs          ProjectCost[]
+}
+
+model ProjectPhase {
+  id          String      @id @default(cuid())
+  projectId   String
+  name        String
+  sourceProduct String?
+  sortOrder   Int
+  parallelGroup Int?
+  status      PhaseStatus @default(NOT_STARTED)
+  plannedAt   DateTime?
+  completedAt DateTime?
+
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+  installments PaymentInstallment[]
+}
+
+model ProjectMember {
+  id               String @id @default(cuid())
+  projectId        String
+  userId           String
+  memberRole       PersonnelType
+  isProjectManager Boolean @default(false)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  projectId   String
+  phaseId     String?
+  title       String
+  description String?
+  status      TaskStatus   @default(PENDING)
+  priority    TaskPriority @default(MEDIUM)
+  assigneeId  String?
+  creatorId   String
+  dueAt       DateTime?
+  estimatedHours Decimal?
+  actualHours    Decimal?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase    ProjectPhase? @relation(fields: [phaseId], references: [id])
+  assignee User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator  User          @relation("TaskCreator", fields: [creatorId], references: [id])
+}
+
+model ProjectCost {
+  id          String   @id @default(cuid())
+  projectId   String
+  recordedById String
+  category    String
+  amount      Decimal
+  costDate    DateTime
+  description String?
+  createdAt   DateTime @default(now())
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation(fields: [recordedById], references: [id])
+}
+
+// ─── Product/Service Templates ───────────────────────────
+
+model ProductServiceTemplate {
+  id               String  @id @default(cuid())
+  name             String
+  description      String?
+  baselineCostPrice Decimal @default(0)
+  enabled          Boolean @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  phaseTemplates   PhaseTemplate[]
+  contractProducts ContractProduct[]
+}
+
+model PhaseTemplate {
+  id              String @id @default(cuid())
+  productServiceId String
+  name            String
+  sortOrder       Int
+  parallelGroup   Int?
+
+  productService ProductServiceTemplate @relation(fields: [productServiceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Sales: Targets, Tasks, Logs, Costs ──────────────────
+
+model SalesTarget {
+  id            String  @id @default(cuid())
+  userId        String
+  year          Int
+  salesTarget   Decimal
+  profitTarget  Decimal
+  paymentTarget Decimal
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, year])
+}
+
+model SalesTask {
+  id          String        @id @default(cuid())
+  userId      String
+  customerId  String
+  taskType    SalesTaskType
+  plannedAt   DateTime
+  status      String        @default("pending")
+  notes       String?
+  followUpId  String?       @unique
+  createdAt   DateTime      @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  customer Customer  @relation(fields: [customerId], references: [id])
+  followUp FollowUp? @relation(fields: [followUpId], references: [id])
+}
+
+model SalesDailyLog {
+  id                String              @id @default(cuid())
+  userId            String
+  logDate           DateTime
+  conversation      Json
+  structuredOutput  Json?
+  dailyReport       String?
+  status            SalesDailyLogStatus @default(IN_PROGRESS)
+  riskFlag          Boolean             @default(false)
+  riskNotes         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id])
+  followUps FollowUp[]
+
+  @@unique([userId, logDate])
+}
+
+model SalesCost {
+  id                   String        @id @default(cuid())
+  salesUserId          String
+  recordedById         String
+  costType             SalesCostType
+  totalAmount          Decimal
+  costDate             DateTime
+  customerId           String?
+  presalesUserId       String?
+  presalesDays         Int?
+  presalesPersonnelCost Decimal?
+  accommodation        Decimal?
+  transportation       Decimal?
+  meals                Decimal?
+  otherTravel          Decimal?
+  description          String?
+  createdAt            DateTime      @default(now())
+
+  salesUser    User      @relation("SalesCostSalesUser", fields: [salesUserId], references: [id])
+  recordedBy   User      @relation("SalesCostRecorder", fields: [recordedById], references: [id])
+  customer     Customer? @relation("BusinessExpenseCustomer", fields: [customerId], references: [id])
+  presalesUser User?     @relation("PresalesCostUser", fields: [presalesUserId], references: [id])
+}
+
+model PresalesAssignment {
+  id             String                   @id @default(cuid())
+  presalesUserId String
+  salesUserId    String
+  customerId     String
+  assignedById   String
+  startDate      DateTime
+  endDate        DateTime?
+  status         PresalesAssignmentStatus @default(ACTIVE)
+  notes          String?
+  createdAt      DateTime                 @default(now())
+
+  presalesUser User     @relation("PresalesStaff", fields: [presalesUserId], references: [id])
+  salesUser    User     @relation("PresalesSalesUser", fields: [salesUserId], references: [id])
+  customer     Customer @relation(fields: [customerId], references: [id])
+  assignedBy   User     @relation("PresalesAssigner", fields: [assignedById], references: [id])
+}
+
+// ─── System Config ───────────────────────────────────────
+
+model FieldDefinition {
+  id         String  @id @default(cuid())
+  entityType String
+  fieldKey   String
+  label      String
+  fieldType  String
+  options    Json?
+  required   Boolean @default(false)
+  enabled    Boolean @default(true)
+  builtIn    Boolean @default(false)
+  sortOrder  Int     @default(0)
+
+  @@unique([entityType, fieldKey])
+}
+
+model PermissionRule {
+  id       String  @id @default(cuid())
+  role     UserRole
+  resource String
+  action   String
+  scope    String
+  enabled  Boolean @default(true)
+
+  @@unique([role, resource, action])
+}
+
+model ConfigOption {
+  id         String @id @default(cuid())
+  category   String
+  value      String
+  label      String
+  sortOrder  Int    @default(0)
+  enabled    Boolean @default(true)
+
+  @@unique([category, value])
+}
