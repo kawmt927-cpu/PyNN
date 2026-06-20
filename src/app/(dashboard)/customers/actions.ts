@@ -165,7 +165,6 @@ export async function createFollowUp(formData: FormData) {
     followUpAt: formData.get("followUpAt"),
     nextFollowUpAt: formData.get("nextFollowUpAt") || null,
     suggestedGrade: formData.get("suggestedGrade") || null,
-    applyGrade: formData.get("applyGrade") || "false",
     contactId: formData.get("contactId") || null,
     location: formData.get("location") || undefined,
     department: formData.get("department") || undefined,
@@ -185,7 +184,7 @@ export async function createFollowUp(formData: FormData) {
     CONFIG_CATEGORY.CUSTOMER_GRADE,
     parsed.suggestedGrade
   );
-  const applyGrade = parsed.applyGrade === "true" && suggestedGrade;
+  const applyGrade = Boolean(suggestedGrade);
 
   await prisma.$transaction(async (tx) => {
     const followUp = await tx.followUp.create({
@@ -225,7 +224,8 @@ export async function createFollowUp(formData: FormData) {
 
   revalidatePath("/follow-ups");
   revalidatePath(`/customers/${parsed.customerId}`);
-  redirect(`/customers/${parsed.customerId}`);
+  revalidatePath(`/customers/${parsed.customerId}/follow-ups`);
+  redirect(`/customers/${parsed.customerId}/follow-ups`);
 }
 
 

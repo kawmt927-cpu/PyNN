@@ -48,15 +48,6 @@ export async function getCustomerForUser(id: string, role: UserRole, userId: str
     include: {
       owner: { select: { id: true, name: true } },
       contacts: { orderBy: [{ isPrimary: "desc" }, { updatedAt: "desc" }] },
-      followUps: {
-        orderBy: { followUpAt: "desc" },
-        take: 20,
-        include: {
-          user: { select: { name: true } },
-          contact: { select: { name: true } },
-          faceVisit: true,
-        },
-      },
       relationsFrom: {
         include: {
           relatedCustomer: {

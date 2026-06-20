@@ -29,7 +29,6 @@ export const followUpFormSchema = z.object({
   followUpAt: z.string().min(1),
   nextFollowUpAt: z.string().optional().nullable(),
   suggestedGrade: z.string().optional().nullable(),
-  applyGrade: z.enum(["true", "false"]).optional(),
   contactId: z.string().optional().nullable(),
   location: z.string().optional(),
   department: z.string().optional(),
@@ -57,5 +56,15 @@ export const customerRelationSchema = z.object({
 export const configOptionSchema = z.object({
   category: z.string().min(1),
   label: z.string().min(1, "请输入显示名称"),
-  sortOrder: z.coerce.number().int().optional(),
+});
+
+export const saveConfigCategoryOptionsSchema = z.object({
+  category: z.string().min(1),
+  items: z.array(
+    z.object({
+      id: z.string().nullable(),
+      label: z.string().min(1, "显示名称不能为空"),
+      enabled: z.boolean(),
+    })
+  ),
 });

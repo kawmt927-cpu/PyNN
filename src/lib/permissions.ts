@@ -54,6 +54,17 @@ export const CONTRACT_STATUS_LABELS = {
   TERMINATED: "已终止",
 } as const;
 
+export const OPPORTUNITY_STATUS_LABELS = {
+  NOT_SIGNED: "未签约",
+  SIGNED: "已签约",
+  ABANDONED: "已放弃",
+} as const;
+
+export const SIGNING_TYPE_LABELS = {
+  DIRECT: "直签",
+  INDIRECT: "间接签约",
+} as const;
+
 export type NavItem = {
   href: string;
   label: string;
@@ -63,6 +74,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "仪表盘", roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
+  { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/approvals", label: "审批", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/follow-ups", label: "待跟进", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/contracts", label: "合同", roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"] },
@@ -72,7 +84,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/personnel", label: "实施人员", roles: ["PROJECT_ADMIN", "ADMIN"] },
   { href: "/sales-personnel", label: "销售人员", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/sales-costs", label: "销售成本", roles: ["SALES_MANAGER", "ADMIN"] },
-  { href: "/admin/settings", label: "系统配置", roles: ["ADMIN"] },
+  { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER"] },
 ];
 
 export function getNavForRole(role: UserRole): NavItem[] {
@@ -83,10 +95,10 @@ export function canAccess(role: UserRole, resource: string, action: string): boo
   if (role === "ADMIN") return true;
   // MVP: coarse role-based; full PermissionRule table later
   const matrix: Partial<Record<UserRole, string[]>> = {
-    SALES: ["customers:own", "followups:own", "contracts:own", "mobile-log:own"],
-    SALES_MANAGER: ["customers:all", "followups:all", "contracts:all", "sales-costs:all", "sales-personnel:all"],
-    PROJECT_ADMIN: ["projects:all", "personnel:all", "presales-assignments:all"],
-    PROJECT_MANAGER: ["projects:assigned", "tasks:assigned", "contracts:read"],
+    SALES: ["customers:own", "followups:own", "opportunities:own", "contracts:own", "mobile-log:own"],
+    SALES_MANAGER: ["customers:all", "followups:all", "opportunities:all", "contracts:all", "sales-costs:all", "sales-personnel:all", "settings:sales"],
+    PROJECT_ADMIN: ["projects:all", "personnel:all", "presales-assignments:all", "settings:project"],
+    PROJECT_MANAGER: ["projects:assigned", "tasks:assigned", "contracts:read", "settings:project"],
     PROJECT_STAFF: ["tasks:own", "projects:assigned"],
   };
   const perms = matrix[role] ?? [];

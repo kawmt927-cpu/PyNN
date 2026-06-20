@@ -74,6 +74,19 @@ enum ContractStatus {
   TERMINATED
 }
 
+enum OpportunityStatus {
+  NOT_SIGNED
+  SIGNED
+  ABANDONED
+}
+
+enum OpportunityAbandonReason {
+  PRICE
+  BUSINESS_RELATIONSHIP
+  OPERATION_ERROR
+  OTHER
+}
+
 enum PaymentStatus {
   UNPAID
   PARTIAL
@@ -179,6 +192,9 @@ model User {
   projectCosts       ProjectCost[]
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
   customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
+  ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
+  opportunityStageLogs    OpportunityStageLog[]
+  opportunityFollowUps    OpportunityFollowUp[]
 }
 
 model PersonnelProfile {
@@ -228,6 +244,7 @@ model Customer {
   relationsFrom CustomerRelation[] @relation("CustomerFrom")
   relationsTo   CustomerRelation[] @relation("CustomerTo")
   claimRequests CustomerClaimRequest[]
+  opportunities Opportunity[]
 }
 
 model CustomerClaimRequest {
@@ -322,6 +339,72 @@ model FaceVisitDetail {
   followUp FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
 }
 
+// ─── CRM: Opportunity ────────────────────────────────────
+
+model Opportunity {
+  id                String            @id @default(cuid())
+  title             String
+  customerId        String
+  ownerId           String
+  expectedAmount    Decimal
+  expectedCloseDate DateTime
+  stage             String
+  requirementDesc   String?
+  winProbability    Int?
+  competitor        String?
+  status            OpportunityStatus @default(NOT_SIGNED)
+  amountLocked      Boolean           @default(false)
+  abandonReason     OpportunityAbandonReason?
+  abandonNote       String?
+  notes             String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  customer   Customer                @relation(fields: [customerId], references: [id])
+  owner      User                    @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  contracts  Contract[]
+  stageLogs  OpportunityStageLog[]
+  followUps  OpportunityFollowUp[]
+
+  @@index([ownerId])
+  @@index([customerId])
+  @@index([status])
+  @@index([stage])
+}
+
+model OpportunityStageLog {
+  id            String   @id @default(cuid())
+  opportunityId String
+  userId        String
+  fromStage     String?
+  toStage       String
+  note          String?
+  createdAt     DateTime @default(now())
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@index([opportunityId])
+}
+
+model OpportunityFollowUp {
+  id             String         @id @default(cuid())
+  opportunityId  String
+  userId         String
+  method         FollowUpMethod
+  content        String
+  followUpAt     DateTime
+  nextFollowUpAt DateTime?
+  changeSummary  String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@index([opportunityId])
+}
+
 // ─── CRM: Contract ───────────────────────────────────────
 
 model Contract {
@@ -333,6 +416,7 @@ model Contract {
   signCustomerId    String
   endUserCustomerId String
   ownerId           String
+  opportunityId     String?
   signedAt          DateTime?
   effectiveAt       DateTime?
   expiresAt         DateTime?
@@ -343,9 +427,12 @@ model Contract {
   signCustomer    Customer            @relation("SignCustomer", fields: [signCustomerId], references: [id])
   endUserCustomer Customer            @relation("EndUserCustomer", fields: [endUserCustomerId], references: [id])
   owner           User                @relation("ContractOwner", fields: [ownerId], references: [id])
+  opportunity     Opportunity?        @relation(fields: [opportunityId], references: [id])
   products        ContractProduct[]
   installments    PaymentInstallment[]
   project         Project?
+
+  @@index([opportunityId])
 }
 
 model ContractProduct {

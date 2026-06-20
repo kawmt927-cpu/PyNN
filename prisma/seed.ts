@@ -165,6 +165,15 @@ async function main() {
     { category: "customer_grade", value: "INTERESTED", label: "有意向客户", sortOrder: 1 },
     { category: "customer_grade", value: "NOT_INTERESTED", label: "无意向客户", sortOrder: 2 },
     { category: "customer_grade", value: "POTENTIAL", label: "潜在客户", sortOrder: 3 },
+    { category: "opportunity_stage", value: "INITIAL_VISIT", label: "初访", sortOrder: 1 },
+    { category: "opportunity_stage", value: "NEEDS_CONFIRM", label: "需求确认", sortOrder: 2 },
+    { category: "opportunity_stage", value: "PROPOSAL", label: "方案", sortOrder: 3 },
+    { category: "opportunity_stage", value: "QUOTATION", label: "报价", sortOrder: 4 },
+    { category: "opportunity_stage", value: "NEGOTIATION", label: "谈判", sortOrder: 5 },
+    { category: "project_cost_category", value: "TRAVEL", label: "差旅费", sortOrder: 1 },
+    { category: "project_cost_category", value: "LABOR", label: "人力成本", sortOrder: 2 },
+    { category: "project_cost_category", value: "PURCHASE", label: "采购费用", sortOrder: 3 },
+    { category: "project_cost_category", value: "OTHER", label: "其他", sortOrder: 4 },
   ];
 
   for (const opt of configOptions) {

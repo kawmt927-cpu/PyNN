@@ -3,19 +3,23 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { id: "fields", label: "字段选项", href: "/admin/settings?tab=fields" },
-  { id: "wecom", label: "企业微信", href: "/admin/settings?tab=wecom" },
-] as const;
+export type SettingsTabItem = {
+  id: string;
+  label: string;
+  href: string;
+};
 
 type Props = {
   activeTab: string;
+  tabs: SettingsTabItem[];
 };
 
-export function SettingsTabs({ activeTab }: Props) {
+export function SettingsTabs({ activeTab, tabs }: Props) {
+  if (tabs.length === 0) return null;
+
   return (
     <div className="flex gap-2 border-b">
-      {TABS.map((tab) => (
+      {tabs.map((tab) => (
         <Link
           key={tab.id}
           href={tab.href}

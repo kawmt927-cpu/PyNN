@@ -23,5 +23,8 @@ export async function clearConfigOptionReferences(
         data: { suggestedGrade: null, gradeApplied: false },
       });
       break;
+    case CONFIG_CATEGORY.PROJECT_COST_CATEGORY:
+      await db.projectCost.updateMany({ where: { category: value }, data: { category: "" } });
+      break;
   }
 }

@@ -1,5 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { countDueFollowUps } from "@/lib/follow-ups/unified";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ROLE_LABELS } from "@/lib/permissions";
 import Link from "next/link";
@@ -27,14 +28,7 @@ export default async function DashboardPage() {
     stats.contracts = await prisma.contract.count({
       where: role === "SALES" ? { ownerId: userId } : {},
     });
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    stats.followUpsToday = await prisma.followUp.count({
-      where: {
-        userId: role === "SALES" ? userId : undefined,
-        nextFollowUpAt: { lte: new Date() },
-      },
-    });
+    stats.followUpsToday = await countDueFollowUps(role, userId, new Date());
   }
 
   if (isPM || role === "ADMIN") {

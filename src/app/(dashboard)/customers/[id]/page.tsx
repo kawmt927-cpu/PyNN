@@ -8,23 +8,20 @@ import {
 } from "@/lib/customers/access";
 import {
   CUSTOMER_CATEGORY_LABELS,
-  FOLLOW_UP_METHOD_LABELS,
   HOSPITAL_LEVEL_LABELS,
 } from "@/lib/permissions";
 import {
   CONFIG_CATEGORY,
   labelForConfig,
   loadCustomerFieldLabelMaps,
-  loadCustomerFormOptions,
 } from "@/lib/config-options";
+import { countCustomerFollowUps } from "@/lib/follow-ups/unified";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FollowUpForm } from "@/components/customers/follow-up-form";
 import { ContactList } from "@/components/customers/contact-list";
 import { CustomerRelationsPanel } from "@/components/customers/customer-relations-panel";
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
-import { format } from "date-fns";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -40,7 +37,7 @@ export default async function CustomerDetailPage({ params }: Props) {
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const [salesUsers, labelMaps, formOptions, pendingClaimForSales, pendingClaimCount, relationCandidates] =
+  const [salesUsers, labelMaps, pendingClaimForSales, pendingClaimCount, relationCandidates, followUpCount] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -50,7 +47,6 @@ export default async function CustomerDetailPage({ params }: Props) {
           })
         : Promise.resolve([]),
       loadCustomerFieldLabelMaps(),
-      loadCustomerFormOptions(),
       isSales && inPool
         ? db.customerClaimRequest.findFirst({
             where: {
@@ -79,6 +75,7 @@ export default async function CustomerDetailPage({ params }: Props) {
         orderBy: { name: "asc" },
         take: 200,
       }),
+      countCustomerFollowUps(customer.id),
     ]);
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
@@ -118,6 +115,11 @@ export default async function CustomerDetailPage({ params }: Props) {
         <div className="flex gap-2">
           <Button asChild variant="outline">
             <Link href="/customers">返回列表</Link>
+          </Button>
+          <Button asChild variant={canEdit ? "default" : "outline"}>
+            <Link href={`/customers/${customer.id}/follow-ups`}>
+              {canEdit ? "客户跟进" : "查看跟进"}
+            </Link>
           </Button>
           {canEdit && (
             <Button asChild>
@@ -212,56 +214,21 @@ export default async function CustomerDetailPage({ params }: Props) {
         </CardContent>
       </Card>
 
-      {canEdit && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">跟进记录</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {customer.followUps.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无跟进记录</p>
-            ) : (
-              <ul className="space-y-4">
-                {customer.followUps.map((f) => (
-                  <li key={f.id} className="rounded-md border p-4 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {FOLLOW_UP_METHOD_LABELS[f.method]} · {f.user.name}
-                        {f.contact && ` · ${f.contact.name}`}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {format(f.followUpAt, "yyyy-MM-dd HH:mm")}
-                      </span>
-                    </div>
-                    <p className="mt-2">{f.content}</p>
-                    {f.result && (
-                      <p className="mt-1 text-muted-foreground">结果：{f.result}</p>
-                    )}
-                    {f.nextFollowUpAt && (
-                      <p className="mt-1 text-orange-600">
-                        下次跟进：{format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
-                      </p>
-                    )}
-                    {f.faceVisit && (
-                      <div className="mt-2 rounded bg-muted/50 p-2 text-xs">
-                        <p>地点：{f.faceVisit.location}</p>
-                        {f.faceVisit.department && <p>科室：{f.faceVisit.department}</p>}
-                        <p className="mt-1">{f.faceVisit.detailedNotes}</p>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <FollowUpForm
-              customerId={customer.id}
-              contacts={customer.contacts}
-              gradeOptions={formOptions.gradeOptions}
-            />
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-lg">
+            跟进记录
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              ({followUpCount})
+            </span>
+          </CardTitle>
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/customers/${customer.id}/follow-ups`}>
+              {canEdit ? "前往跟进" : "查看全部"}
+            </Link>
+          </Button>
+        </CardHeader>
+      </Card>
     </div>
   );
 }

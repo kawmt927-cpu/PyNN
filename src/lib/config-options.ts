@@ -5,6 +5,8 @@ export const CONFIG_CATEGORY = {
   CUSTOMER_SOURCE: "customer_source",
   CUSTOMER_TYPE: "customer_type",
   CUSTOMER_GRADE: "customer_grade",
+  OPPORTUNITY_STAGE: "opportunity_stage",
+  PROJECT_COST_CATEGORY: "project_cost_category",
 } as const;
 
 export type ConfigCategory = (typeof CONFIG_CATEGORY)[keyof typeof CONFIG_CATEGORY];
@@ -13,6 +15,8 @@ export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CUSTOMER_SOURCE]: "客户来源",
   [CONFIG_CATEGORY.CUSTOMER_TYPE]: "客户类型",
   [CONFIG_CATEGORY.CUSTOMER_GRADE]: "客户等级",
+  [CONFIG_CATEGORY.OPPORTUNITY_STAGE]: "商机阶段",
+  [CONFIG_CATEGORY.PROJECT_COST_CATEGORY]: "项目成本类别",
 };
 
 /** 可扩展的配置模块树：一级模块 → 二级字段 */
@@ -24,6 +28,8 @@ export type ConfigFieldDef = {
 export type ConfigModuleDef = {
   id: string;
   label: string;
+  /** 配置归属：销售 / 项目 / 系统（系统级仅管理员） */
+  scope: "sales" | "project" | "system";
   fields: ConfigFieldDef[];
 };
 
@@ -31,10 +37,23 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
   {
     id: "customer",
     label: "客户管理",
+    scope: "sales",
     fields: [
       { category: CONFIG_CATEGORY.CUSTOMER_SOURCE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_SOURCE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TYPE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TYPE] },
       { category: CONFIG_CATEGORY.CUSTOMER_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_GRADE] },
+      { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
+    ],
+  },
+  {
+    id: "project",
+    label: "项目管理",
+    scope: "project",
+    fields: [
+      {
+        category: CONFIG_CATEGORY.PROJECT_COST_CATEGORY,
+        label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.PROJECT_COST_CATEGORY],
+      },
     ],
   },
 ];
@@ -48,6 +67,8 @@ export function resolveConfigField(moduleId: string, category: string | undefine
 
 export async function getAllConfigOptionsGrouped() {
   const db = getPrismaClient();
+  const defaultCategories = [...new Set(DEFAULT_CUSTOMER_FIELD_OPTIONS.map((opt) => opt.category))];
+  await Promise.all(defaultCategories.map((category) => ensureDefaultConfigOptions(category)));
   const rows = await db.configOption.findMany({
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
@@ -69,11 +90,34 @@ export function generateConfigOptionValue(category: string): string {
 
 export async function getConfigOptions(category: string): Promise<ConfigOptionItem[]> {
   const db = getPrismaClient();
+  await ensureDefaultConfigOptions(category);
   return db.configOption.findMany({
     where: { category, enabled: true },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
     select: { value: true, label: true },
   });
+}
+
+async function ensureDefaultConfigOptions(category: string) {
+  const db = getPrismaClient();
+  const count = await db.configOption.count({ where: { category } });
+  if (count > 0) return;
+
+  const defaults = DEFAULT_CUSTOMER_FIELD_OPTIONS.filter((opt) => opt.category === category);
+  if (defaults.length === 0) return;
+
+  for (const opt of defaults) {
+    await db.configOption.upsert({
+      where: { category_value: { category: opt.category, value: opt.value } },
+      update: {},
+      create: {
+        category: opt.category,
+        value: opt.value,
+        label: opt.label,
+        sortOrder: opt.sortOrder,
+      },
+    });
+  }
 }
 
 export async function getAllConfigOptions(category: string) {
@@ -128,6 +172,11 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "INTERESTED", label: "有意向客户", sortOrder: 1 },
   { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "NOT_INTERESTED", label: "无意向客户", sortOrder: 2 },
   { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "POTENTIAL", label: "潜在客户", sortOrder: 3 },
+  { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "INITIAL_VISIT", label: "初访", sortOrder: 1 },
+  { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEEDS_CONFIRM", label: "需求确认", sortOrder: 2 },
+  { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "PROPOSAL", label: "方案", sortOrder: 3 },
+  { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "QUOTATION", label: "报价", sortOrder: 4 },
+  { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEGOTIATION", label: "谈判", sortOrder: 5 },
 ] as const;
 
 export async function loadCustomerFormOptions() {

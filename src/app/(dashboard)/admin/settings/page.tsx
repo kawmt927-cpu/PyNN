@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { requireRole } from "@/lib/session";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -7,7 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { bindWeComUser, unbindWeComUser } from "./actions";
 import { isWeComConfigured } from "@/lib/wecom/config";
-import { CONFIG_MODULES, getAllConfigOptionsGrouped, resolveConfigField } from "@/lib/config-options";
+import { getAllConfigOptionsGrouped } from "@/lib/config-options";
+import {
+  canAccessSettingsTab,
+  getAccessibleConfigModules,
+  getAccessibleSettingsTabs,
+  requireSettingsPageAccess,
+  resolveAccessibleConfigField,
+  SETTINGS_TAB,
+} from "@/lib/config-settings-access";
 import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
 
@@ -16,12 +24,24 @@ type Props = {
 };
 
 export default async function AdminSettingsPage({ searchParams }: Props) {
-  await requireRole(["ADMIN"]);
+  const session = await requireSettingsPageAccess();
+  const role = session.user.role;
   const { tab: rawTab, module: rawModule, field: rawField } = await searchParams;
 
-  const activeTab = rawTab === "wecom" ? "wecom" : "fields";
-  const defaultModule = rawModule ?? CONFIG_MODULES[0].id;
-  const { field: defaultField } = resolveConfigField(defaultModule, rawField);
+  const accessibleModules = getAccessibleConfigModules(role);
+  const accessibleTabs = getAccessibleSettingsTabs(role);
+
+  if (accessibleTabs.length === 0) redirect("/");
+
+  const activeTab = canAccessSettingsTab(role, rawTab ?? SETTINGS_TAB.FIELDS)
+    ? (rawTab ?? accessibleTabs[0].id)
+    : accessibleTabs[0].id;
+
+  const { module: defaultModule, field: defaultField } = resolveAccessibleConfigField(
+    accessibleModules,
+    rawModule,
+    rawField
+  );
 
   const [users, optionsByCategory] = await Promise.all([
     prisma.user.findMany({
@@ -33,13 +53,18 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
 
   const wecomReady = isWeComConfigured();
 
+  const settingsTabs = accessibleTabs.map((tab) => ({
+    ...tab,
+    href: `/admin/settings?tab=${tab.id}`,
+  }));
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">系统配置</h1>
 
-      <SettingsTabs activeTab={activeTab} />
+      <SettingsTabs activeTab={activeTab} tabs={settingsTabs} />
 
-      {activeTab === "fields" ? (
+      {activeTab === SETTINGS_TAB.FIELDS ? (
         <Card>
           <CardHeader>
             <CardTitle>字段选项配置</CardTitle>
@@ -47,9 +72,10 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
           <CardContent>
             <Suspense fallback={<p className="text-sm text-muted-foreground">加载中…</p>}>
               <ConfigFieldsSettings
+                modules={accessibleModules}
                 optionsByCategory={optionsByCategory}
-                initialModule={defaultModule}
-                initialField={defaultField.category}
+                initialModule={defaultModule?.id}
+                initialField={defaultField?.category}
               />
             </Suspense>
           </CardContent>

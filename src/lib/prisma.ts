@@ -1,7 +1,13 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 
 /** schema 有 breaking 变更时递增，强制丢弃旧 Prisma 单例 */
-const PRISMA_CACHE_VERSION = 3;
+const PRISMA_CACHE_VERSION = 7;
+
+type PrismaClientWithModels = PrismaClient & {
+  customerClaimRequest?: { findMany?: unknown };
+  opportunity?: { findMany?: unknown };
+  opportunityFollowUp?: { create?: unknown };
+};
 
 type PrismaGlobal = {
   __prismaClient?: PrismaClient;
@@ -11,11 +17,20 @@ type PrismaGlobal = {
 const globalStore = globalThis as unknown as PrismaGlobal;
 
 function assertClientHasModels(client: PrismaClient) {
-  const claim = (client as PrismaClient & { customerClaimRequest?: { findMany?: unknown } })
-    .customerClaimRequest;
-  if (typeof claim?.findMany !== "function") {
+  const c = client as PrismaClientWithModels;
+  if (typeof c.customerClaimRequest?.findMany !== "function") {
     throw new Error(
       "Prisma Client 未包含 customerClaimRequest 模型。请在项目目录执行：npx prisma generate && rm -rf .next && npm run dev"
+    );
+  }
+  if (typeof c.opportunity?.findMany !== "function") {
+    throw new Error(
+      "Prisma Client 未包含 opportunity 模型。请在项目目录执行：npx prisma generate && rm -rf .next && npm run dev"
+    );
+  }
+  if (!("changeSummary" in Prisma.OpportunityFollowUpScalarFieldEnum)) {
+    throw new Error(
+      "Prisma Client 未包含 OpportunityFollowUp.changeSummary 字段。请在项目目录执行：npx prisma migrate deploy && npx prisma generate && rm -rf .next && npm run dev"
     );
   }
 }

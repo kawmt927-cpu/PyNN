@@ -43,10 +43,8 @@ export function FollowUpForm({ customerId, contacts = [], gradeOptions }: Props)
   ];
 
   return (
-    <form action={createFollowUp} className="space-y-4 border-t pt-6">
+    <form action={createFollowUp} className="space-y-4">
       <input type="hidden" name="customerId" value={customerId} />
-
-      <h3 className="font-semibold">新增跟进</h3>
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
@@ -102,18 +100,16 @@ export function FollowUpForm({ customerId, contacts = [], gradeOptions }: Props)
           <Input id="nextFollowUpAt" name="nextFollowUpAt" type="datetime-local" />
         </div>
 
-        <SelectField
-          id="suggestedGrade"
-          label="建议更新客户等级"
-          name="suggestedGrade"
-          options={gradeSelectOptions}
-        />
-
-        <div className="flex items-center gap-2 md:col-span-2">
-          <input type="checkbox" id="applyGrade" name="applyGrade" value="true" />
-          <Label htmlFor="applyGrade" className="font-normal">
-            确认应用建议等级到客户档案
-          </Label>
+        <div className="space-y-2 md:col-span-2">
+          <SelectField
+            id="suggestedGrade"
+            label="客户等级"
+            name="suggestedGrade"
+            options={gradeSelectOptions}
+          />
+          <p className="text-xs text-muted-foreground">
+            选择后会同步更新客户档案中的等级；保持「不更新等级」则只记录跟进，不修改客户等级。
+          </p>
         </div>
 
         {isFaceVisit && (

@@ -1,25 +1,16 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { saveConfigCategoryOptions } from "@/app/(dashboard)/admin/settings/actions";
 import {
-  createConfigOption,
-  deleteConfigOption,
-  toggleConfigOption,
-  updateConfigOptionLabel,
-} from "@/app/(dashboard)/admin/settings/actions";
-
-type ConfigOptionRow = {
-  id: string;
-  category: string;
-  value: string;
-  label: string;
-  sortOrder: number;
-  enabled: boolean;
-};
+  ConfigOptionSortableList,
+  type ConfigOptionRow,
+  type DraftConfigOption,
+} from "@/components/admin/config-option-sortable-list";
 
 type PendingDelete = { id: string; label: string };
 
@@ -27,18 +18,33 @@ type Props = {
   category: string;
   title: string;
   options: ConfigOptionRow[];
+  onDirtyChange?: (dirty: boolean) => void;
 };
+
+function optionsToDraft(options: ConfigOptionRow[]): DraftConfigOption[] {
+  return [...options]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((option, index) => ({
+      id: option.id,
+      label: option.label,
+      enabled: option.enabled,
+      sortOrder: index + 1,
+      isNew: false,
+    }));
+}
+
+function draftSnapshot(items: DraftConfigOption[]) {
+  return items.map(({ id, label, enabled }) => ({ id, label, enabled }));
+}
 
 function DeleteConfirmDialog({
   target,
   onCancel,
   onConfirm,
-  pending,
 }: {
   target: PendingDelete;
   onCancel: () => void;
   onConfirm: () => void;
-  pending: boolean;
 }) {
   return (
     <div
@@ -53,17 +59,17 @@ function DeleteConfirmDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="delete-option-title" className="text-lg font-semibold">
-          确认删除
+          确认移除
         </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          确定删除「{target.label}」？已使用该选项的客户相关字段将被清空，此操作不可恢复。
+          确定从列表中移除「{target.label}」？需点击「保存」后才会真正删除；已使用该选项的客户相关字段将被清空。
         </p>
         <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
+          <Button type="button" variant="outline" onClick={onCancel}>
             取消
           </Button>
-          <Button type="button" variant="destructive" onClick={onConfirm} disabled={pending}>
-            {pending ? "删除中…" : "确定删除"}
+          <Button type="button" variant="destructive" onClick={onConfirm}>
+            确定移除
           </Button>
         </div>
       </div>
@@ -71,30 +77,116 @@ function DeleteConfirmDialog({
   );
 }
 
-export function CustomerFieldOptionsPanel({ category, title, options }: Props) {
+export function CustomerFieldOptionsPanel({
+  category,
+  title,
+  options,
+  onDirtyChange,
+}: Props) {
   const router = useRouter();
-  const [label, setLabel] = useState("");
-  const [sortOrder, setSortOrder] = useState(String(options.length + 1));
+  const [baseline, setBaseline] = useState(() => optionsToDraft(options));
+  const [draft, setDraft] = useState(() => optionsToDraft(options));
+  const [newLabel, setNewLabel] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
-  const [deletePending, startDeleteTransition] = useTransition();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savePending, startSaveTransition] = useTransition();
 
   useEffect(() => {
-    setLabel("");
-    setSortOrder(String(options.length + 1));
-  }, [category, options.length]);
+    const next = optionsToDraft(options);
+    setBaseline(next);
+    setDraft(next);
+    setNewLabel("");
+    setSaveError(null);
+  }, [options, category]);
 
-  function confirmDelete() {
+  const isDirty = useMemo(
+    () =>
+      JSON.stringify(draftSnapshot(draft)) !== JSON.stringify(draftSnapshot(baseline)),
+    [draft, baseline]
+  );
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  function handleAddToDraft() {
+    const trimmed = newLabel.trim();
+    if (!trimmed) {
+      setSaveError("请输入显示名称");
+      return;
+    }
+    if (draft.some((item) => item.label.trim() === trimmed)) {
+      setSaveError("该显示名称已存在");
+      return;
+    }
+
+    setDraft((prev) => [
+      ...prev,
+      {
+        id: `__new__${crypto.randomUUID()}`,
+        label: trimmed,
+        enabled: true,
+        sortOrder: prev.length + 1,
+        isNew: true,
+      },
+    ]);
+    setNewLabel("");
+    setSaveError(null);
+  }
+
+  function confirmRemoveFromDraft() {
     if (!pendingDelete) return;
+    setDraft((prev) =>
+      prev
+        .filter((item) => item.id !== pendingDelete.id)
+        .map((item, index) => ({ ...item, sortOrder: index + 1 }))
+    );
+    setPendingDelete(null);
+    setSaveError(null);
+  }
+
+  function handleCancel() {
+    setDraft(baseline);
+    setNewLabel("");
+    setSaveError(null);
+    setPendingDelete(null);
+  }
+
+  function handleSave() {
+    const trimmedItems = draft.map((item) => ({
+      ...item,
+      label: item.label.trim(),
+    }));
+
+    const emptyLabel = trimmedItems.find((item) => !item.label);
+    if (emptyLabel) {
+      setSaveError("显示名称不能为空");
+      return;
+    }
+
+    const labels = trimmedItems.map((item) => item.label);
+    if (new Set(labels).size !== labels.length) {
+      setSaveError("显示名称不能重复");
+      return;
+    }
+
+    const payload = trimmedItems.map((item) => ({
+      id: item.isNew ? null : item.id,
+      label: item.label,
+      enabled: item.enabled,
+    }));
 
     const formData = new FormData();
-    formData.set("id", pendingDelete.id);
-    startDeleteTransition(async () => {
+    formData.set("category", category);
+    formData.set("payload", JSON.stringify(payload));
+
+    startSaveTransition(async () => {
       try {
-        await deleteConfigOption(formData);
-        setPendingDelete(null);
+        await saveConfigCategoryOptions(formData);
+        setSaveError(null);
         router.refresh();
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : "删除失败，请重试");
+        setSaveError(error instanceof Error ? error.message : "保存失败，请重试");
       }
     });
   }
@@ -104,116 +196,74 @@ export function CustomerFieldOptionsPanel({ category, title, options }: Props) {
       {pendingDelete && (
         <DeleteConfirmDialog
           target={pendingDelete}
-          pending={deletePending}
-          onCancel={() => {
-            if (!deletePending) setPendingDelete(null);
-          }}
-          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={confirmRemoveFromDraft}
         />
       )}
 
-      <form key={category} action={createConfigOption} className="rounded-md border p-4">
-        <input type="hidden" name="category" value={category} />
+      <div className="rounded-md border p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[180px] flex-1 space-y-2">
             <Label htmlFor={`${category}-label`}>显示名称</Label>
             <Input
               id={`${category}-label`}
-              name="label"
               placeholder="请输入"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              required
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAddToDraft();
+                }
+              }}
             />
           </div>
-          <div className="w-24 space-y-2">
-            <Label htmlFor={`${category}-sortOrder`}>排序</Label>
-            <Input
-              id={`${category}-sortOrder`}
-              name="sortOrder"
-              type="number"
-              placeholder="请输入"
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value)}
-            />
-          </div>
-          <Button type="submit" className="shrink-0">
-            添加选项
+          <Button type="button" className="shrink-0" onClick={handleAddToDraft}>
+            添加到列表
           </Button>
         </div>
-      </form>
-
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col />
-            <col className="w-20" />
-            <col className="w-20" />
-            <col className="w-36" />
-          </colgroup>
-          <thead>
-            <tr className="border-b text-muted-foreground">
-              <th className="pb-2 pr-4 text-left font-medium">显示名称</th>
-              <th className="pb-2 text-center font-medium">排序</th>
-              <th className="pb-2 text-center font-medium">状态</th>
-              <th className="pb-2 text-center font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {options.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="py-4 text-muted-foreground">
-                  暂无选项
-                </td>
-              </tr>
-            ) : (
-              options.map((opt) => (
-                <tr key={opt.id} className="border-b">
-                  <td className="py-3 pr-4 align-middle">
-                    <form action={updateConfigOptionLabel} className="flex gap-2">
-                      <input type="hidden" name="id" value={opt.id} />
-                      <Input
-                        name="label"
-                        defaultValue={opt.label}
-                        placeholder="请输入"
-                        className="h-8"
-                      />
-                      <Button type="submit" size="sm" variant="outline" className="shrink-0">
-                        保存
-                      </Button>
-                    </form>
-                  </td>
-                  <td className="py-3 text-center align-middle">{opt.sortOrder}</td>
-                  <td className="py-3 text-center align-middle">
-                    {opt.enabled ? "启用" : "停用"}
-                  </td>
-                  <td className="py-3 text-center align-middle">
-                    <div className="inline-flex items-center justify-center gap-0.5">
-                      <form action={toggleConfigOption}>
-                        <input type="hidden" name="id" value={opt.id} />
-                        <Button type="submit" variant="ghost" size="sm">
-                          {opt.enabled ? "停用" : "启用"}
-                        </Button>
-                      </form>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setPendingDelete({ id: opt.id, label: opt.label })}
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+        <p className="mt-2 text-xs text-muted-foreground">
+          新选项先加入下方列表，点击「保存」后才会写入系统。
+        </p>
       </div>
+
+      <ConfigOptionSortableList
+        items={draft}
+        onItemsChange={setDraft}
+        onUpdateLabel={(id, label) => {
+          setDraft((prev) => prev.map((item) => (item.id === id ? { ...item, label } : item)));
+          setSaveError(null);
+        }}
+        onToggleEnabled={(id) => {
+          setDraft((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item))
+          );
+          setSaveError(null);
+        }}
+        onDelete={setPendingDelete}
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 px-4 py-3">
+        <div className="text-sm">
+          {isDirty ? (
+            <span className="text-orange-600">有未保存的修改</span>
+          ) : (
+            <span className="text-muted-foreground">所有修改已保存</span>
+          )}
+          {saveError && <p className="mt-1 text-sm text-destructive">{saveError}</p>}
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" disabled={!isDirty || savePending} onClick={handleCancel}>
+            取消
+          </Button>
+          <Button type="button" disabled={!isDirty || savePending} onClick={handleSave}>
+            {savePending ? "保存中…" : "保存"}
+          </Button>
+        </div>
+      </div>
+
       <p className="text-xs text-muted-foreground">
-        {title}：改名仅影响显示名称，已关联客户数据不受影响；删除或停用后，新建/编辑时不可选，删除会清空已有客户上的对应字段。
+        {title}：改名仅影响显示名称；删除后排序会自动从 1 起重新编号；删除会清空已有客户上的对应字段。
       </p>
     </div>
   );
