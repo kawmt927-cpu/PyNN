@@ -17,6 +17,7 @@ import {
 import { ContactSelect } from "@/components/sales-log/contact-select";
 import { QuickCustomerDialog } from "@/components/sales-log/quick-customer-dialog";
 import type { ConfigOptionItem } from "@/lib/config-options";
+import type { CustomerTagDefinition } from "@/lib/customers/tags";
 
 type EntryTiming = "later" | "now";
 
@@ -24,6 +25,7 @@ export type CheckInCustomerFormOptions = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  tagOptions: CustomerTagDefinition[];
   showOwnerSelect?: boolean;
   salesUsers?: Array<{ id: string; name: string }>;
 };
@@ -145,6 +147,19 @@ export function CheckInForm({
               <input
                 type="radio"
                 name="checkInModeRadio"
+                checked={isInteraction}
+                onChange={() => {
+                  setCheckInMode("interaction");
+                  setError(null);
+                }}
+                className="h-4 w-4"
+              />
+              往来打卡（关联客户与往来）
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="checkInModeRadio"
                 checked={!isInteraction}
                 onChange={() => {
                   setCheckInMode("without_customer");
@@ -156,19 +171,6 @@ export function CheckInForm({
                 className="h-4 w-4"
               />
               无客户打卡（仅记录定位）
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="checkInModeRadio"
-                checked={isInteraction}
-                onChange={() => {
-                  setCheckInMode("interaction");
-                  setError(null);
-                }}
-                className="h-4 w-4"
-              />
-              往来打卡（关联客户与往来）
             </label>
           </div>
         </div>
@@ -325,6 +327,7 @@ export function CheckInForm({
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}
+        tagOptions={customerFormOptions.tagOptions}
         showOwnerSelect={customerFormOptions.showOwnerSelect}
         salesUsers={customerFormOptions.salesUsers}
         onCreated={(customer) => {

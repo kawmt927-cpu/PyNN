@@ -72,14 +72,14 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
+  { href: "/sales-log", label: "外勤日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
+  { href: "/mobile/log", label: "AI 日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/dashboard", label: "仪表盘", roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/approvals", label: "审批", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/follow-ups", label: "待跟进", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/contracts", label: "合同", roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"] },
-  { href: "/sales-log", label: "外勤日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/mobile/log", label: "AI 日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/projects", label: "项目", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/my-tasks", label: "我的任务", roles: ["PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/personnel", label: "实施人员", roles: ["PROJECT_ADMIN", "ADMIN"] },

@@ -32,6 +32,7 @@ import {
 } from "@/lib/opportunities/status";
 import { getCustomerForUser } from "@/lib/customers/access";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
+import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -83,10 +84,13 @@ async function validateCustomerConfigFields(data: {
   customerGrade?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  if (!data.customerType?.trim()) {
+    throw new Error("请选择关系类型");
+  }
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_GRADE, data.customerGrade),
+    customerGrade: requireCustomerGrade(data.customerGrade),
   };
 }
 

@@ -254,6 +254,15 @@ model Customer {
   claimRequests CustomerClaimRequest[]
   opportunities Opportunity[]
   salesCheckIns SalesCheckIn[]
+  tags          CustomerTag[]
+}
+
+model CustomerTag {
+  customerId String
+  tagValue   String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, tagValue])
 }
 
 model CustomerClaimRequest {
@@ -751,6 +760,7 @@ model ConfigOption {
   value      String
   label      String
   sortOrder  Int    @default(0)
+  color      String?
   enabled    Boolean @default(true)
 
   @@unique([category, value])

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isCustomerTagColor } from "@/lib/customers/tag-colors";
 
 export const customerFormSchema = z.object({
   name: z.string().min(1, "请输入客户名称"),
@@ -13,8 +14,9 @@ export const customerFormSchema = z.object({
   bedCount: z.coerce.number().int().positive().optional().nullable(),
   existingSystem: z.string().optional(),
   source: z.string().optional().nullable(),
-  customerType: z.string().optional().nullable(),
-  customerGrade: z.string().optional().nullable(),
+  customerType: z.string().min(1, "请选择关系类型"),
+  customerGrade: z.string().min(1, "请选择客户等级"),
+  tagValues: z.array(z.string()).optional(),
   notes: z.string().optional(),
   ownerId: z.string().optional().nullable(),
 });
@@ -56,6 +58,20 @@ export const customerRelationSchema = z.object({
 export const configOptionSchema = z.object({
   category: z.string().min(1),
   label: z.string().min(1, "请输入显示名称"),
+});
+
+export const saveCustomerTagOptionsSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().nullable(),
+      label: z.string().min(1, "标签名称不能为空"),
+      enabled: z.boolean(),
+      color: z
+        .string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, "颜色格式无效")
+        .refine(isCustomerTagColor, "请选择预设标签颜色"),
+    })
+  ),
 });
 
 export const saveConfigCategoryOptionsSchema = z.object({

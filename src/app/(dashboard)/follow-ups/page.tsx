@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
-import { CONFIG_CATEGORY, labelForConfig, loadCustomerFieldLabelMaps } from "@/lib/config-options";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import { format } from "date-fns";
 import { withReturnTo } from "@/lib/navigation/return-to";
@@ -12,13 +12,10 @@ export default async function FollowUpsPage() {
   const now = new Date();
   const listPath = "/follow-ups";
 
-  const [dueFollowUps, upcomingFollowUps, labelMaps] = await Promise.all([
+  const [dueFollowUps, upcomingFollowUps] = await Promise.all([
     getPendingFollowUps(session.user.role, session.user.id, "due", now, 100),
     getPendingFollowUps(session.user.role, session.user.id, "upcoming", now, 50),
-    loadCustomerFieldLabelMaps(),
   ]);
-
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   return (
     <div className="space-y-6">
@@ -34,7 +31,7 @@ export default async function FollowUpsPage() {
           {dueFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无到期跟进任务。</p>
           ) : (
-            <FollowUpTable items={dueFollowUps} gradeLabels={gradeLabels} listPath={listPath} />
+            <FollowUpTable items={dueFollowUps} listPath={listPath} />
           )}
         </CardContent>
       </Card>
@@ -47,7 +44,7 @@ export default async function FollowUpsPage() {
           {upcomingFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无计划中的跟进。</p>
           ) : (
-            <FollowUpTable items={upcomingFollowUps} gradeLabels={gradeLabels} listPath={listPath} />
+            <FollowUpTable items={upcomingFollowUps} listPath={listPath} />
           )}
         </CardContent>
       </Card>
@@ -57,11 +54,10 @@ export default async function FollowUpsPage() {
 
 type FollowUpTableProps = {
   items: Awaited<ReturnType<typeof getPendingFollowUps>>;
-  gradeLabels: Record<string, string>;
   listPath: string;
 };
 
-function FollowUpTable({ items, gradeLabels, listPath }: FollowUpTableProps) {
+function FollowUpTable({ items, listPath }: FollowUpTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -94,7 +90,7 @@ function FollowUpTable({ items, gradeLabels, listPath }: FollowUpTableProps) {
                 )}
               </td>
               <td className="py-3 pr-4">
-                {labelForConfig(gradeLabels, f.customer.customerGrade)}
+                <CustomerGradeIcon grade={f.customer.customerGrade} />
               </td>
               <td className="py-3 pr-4">
                 {FOLLOW_UP_METHOD_LABELS[f.method]}

@@ -20,6 +20,7 @@ export type ConfigOptionRow = {
   label: string;
   sortOrder: number;
   enabled: boolean;
+  color?: string | null;
 };
 
 type Props = {
@@ -28,6 +29,9 @@ type Props = {
   onUpdateLabel: (id: string, label: string) => void;
   onToggleEnabled: (id: string) => void;
   onDelete: (opt: { id: string; label: string }) => void;
+  extraColumnLabel?: string;
+  extraColumnClassName?: string;
+  renderExtra?: (item: DraftConfigOption) => React.ReactNode;
 };
 
 export function ConfigOptionSortableList({
@@ -36,6 +40,9 @@ export function ConfigOptionSortableList({
   onUpdateLabel,
   onToggleEnabled,
   onDelete,
+  extraColumnLabel,
+  extraColumnClassName = "w-[9.5rem]",
+  renderExtra,
 }: Props) {
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -75,6 +82,7 @@ export function ConfigOptionSortableList({
           <colgroup>
             <col className="w-10" />
             <col />
+            {renderExtra ? <col className={extraColumnClassName} /> : null}
             <col className="w-16" />
             <col className="w-20" />
             <col className="w-28" />
@@ -83,6 +91,9 @@ export function ConfigOptionSortableList({
             <tr className="border-b text-muted-foreground">
               <th className="pb-2" aria-label="拖拽排序" />
               <th className="pb-2 pr-4 text-left font-medium">显示名称</th>
+              {renderExtra ? (
+                <th className="pb-2 text-center font-medium">{extraColumnLabel ?? "扩展"}</th>
+              ) : null}
               <th className="pb-2 text-center font-medium">排序</th>
               <th className="pb-2 text-center font-medium">状态</th>
               <th className="pb-2 text-center font-medium">操作</th>
@@ -115,6 +126,11 @@ export function ConfigOptionSortableList({
                     className="h-8"
                   />
                 </td>
+                {renderExtra ? (
+                  <td className="overflow-hidden px-1 py-3 text-center align-middle">
+                    {renderExtra(opt)}
+                  </td>
+                ) : null}
                 <td className="py-3 text-center align-middle">{opt.sortOrder}</td>
                 <td className="py-3 text-center align-middle">
                   {opt.enabled ? "启用" : "停用"}

@@ -11,10 +11,13 @@ import {
 } from "@/lib/customers/list-filters";
 import type { CustomerListView } from "@/lib/customers/access";
 import type { ConfigOptionItem } from "@/lib/config-options";
+import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import { withReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getCustomerGradeOptions } from "@/lib/customers/grade";
+import { CustomerTagFilterSelect } from "@/components/customers/customer-tag-filter-select";
 
 type SalesOption = { id: string; name: string };
 
@@ -24,8 +27,7 @@ type Props = {
   view: CustomerListView;
   filters: CustomerListFilters;
   typeOptions: ConfigOptionItem[];
-  gradeOptions: ConfigOptionItem[];
-  sourceOptions: ConfigOptionItem[];
+  tagOptions?: CustomerTagDefinition[];
   showOwnerFilter?: boolean;
   salesUsers?: SalesOption[];
 };
@@ -38,8 +40,8 @@ const EMPTY_FILTERS: CustomerListFilters = {
   category: "",
   customerType: "",
   customerGrade: "",
-  source: "",
   ownerId: "",
+  tags: [],
 };
 
 function FilterSelect({
@@ -83,8 +85,8 @@ function buildSuggestQuery(view: CustomerListView, filters: CustomerListFilters)
   if (filters.category) params.set("category", filters.category);
   if (filters.customerType) params.set("type", filters.customerType);
   if (filters.customerGrade) params.set("grade", filters.customerGrade);
-  if (filters.source) params.set("source", filters.source);
   if (filters.ownerId) params.set("ownerId", filters.ownerId);
+  if (filters.tags.length) params.set("tags", filters.tags.join(","));
   return params.toString();
 }
 
@@ -92,8 +94,7 @@ export function CustomerListFilters({
   view,
   filters,
   typeOptions,
-  gradeOptions,
-  sourceOptions,
+  tagOptions = [],
   showOwnerFilter = false,
   salesUsers = [],
 }: Props) {
@@ -191,9 +192,8 @@ export function CustomerListFilters({
     { value: "", label: "全部类别" },
     ...Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
   ];
-  const typeFilterOptions = [{ value: "", label: "全部类型" }, ...typeOptions];
-  const gradeFilterOptions = [{ value: "", label: "全部等级" }, ...gradeOptions];
-  const sourceFilterOptions = [{ value: "", label: "全部来源" }, ...sourceOptions];
+  const typeFilterOptions = [{ value: "", label: "全部关系类型" }, ...typeOptions];
+  const gradeFilterOptions = [{ value: "", label: "全部等级" }, ...getCustomerGradeOptions()];
   const ownerOptions = [
     { value: "", label: "全部负责人" },
     { value: "pool", label: "公海池" },
@@ -253,7 +253,7 @@ export function CustomerListFilters({
         />
         <FilterSelect
           id="customer-type"
-          label="类型"
+          label="关系类型"
           value={filters.customerType}
           onChange={(customerType) => applyFilters(withLocalQ({ customerType }))}
           options={typeFilterOptions}
@@ -265,12 +265,11 @@ export function CustomerListFilters({
           onChange={(customerGrade) => applyFilters(withLocalQ({ customerGrade }))}
           options={gradeFilterOptions}
         />
-        <FilterSelect
-          id="customer-source"
-          label="来源"
-          value={filters.source}
-          onChange={(source) => applyFilters(withLocalQ({ source }))}
-          options={sourceFilterOptions}
+        <CustomerTagFilterSelect
+          id="customer-tags"
+          options={tagOptions}
+          value={filters.tags}
+          onChange={(tags) => applyFilters(withLocalQ({ tags }))}
         />
         {showOwnerFilter && (
           <FilterSelect

@@ -6,6 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
+import { CustomerTagSelect } from "@/components/customers/customer-tag-select";
+import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +20,12 @@ import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissio
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { CustomerCategory, HospitalLevel } from "@prisma/client";
+import { cn } from "@/lib/utils";
+import {
+  applyCustomerKimiEnrich,
+  canUseCustomerKimiEnrich,
+  fetchCustomerKimiEnrich,
+} from "@/lib/customers/kimi-enrich-ui";
 
 type SalesOption = { id: string; name: string };
 
@@ -30,6 +39,7 @@ type Props = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  tagOptions: CustomerTagDefinition[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
   onCreated: (customer: { id: string; name: string }) => void;
@@ -59,6 +69,7 @@ export function QuickCustomerDialog({
   sourceOptions,
   typeOptions,
   gradeOptions,
+  tagOptions,
   showOwnerSelect,
   salesUsers = [],
   onCreated,
@@ -74,10 +85,12 @@ export function QuickCustomerDialog({
   const [source, setSource] = useState("");
   const [customerType, setCustomerType] = useState("");
   const [customerGrade, setCustomerGrade] = useState("");
+  const [tagValues, setTagValues] = useState<string[]>([]);
   const [ownerId, setOwnerId] = useState(POOL_OWNER_VALUE);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [enrichHint, setEnrichHint] = useState<string | null>(null);
+  const [nameCorrected, setNameCorrected] = useState(false);
   const [pending, startTransition] = useTransition();
   const [enriching, startEnrichTransition] = useTransition();
 
@@ -94,13 +107,15 @@ export function QuickCustomerDialog({
     setSource("");
     setCustomerType("");
     setCustomerGrade("");
+    setTagValues([]);
     setOwnerId(POOL_OWNER_VALUE);
     setNotes("");
     setError(null);
     setEnrichHint(null);
+    setNameCorrected(false);
   }, [open, initialName, initialProvince, initialCity, initialDistrict]);
 
-  const canEnrich = category === "HOSPITAL" || category === "COMPANY";
+  const canEnrich = canUseCustomerKimiEnrich(category);
 
   function handleKimiEnrich() {
     if (!name.trim()) {
@@ -113,38 +128,30 @@ export function QuickCustomerDialog({
     }
     setError(null);
     setEnrichHint(null);
+    setNameCorrected(false);
     startEnrichTransition(async () => {
       try {
-        const res = await fetch("/api/customers/enrich", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, category, province, city, district }),
+        const data = await fetchCustomerKimiEnrich({
+          name,
+          category,
+          province,
+          city,
+          district,
         });
-        const data = (await res.json()) as Record<string, unknown> & { error?: string };
-        if (!res.ok) {
-          setError(data.error || "Kimi 检索失败");
-          return;
-        }
-        if (typeof data.province === "string" && data.province) setProvince(data.province);
-        if (typeof data.city === "string" && data.city) setCity(data.city);
-        if (typeof data.district === "string" && data.district) setDistrict(data.district);
-        if (typeof data.hospitalLevel === "string" && data.hospitalLevel) {
-          setHospitalLevel(data.hospitalLevel as HospitalLevel);
-        }
-        if (data.bedCount != null && data.bedCount !== "") {
-          setBedCount(String(data.bedCount));
-        }
-        if (typeof data.existingSystem === "string" && data.existingSystem) {
-          setExistingSystem(data.existingSystem);
-        }
-        if (typeof data.notes === "string" && data.notes) {
-          setNotes((prev) => (prev ? `${prev}\n${data.notes}` : (data.notes as string)));
-        }
-        const summary = typeof data.summary === "string" ? data.summary : null;
-        setEnrichHint(summary ? `Kimi 已填充：${summary}` : "Kimi 已填充相关字段，请核对后保存");
-      } catch {
-        setError("Kimi 检索失败，请稍后重试");
+        const result = applyCustomerKimiEnrich(data, {
+          name,
+          category,
+          setName,
+          setProvince,
+          setCity,
+          setDistrict,
+          setHospitalLevel,
+          setBedCount,
+        });
+        setEnrichHint(result.hints);
+        setNameCorrected(result.nameCorrected);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Kimi 检索失败，请稍后重试");
       }
     });
   }
@@ -168,8 +175,9 @@ export function QuickCustomerDialog({
             bedCount: category === "HOSPITAL" && bedCount ? Number(bedCount) : null,
             existingSystem: existingSystem || undefined,
             source: source || null,
-            customerType: customerType || null,
-            customerGrade: customerGrade || null,
+            customerType: customerType || undefined,
+            customerGrade: customerGrade || undefined,
+            tagValues,
             ownerId: showOwnerSelect ? ownerId : null,
             notes: notes || undefined,
           }),
@@ -193,7 +201,7 @@ export function QuickCustomerDialog({
         <DialogHeader>
           <DialogTitle>新增客户</DialogTitle>
           <DialogDescription>
-            字段与 CRM 客户档案一致。医院/公司可一键用 Kimi 检索公开信息；保存后回到往来打卡。
+            医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。保存后回到往来打卡。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -240,21 +248,17 @@ export function QuickCustomerDialog({
 
             <SelectField
               id="quickCustomerType"
-              label="客户类型"
+              label="关系类型 *"
               name="customerType"
               options={withEmptyOption(typeOptions)}
               value={customerType}
               onValueChange={setCustomerType}
+              required
             />
 
-            <SelectField
-              id="quickCustomerGrade"
-              label="客户等级"
-              name="customerGrade"
-              options={withEmptyOption(gradeOptions)}
-              value={customerGrade}
-              onValueChange={setCustomerGrade}
-            />
+            <CustomerGradeSelect value={customerGrade} onValueChange={setCustomerGrade} required />
+
+            <CustomerTagSelect options={tagOptions} value={tagValues} onValueChange={setTagValues} />
 
             <SelectField
               id="quickCustomerSource"
@@ -335,7 +339,18 @@ export function QuickCustomerDialog({
             </div>
           </div>
 
-          {enrichHint ? <p className="text-sm text-green-600">{enrichHint}</p> : null}
+          {enrichHint ? (
+            <p
+              className={cn(
+                "text-sm",
+                nameCorrected
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-green-600 dark:text-green-400"
+              )}
+            >
+              {enrichHint}
+            </p>
+          ) : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
           <div className="flex justify-end gap-2">

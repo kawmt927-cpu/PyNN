@@ -24,7 +24,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
       })
     : [];
 
-  const { sourceOptions, typeOptions, gradeOptions } = await loadCustomerFormOptions();
+  const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
 
   return (
     <div className="space-y-6">
@@ -40,6 +40,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
+        tagOptions={tagOptions}
       />
     </div>
   );

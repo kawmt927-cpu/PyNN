@@ -62,6 +62,7 @@ export async function getCustomerForUser(id: string, role: UserRole, userId: str
           },
         },
       },
+      tags: { select: { tagValue: true } },
     },
   });
 

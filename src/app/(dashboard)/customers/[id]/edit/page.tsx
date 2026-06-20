@@ -29,7 +29,8 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
       })
     : [];
 
-  const { sourceOptions, typeOptions, gradeOptions } = await loadCustomerFormOptions();
+  const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
+  const initialTagValues = customer.tags.map((item) => item.tagValue);
 
   const detailHref = selfReturnPath(`/customers/${id}`, query);
 
@@ -48,6 +49,8 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
+        tagOptions={tagOptions}
+        initialTagValues={initialTagValues}
         initial={{
           name: customer.name,
           category: customer.category,

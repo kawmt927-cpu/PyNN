@@ -1,10 +1,13 @@
 import { getPrismaClient } from "@/lib/prisma";
+import { DEFAULT_CUSTOMER_GRADE_CONFIG_OPTIONS, getCustomerGradeOptions } from "@/lib/customers/grade";
+import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 
 /** ConfigOption.category 常量 */
 export const CONFIG_CATEGORY = {
   CUSTOMER_SOURCE: "customer_source",
   CUSTOMER_TYPE: "customer_type",
   CUSTOMER_GRADE: "customer_grade",
+  CUSTOMER_TAG: "customer_tag",
   OPPORTUNITY_STAGE: "opportunity_stage",
   PROJECT_COST_CATEGORY: "project_cost_category",
 } as const;
@@ -13,8 +16,9 @@ export type ConfigCategory = (typeof CONFIG_CATEGORY)[keyof typeof CONFIG_CATEGO
 
 export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CUSTOMER_SOURCE]: "客户来源",
-  [CONFIG_CATEGORY.CUSTOMER_TYPE]: "客户类型",
+  [CONFIG_CATEGORY.CUSTOMER_TYPE]: "关系类型",
   [CONFIG_CATEGORY.CUSTOMER_GRADE]: "客户等级",
+  [CONFIG_CATEGORY.CUSTOMER_TAG]: "客户标签",
   [CONFIG_CATEGORY.OPPORTUNITY_STAGE]: "商机阶段",
   [CONFIG_CATEGORY.PROJECT_COST_CATEGORY]: "项目成本类别",
 };
@@ -41,7 +45,7 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
     fields: [
       { category: CONFIG_CATEGORY.CUSTOMER_SOURCE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_SOURCE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TYPE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TYPE] },
-      { category: CONFIG_CATEGORY.CUSTOMER_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_GRADE] },
+      { category: CONFIG_CATEGORY.CUSTOMER_TAG, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TAG] },
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
     ],
   },
@@ -169,9 +173,7 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "DIRECT", label: "直接客户", sortOrder: 1 },
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "CHANNEL", label: "渠道", sortOrder: 2 },
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "PARTNER", label: "合作伙伴", sortOrder: 3 },
-  { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "INTERESTED", label: "有意向客户", sortOrder: 1 },
-  { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "NOT_INTERESTED", label: "无意向客户", sortOrder: 2 },
-  { category: CONFIG_CATEGORY.CUSTOMER_GRADE, value: "POTENTIAL", label: "潜在客户", sortOrder: 3 },
+  ...DEFAULT_CUSTOMER_GRADE_CONFIG_OPTIONS,
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "INITIAL_VISIT", label: "初访", sortOrder: 1 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEEDS_CONFIRM", label: "需求确认", sortOrder: 2 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "PROPOSAL", label: "方案", sortOrder: 3 },
@@ -180,18 +182,26 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
 ] as const;
 
 export async function loadCustomerFormOptions() {
-  const [sourceOptions, typeOptions, gradeOptions] = await Promise.all([
+  const [sourceOptions, typeOptions, tagOptions] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
-    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
+    getCustomerTagDefinitions(),
   ]);
-  return { sourceOptions, typeOptions, gradeOptions };
+  return {
+    sourceOptions,
+    typeOptions,
+    gradeOptions: getCustomerGradeOptions(),
+    tagOptions,
+  };
 }
 
 export async function loadCustomerFieldLabelMaps() {
-  return getConfigOptionMaps([
+  const maps = await getConfigOptionMaps([
     CONFIG_CATEGORY.CUSTOMER_SOURCE,
     CONFIG_CATEGORY.CUSTOMER_TYPE,
-    CONFIG_CATEGORY.CUSTOMER_GRADE,
   ]);
+  maps[CONFIG_CATEGORY.CUSTOMER_GRADE] = Object.fromEntries(
+    getCustomerGradeOptions().map((option) => [option.value, option.label])
+  );
+  return maps;
 }

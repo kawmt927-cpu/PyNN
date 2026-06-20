@@ -6,15 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
 import { createFollowUp } from "@/app/(dashboard)/customers/actions";
-import type { ConfigOptionItem } from "@/lib/config-options";
 import type { Contact } from "@prisma/client";
 
 type Props = {
   customerId: string;
   contacts?: Contact[];
-  gradeOptions: ConfigOptionItem[];
 };
 
 const methodOptions = Object.entries(FOLLOW_UP_METHOD_LABELS).map(([value, label]) => ({
@@ -28,18 +27,13 @@ function todayLocalDatetime() {
   return d.toISOString().slice(0, 16);
 }
 
-export function FollowUpForm({ customerId, contacts = [], gradeOptions }: Props) {
+export function FollowUpForm({ customerId, contacts = [] }: Props) {
   const [method, setMethod] = useState("PHONE");
   const isFaceVisit = method === "FACE_VISIT";
 
   const contactOptions = [
     { value: "", label: "不指定联系人" },
     ...contacts.map((c) => ({ value: c.id, label: c.name })),
-  ];
-
-  const gradeSelectOptions = [
-    { value: "", label: "不更新等级" },
-    ...gradeOptions.map((o) => ({ value: o.value, label: o.label })),
   ];
 
   return (
@@ -100,17 +94,10 @@ export function FollowUpForm({ customerId, contacts = [], gradeOptions }: Props)
           <Input id="nextFollowUpAt" name="nextFollowUpAt" type="datetime-local" />
         </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <SelectField
-            id="suggestedGrade"
-            label="客户等级"
-            name="suggestedGrade"
-            options={gradeSelectOptions}
-          />
-          <p className="text-xs text-muted-foreground">
-            选择后会同步更新客户档案中的等级；保持「不更新等级」则只记录跟进，不修改客户等级。
-          </p>
-        </div>
+        <CustomerGradeSelect id="suggestedGrade" name="suggestedGrade" />
+        <p className="text-xs text-muted-foreground md:col-span-2">
+          选择后会同步更新客户档案中的等级；不选择则只记录跟进。
+        </p>
 
         {isFaceVisit && (
           <>

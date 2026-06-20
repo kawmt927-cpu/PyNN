@@ -21,8 +21,8 @@ export async function searchCustomersForUser(
     category: "",
     customerType: "",
     customerGrade: "",
-    source: "",
     ownerId: "",
+    tags: [],
   };
 
   const where = buildCustomerListWhere(role, userId, view, filters);

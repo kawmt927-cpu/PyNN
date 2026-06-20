@@ -9,8 +9,9 @@ import {
   requireAmapSettingsAccess,
   requireWeComSettingsAccess,
 } from "@/lib/config-settings-access";
-import { configOptionSchema, saveConfigCategoryOptionsSchema } from "@/lib/validations/customer";
-import { generateConfigOptionValue } from "@/lib/config-options";
+import { configOptionSchema, saveConfigCategoryOptionsSchema, saveCustomerTagOptionsSchema } from "@/lib/validations/customer";
+import { generateConfigOptionValue, CONFIG_CATEGORY } from "@/lib/config-options";
+import { normalizeTagColor } from "@/lib/customers/tags";
 import { clearConfigOptionReferences } from "@/lib/config-options-cleanup";
 import {
   nextConfigOptionSortOrder,
@@ -389,6 +390,94 @@ export async function saveConfigCategoryOptions(formData: FormData) {
             value: generateConfigOptionValue(category),
             label: item.label,
             enabled: item.enabled,
+            sortOrder,
+          },
+        });
+      }
+    }
+
+    await renumberConfigOptions(tx, category);
+  });
+
+  revalidatePath("/admin/settings");
+  revalidatePath("/customers");
+  revalidatePath("/follow-ups");
+}
+
+export async function saveCustomerTagOptions(formData: FormData) {
+  const payloadRaw = formData.get("payload") as string;
+  if (!payloadRaw) throw new Error("缺少保存参数");
+
+  const category = CONFIG_CATEGORY.CUSTOMER_TAG;
+  await requireConfigCategoryManage(category);
+
+  let items: Array<{ id: string | null; label: string; enabled: boolean; color: string }>;
+  try {
+    const parsed = saveCustomerTagOptionsSchema.parse({
+      items: JSON.parse(payloadRaw),
+    });
+    items = parsed.items.map((item) => ({
+      ...item,
+      label: item.label.trim(),
+      color: normalizeTagColor(item.color),
+    }));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(error.errors[0]?.message ?? "保存数据无效");
+    }
+    throw error;
+  }
+
+  const labels = items.map((item) => item.label);
+  if (new Set(labels).size !== labels.length) {
+    throw new Error("标签名称不能重复");
+  }
+
+  const colors = items.map((item) => item.color.toLowerCase());
+  if (new Set(colors).size !== colors.length) {
+    throw new Error("标签颜色不能重复");
+  }
+
+  const existing = await prisma.configOption.findMany({ where: { category } });
+  const existingById = new Map(existing.map((opt) => [opt.id, opt]));
+  const keptIds = new Set(
+    items.map((item) => item.id).filter((id): id is string => Boolean(id))
+  );
+
+  for (const id of keptIds) {
+    if (!existingById.has(id)) throw new Error("包含无效选项，请刷新后重试");
+  }
+
+  const toDelete = existing.filter((opt) => !keptIds.has(opt.id));
+
+  await prisma.$transaction(async (tx) => {
+    for (const opt of toDelete) {
+      await clearConfigOptionReferences(tx, opt.category, opt.value);
+      await tx.configOption.delete({ where: { id: opt.id } });
+    }
+
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const sortOrder = index + 1;
+
+      if (item.id) {
+        await tx.configOption.update({
+          where: { id: item.id },
+          data: {
+            label: item.label,
+            enabled: item.enabled,
+            color: item.color,
+            sortOrder,
+          },
+        });
+      } else {
+        await tx.configOption.create({
+          data: {
+            category,
+            value: generateConfigOptionValue(category),
+            label: item.label,
+            enabled: item.enabled,
+            color: item.color,
             sortOrder,
           },
         });

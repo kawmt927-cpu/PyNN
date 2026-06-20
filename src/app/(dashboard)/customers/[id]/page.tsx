@@ -23,6 +23,9 @@ import { CustomerRelationsPanel } from "@/components/customers/customer-relation
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
 import { BackLink } from "@/components/navigation/back-link";
+import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { CustomerTagList } from "@/components/customers/customer-tag-badge";
+import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import {
   resolveBackNavigation,
   selfReturnPath,
@@ -47,7 +50,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const [salesUsers, labelMaps, pendingClaimForSales, pendingClaimCount, followUpCount] =
+  const [salesUsers, labelMaps, tagDefinitions, pendingClaimForSales, pendingClaimCount, followUpCount] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -57,6 +60,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           })
         : Promise.resolve([]),
       loadCustomerFieldLabelMaps(),
+      getCustomerTagDefinitions(),
       isSales && inPool
         ? db.customerClaimRequest.findFirst({
             where: {
@@ -76,7 +80,6 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const relations = [
     ...customer.relationsFrom.map((r) => ({
@@ -103,6 +106,8 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
 
   const canEdit = customer.ownerId === session.user.id || canManage;
 
+  const customerTagValues = customer.tags.map((item) => item.tagValue);
+
   const { backHref, backLabel } = resolveBackNavigation(query, "/customers");
   const selfPath = selfReturnPath(`/customers/${id}`, query);
 
@@ -114,8 +119,20 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           <p className="text-muted-foreground">
             {CUSTOMER_CATEGORY_LABELS[customer.category]}
             {customer.customerType && ` · ${labelForConfig(typeLabels, customer.customerType)}`}
-            {customer.customerGrade && ` · ${labelForConfig(gradeLabels, customer.customerGrade)}`}
+            {customer.customerGrade ? (
+              <>
+                {" · "}
+                <CustomerGradeIcon grade={customer.customerGrade} showLabel className="inline-flex" />
+              </>
+            ) : null}
           </p>
+          {customerTagValues.length > 0 ? (
+            <CustomerTagList
+              tags={customerTagValues}
+              definitions={tagDefinitions}
+              className="mt-2"
+            />
+          ) : null}
         </div>
         <div className="flex gap-2">
           <BackLink href={backHref} label={backLabel} />
@@ -181,8 +198,11 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
               </>
             )}
             <Row label="现有系统" value={customer.existingSystem ?? "—"} />
-            <Row label="客户类型" value={labelForConfig(typeLabels, customer.customerType)} />
-            <Row label="客户等级" value={labelForConfig(gradeLabels, customer.customerGrade)} />
+            <Row label="关系类型" value={labelForConfig(typeLabels, customer.customerType)} />
+            <Row
+              label="客户等级"
+              value={<CustomerGradeIcon grade={customer.customerGrade} showLabel />}
+            />
             <Row label="客户来源" value={labelForConfig(sourceLabels, customer.source)} />
             <Row label="备注" value={customer.notes ?? "—"} />
           </CardContent>
@@ -237,7 +257,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex gap-2">
       <span className="w-24 shrink-0 text-muted-foreground">{label}</span>

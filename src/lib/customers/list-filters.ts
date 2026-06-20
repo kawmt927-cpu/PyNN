@@ -7,21 +7,32 @@ export type CustomerListFilters = {
   category: string;
   customerType: string;
   customerGrade: string;
-  source: string;
   ownerId: string;
+  tags: string[];
 };
 
 export function parseCustomerListFilters(
   params: Record<string, string | undefined>
 ): CustomerListFilters {
+  const tags = params.tags
+    ? params.tags.split(",").map((item) => item.trim()).filter(Boolean)
+    : [];
+
   return {
     q: params.q?.trim() ?? "",
     category: params.category ?? "",
     customerType: params.type ?? "",
     customerGrade: params.grade ?? "",
-    source: params.source ?? "",
     ownerId: params.ownerId ?? "",
+    tags: [...new Set(tags)],
   };
+}
+
+export function normalizeCustomerListTagFilters(
+  tags: string[],
+  allowedValues: Set<string>
+): string[] {
+  return [...new Set(tags.filter((tag) => allowedValues.has(tag)))];
 }
 
 export function hasActiveCustomerListFilters(filters: CustomerListFilters) {
@@ -30,8 +41,8 @@ export function hasActiveCustomerListFilters(filters: CustomerListFilters) {
       filters.category ||
       filters.customerType ||
       filters.customerGrade ||
-      filters.source ||
-      filters.ownerId
+      filters.ownerId ||
+      filters.tags.length > 0
   );
 }
 
@@ -42,8 +53,8 @@ export function buildCustomerListHref(view: CustomerListView, filters: CustomerL
   if (filters.category) params.set("category", filters.category);
   if (filters.customerType) params.set("type", filters.customerType);
   if (filters.customerGrade) params.set("grade", filters.customerGrade);
-  if (filters.source) params.set("source", filters.source);
   if (filters.ownerId) params.set("ownerId", filters.ownerId);
+  if (filters.tags.length) params.set("tags", filters.tags.join(","));
   return `/customers?${params.toString()}`;
 }
 
@@ -69,11 +80,13 @@ export function buildCustomerListWhere(
   if (filters.customerGrade) {
     where.customerGrade = filters.customerGrade;
   }
-  if (filters.source) {
-    where.source = filters.source;
-  }
   if (filters.ownerId && view === "all") {
     where.ownerId = filters.ownerId === "pool" ? null : filters.ownerId;
+  }
+  if (filters.tags.length > 0) {
+    where.tags = {
+      some: { tagValue: { in: filters.tags } },
+    };
   }
 
   return where;

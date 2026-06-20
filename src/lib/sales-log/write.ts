@@ -6,6 +6,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
+import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 import { prisma } from "@/lib/prisma";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
 
@@ -36,10 +37,13 @@ async function validateCustomerConfigFields(data: {
   customerGrade?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  if (!data.customerType?.trim()) {
+    throw new Error("请选择关系类型");
+  }
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_GRADE, data.customerGrade),
+    customerGrade: requireCustomerGrade(data.customerGrade),
   };
 }
 
@@ -178,11 +182,7 @@ export async function createFollowUpFromAgent(
   const content = input.content.trim();
   if (!content) throw new Error("跟进内容不能为空");
 
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  const suggestedGrade = await assertConfigValue(
-    CONFIG_CATEGORY.CUSTOMER_GRADE,
-    input.suggestedGrade
-  );
+  const suggestedGrade = assertCustomerGrade(input.suggestedGrade);
   const applyGrade = Boolean(suggestedGrade);
 
   const followUpAt = new Date(input.followUpAt);

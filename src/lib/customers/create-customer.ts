@@ -2,6 +2,8 @@ import { UserRole } from "@prisma/client";
 import { canManageCustomerOwner } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import type { CustomerFormInput } from "@/lib/validations/customer";
+import { requireCustomerGrade } from "@/lib/customers/grade";
+import { replaceCustomerTags } from "@/lib/customers/tags";
 
 async function validateCustomerConfigFields(data: {
   source?: string | null;
@@ -9,10 +11,13 @@ async function validateCustomerConfigFields(data: {
   customerGrade?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  if (!data.customerType?.trim()) {
+    throw new Error("请选择关系类型");
+  }
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_GRADE, data.customerGrade),
+    customerGrade: requireCustomerGrade(data.customerGrade),
   };
 }
 
@@ -30,7 +35,7 @@ export async function createCustomerRecord(
 ) {
   const configFields = await validateCustomerConfigFields(data);
 
-  return prisma.customer.create({
+  const customer = await prisma.customer.create({
     data: {
       name: data.name.trim(),
       category: data.category,
@@ -48,4 +53,7 @@ export async function createCustomerRecord(
     },
     select: { id: true, name: true },
   });
+
+  await replaceCustomerTags(customer.id, data.tagValues ?? []);
+  return customer;
 }

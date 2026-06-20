@@ -10,6 +10,7 @@ import {
   buildCustomerListHref,
   buildCustomerListWhere,
   hasActiveCustomerListFilters,
+  normalizeCustomerListTagFilters,
   parseCustomerListFilters,
 } from "@/lib/customers/list-filters";
 import {
@@ -22,6 +23,9 @@ import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CustomerListFilters } from "@/components/customers/customer-list-filters";
+import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { CustomerTagList } from "@/components/customers/customer-tag-badge";
+import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import { cn } from "@/lib/utils";
 import { rankByNameMatch } from "@/lib/search/fuzzy-text";
 import { withReturnTo } from "@/lib/navigation/return-to";
@@ -33,8 +37,8 @@ type Props = {
     category?: string;
     type?: string;
     grade?: string;
-    source?: string;
     ownerId?: string;
+    tags?: string;
   }>;
 };
 
@@ -43,25 +47,31 @@ export default async function CustomersPage({ searchParams }: Props) {
   const params = await searchParams;
 
   const view = resolveCustomerListView(params.view, session.user.role);
-  const filters = parseCustomerListFilters(params);
+  const tagDefinitions = await getCustomerTagDefinitions();
+  const allowedTagValues = new Set(tagDefinitions.map((item) => item.value));
+  const parsedFilters = parseCustomerListFilters(params);
+  const filters = {
+    ...parsedFilters,
+    tags: normalizeCustomerListTagFilters(parsedFilters.tags, allowedTagValues),
+  };
   const tabs = customerListTabs(session.user.role);
   const listPath = buildCustomerListHref(view, filters);
   const where = buildCustomerListWhere(session.user.role, session.user.id, view, filters);
   const showOwnerFilter = canManageCustomerOwner(session.user.role) && view === "all";
   const filtersActive = hasActiveCustomerListFilters(filters);
 
-  const [rawCustomers, labelMaps, typeOptions, gradeOptions, sourceOptions, salesUsers] =
-    await Promise.all([
+  const [rawCustomers, labelMaps, typeOptions, salesUsers] = await Promise.all([
       prisma.customer.findMany({
         where,
         orderBy: filters.q ? { name: "asc" } : { updatedAt: "desc" },
-        include: { owner: { select: { name: true } } },
+        include: {
+          owner: { select: { name: true } },
+          tags: { select: { tagValue: true } },
+        },
         take: filters.q ? 200 : 100,
       }),
       loadCustomerFieldLabelMaps(),
       getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
       showOwnerFilter
         ? prisma.user.findMany({
             where: { role: { in: ["SALES", "SALES_MANAGER"] } },
@@ -75,9 +85,7 @@ export default async function CustomersPage({ searchParams }: Props) {
     ? rankByNameMatch(filters.q, rawCustomers).slice(0, 100)
     : rawCustomers;
 
-  const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const viewTitle =
     view === "pool" ? "公海池" : view === "all" ? "全部客户" : "我的客户";
@@ -129,8 +137,7 @@ export default async function CustomersPage({ searchParams }: Props) {
             view={view}
             filters={filters}
             typeOptions={typeOptions}
-            gradeOptions={gradeOptions}
-            sourceOptions={sourceOptions}
+            tagOptions={tagDefinitions}
             showOwnerFilter={showOwnerFilter}
             salesUsers={salesUsers}
           />
@@ -144,9 +151,9 @@ export default async function CustomersPage({ searchParams }: Props) {
                   <tr className="border-b text-left text-muted-foreground">
                     <th className="pb-2 pr-4">客户名称</th>
                     <th className="pb-2 pr-4">类别</th>
-                    <th className="pb-2 pr-4">类型</th>
+                    <th className="pb-2 pr-4">关系类型</th>
                     <th className="pb-2 pr-4">等级</th>
-                    <th className="pb-2 pr-4">来源</th>
+                    <th className="pb-2 pr-4">标签</th>
                     <th className="pb-2 pr-4">负责人</th>
                     <th className="pb-2">操作</th>
                   </tr>
@@ -157,8 +164,15 @@ export default async function CustomersPage({ searchParams }: Props) {
                       <td className="py-3 pr-4 font-medium">{c.name}</td>
                       <td className="py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
                       <td className="py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>
-                      <td className="py-3 pr-4">{labelForConfig(gradeLabels, c.customerGrade)}</td>
-                      <td className="py-3 pr-4">{labelForConfig(sourceLabels, c.source)}</td>
+                      <td className="py-3 pr-4">
+                        <CustomerGradeIcon grade={c.customerGrade} />
+                      </td>
+                      <td className="py-3 pr-4">
+                        <CustomerTagList
+                          tags={c.tags.map((item) => item.tagValue)}
+                          definitions={tagDefinitions}
+                        />
+                      </td>
                       <td className="py-3 pr-4">{c.owner?.name ?? "公海池"}</td>
                       <td className="py-3">
                         <Link

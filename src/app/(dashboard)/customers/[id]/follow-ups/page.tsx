@@ -9,7 +9,6 @@ import {
   CONFIG_CATEGORY,
   labelForConfig,
   loadCustomerFieldLabelMaps,
-  loadCustomerFormOptions,
 } from "@/lib/config-options";
 import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -17,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpForm } from "@/components/customers/follow-up-form";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
 import { BackLink } from "@/components/navigation/back-link";
+import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import {
   countCustomerFollowUps,
   getCustomerFollowUpHistory,
@@ -39,15 +39,13 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const canManage = canManageCustomerOwner(session.user.role);
   const canEdit = customer.ownerId === session.user.id || canManage;
 
-  const [followUps, followUpCount, labelMaps, formOptions] = await Promise.all([
+  const [followUps, followUpCount, labelMaps] = await Promise.all([
     getCustomerFollowUpHistory(id, 50),
     countCustomerFollowUps(id),
     loadCustomerFieldLabelMaps(),
-    loadCustomerFormOptions(),
   ]);
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const selfPath = selfReturnPath(`/customers/${id}/follow-ups`, query);
   const detailHref = selfReturnPath(`/customers/${id}`, query);
@@ -60,7 +58,12 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
           <p className="mt-1 text-muted-foreground">
             {customer.name} · {CUSTOMER_CATEGORY_LABELS[customer.category]}
             {customer.customerType && ` · ${labelForConfig(typeLabels, customer.customerType)}`}
-            {customer.customerGrade && ` · ${labelForConfig(gradeLabels, customer.customerGrade)}`}
+            {customer.customerGrade ? (
+              <>
+                {" · "}
+                <CustomerGradeIcon grade={customer.customerGrade} showLabel className="inline-flex" />
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex gap-2">
@@ -77,11 +80,7 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
             <CardTitle className="text-lg">新增跟进</CardTitle>
           </CardHeader>
           <CardContent>
-            <FollowUpForm
-              customerId={customer.id}
-              contacts={customer.contacts}
-              gradeOptions={formOptions.gradeOptions}
-            />
+            <FollowUpForm customerId={customer.id} contacts={customer.contacts} />
           </CardContent>
         </Card>
       ) : (

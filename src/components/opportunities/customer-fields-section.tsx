@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { CustomerCategory } from "@prisma/client";
 
@@ -111,20 +112,18 @@ export function CustomerFieldsSection({
 
       <SelectField
         id="customerType"
-        label="客户类型"
+        label="关系类型 *"
         name="customerType"
         options={withEmptyOption(typeOptions)}
         value={values.customerType}
         onValueChange={(customerType) => onChange({ customerType })}
+        required
       />
 
-      <SelectField
-        id="customerGrade"
-        label="客户等级"
-        name="customerGrade"
-        options={withEmptyOption(gradeOptions)}
+      <CustomerGradeSelect
         value={values.customerGrade}
         onValueChange={(customerGrade) => onChange({ customerGrade })}
+        required
       />
 
       <SelectField

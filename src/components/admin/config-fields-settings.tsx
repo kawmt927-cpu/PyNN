@@ -5,11 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
+  CONFIG_CATEGORY,
   CONFIG_CATEGORY_LABELS,
   type ConfigCategory,
   type ConfigModuleDef,
 } from "@/lib/config-options";
 import { CustomerFieldOptionsPanel } from "@/components/admin/customer-field-options-panel";
+import { CustomerTagOptionsPanel } from "@/components/admin/customer-tag-options-panel";
 
 type ConfigOptionRow = {
   id: string;
@@ -18,6 +20,7 @@ type ConfigOptionRow = {
   label: string;
   sortOrder: number;
   enabled: boolean;
+  color?: string | null;
 };
 
 type Props = {
@@ -184,13 +187,21 @@ export function ConfigFieldsSettings({
         </div>
       </div>
 
-      <CustomerFieldOptionsPanel
-        key={`${activeModule.id}-${activeField.category}`}
-        category={activeField.category}
-        title={fieldTitle}
-        options={activeOptions}
-        onDirtyChange={setIsDirty}
-      />
+      {activeField.category === CONFIG_CATEGORY.CUSTOMER_TAG ? (
+        <CustomerTagOptionsPanel
+          key={`${activeModule.id}-${activeField.category}`}
+          options={activeOptions}
+          onDirtyChange={setIsDirty}
+        />
+      ) : (
+        <CustomerFieldOptionsPanel
+          key={`${activeModule.id}-${activeField.category}`}
+          category={activeField.category}
+          title={fieldTitle}
+          options={activeOptions}
+          onDirtyChange={setIsDirty}
+        />
+      )}
     </div>
   );
 }

@@ -190,8 +190,10 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
         bedCount: z.number().int().positive().optional().describe("床位数"),
         existingSystem: z.string().optional().describe("现有系统"),
         source: z.string().optional().describe("客户来源（配置项 value）"),
-        customerType: z.string().optional().describe("客户类型（配置项 value）"),
-        customerGrade: z.string().optional().describe("客户等级（配置项 value）"),
+        customerType: z.string().describe("关系类型（配置项 value，必填）"),
+        customerGrade: z
+          .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
+          .describe("客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
         notes: z.string().optional().describe("备注"),
         contactName: z.string().optional().describe("主联系人姓名"),
         contactPhone: z.string().optional().describe("主联系人电话"),
@@ -212,7 +214,10 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
         result: z.string().optional().describe("跟进结果/意向"),
         followUpAt: z.string().describe("跟进时间 ISO8601，如 2026-06-20T14:30:00"),
         nextFollowUpAt: z.string().optional().describe("下次跟进时间 ISO8601"),
-        suggestedGrade: z.string().optional().describe("建议客户等级（配置项 value）"),
+        suggestedGrade: z
+          .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
+          .optional()
+          .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
         location: z.string().optional().describe("面访地点（面访时填写）"),
         department: z.string().optional().describe("面访科室"),
         companions: z.string().optional().describe("同行人员"),
@@ -276,7 +281,10 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
         result: z.string().optional().describe("结果/意向"),
         followUpAt: z.string().optional().describe("往来时间 ISO8601，默认打卡时间"),
         nextFollowUpAt: z.string().optional().describe("下次跟进时间"),
-        suggestedGrade: z.string().optional().describe("建议客户等级"),
+        suggestedGrade: z
+          .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
+          .optional()
+          .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
         location: z.string().optional().describe("面访地点"),
         detailedNotes: z.string().optional().describe("面访详细纪要"),
       }),

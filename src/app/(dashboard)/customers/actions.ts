@@ -10,6 +10,7 @@ import type { ActionResult } from "@/lib/action-result";
 import { customerFormSchema, followUpFormSchema, contactFormSchema, customerRelationSchema } from "@/lib/validations/customer";
 import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
+import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -23,6 +24,10 @@ function parseBedCount(raw: FormDataEntryValue | null): number | null {
   const n = Number(value);
   if (Number.isNaN(n) || n <= 0) return null;
   return Math.floor(n);
+}
+
+function parseTagValues(formData: FormData): string[] {
+  return formData.getAll("tagValues").map(String).filter(Boolean);
 }
 
 function parseOptionalField(raw: FormDataEntryValue | null): string | null {
@@ -61,10 +66,13 @@ async function validateCustomerConfigFields(data: {
   customerGrade?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  if (!data.customerType?.trim()) {
+    throw new Error("请选择关系类型");
+  }
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_GRADE, data.customerGrade),
+    customerGrade: requireCustomerGrade(data.customerGrade),
   };
 }
 
@@ -109,6 +117,9 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
       },
     });
 
+    const { replaceCustomerTags } = await import("@/lib/customers/tags");
+    await replaceCustomerTags(customer.id, parseTagValues(formData));
+
     revalidatePath("/customers");
     return { redirectTo: `/customers/${customer.id}` };
   } catch (error) {
@@ -147,6 +158,9 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
       },
     });
 
+    const { replaceCustomerTags } = await import("@/lib/customers/tags");
+    await replaceCustomerTags(id, parseTagValues(formData));
+
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
     return { redirectTo: `/customers/${id}` };
@@ -179,11 +193,7 @@ export async function createFollowUp(formData: FormData) {
   );
   if (!customer) throw new Error("无权访问该客户");
 
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  const suggestedGrade = await assertConfigValue(
-    CONFIG_CATEGORY.CUSTOMER_GRADE,
-    parsed.suggestedGrade
-  );
+  const suggestedGrade = assertCustomerGrade(parsed.suggestedGrade);
   const applyGrade = Boolean(suggestedGrade);
 
   await prisma.$transaction(async (tx) => {
