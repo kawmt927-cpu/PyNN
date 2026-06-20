@@ -45,10 +45,13 @@ type Props = {
   onCreated: (customer: { id: string; name: string }) => void;
 };
 
-const categoryOptions = Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, label]) => ({
-  value,
-  label,
-}));
+const categoryOptions = [
+  { value: "", label: "请选择" },
+  ...Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, label]) => ({
+    value,
+    label,
+  })),
+];
 
 const hospitalLevelOptions = [
   { value: "", label: "请选择" },
@@ -75,7 +78,7 @@ export function QuickCustomerDialog({
   onCreated,
 }: Props) {
   const [name, setName] = useState(initialName);
-  const [category, setCategory] = useState<CustomerCategory>("HOSPITAL");
+  const [category, setCategory] = useState<CustomerCategory | "">("");
   const [hospitalLevel, setHospitalLevel] = useState<HospitalLevel | "">("");
   const [bedCount, setBedCount] = useState("");
   const [province, setProvince] = useState(initialProvince);
@@ -100,7 +103,7 @@ export function QuickCustomerDialog({
     setProvince(initialProvince);
     setCity(initialCity);
     setDistrict(initialDistrict);
-    setCategory("HOSPITAL");
+    setCategory("");
     setHospitalLevel("");
     setBedCount("");
     setExistingSystem("");
@@ -115,14 +118,14 @@ export function QuickCustomerDialog({
     setNameCorrected(false);
   }, [open, initialName, initialProvince, initialCity, initialDistrict]);
 
-  const canEnrich = canUseCustomerKimiEnrich(category);
+  const canEnrich = category !== "" && canUseCustomerKimiEnrich(category);
 
   function handleKimiEnrich() {
     if (!name.trim()) {
       setError("请先填写客户名称");
       return;
     }
-    if (!canEnrich) {
+    if (!canEnrich || !category) {
       setError("仅医院或公司客户支持 Kimi 检索");
       return;
     }
@@ -159,6 +162,18 @@ export function QuickCustomerDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!category) {
+      setError("请选择客户类别");
+      return;
+    }
+    if (!customerType.trim()) {
+      setError("请选择关系类型");
+      return;
+    }
+    if (!customerGrade.trim()) {
+      setError("请选择客户等级");
+      return;
+    }
     startTransition(async () => {
       try {
         const res = await fetch("/api/customers/quick-create", {
@@ -234,12 +249,12 @@ export function QuickCustomerDialog({
               <select
                 id="quickCustomerCategory"
                 value={category}
-                onChange={(e) => setCategory(e.target.value as CustomerCategory)}
+                onChange={(e) => setCategory(e.target.value as CustomerCategory | "")}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 required
               >
                 {categoryOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
+                  <option key={opt.value || "empty"} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
@@ -357,7 +372,16 @@ export function QuickCustomerDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit" disabled={pending || !name.trim()}>
+            <Button
+              type="submit"
+              disabled={
+                pending ||
+                !name.trim() ||
+                !category ||
+                !customerType.trim() ||
+                !customerGrade.trim()
+              }
+            >
               {pending ? "创建中…" : "创建并返回"}
             </Button>
           </div>

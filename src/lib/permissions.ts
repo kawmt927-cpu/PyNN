@@ -72,8 +72,9 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/sales-log", label: "外勤日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
+  { href: "/today-work", label: "今日工作", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/mobile/log", label: "AI 日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
+  { href: "/weekly-tasks", label: "每周任务", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/dashboard", label: "仪表盘", roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },

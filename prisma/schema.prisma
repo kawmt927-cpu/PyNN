@@ -153,6 +153,12 @@ enum SalesCheckInStatus {
   COMPLETED
 }
 
+enum SalesWeeklyAssignmentStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
 enum PresalesAssignmentStatus {
   ACTIVE
   COMPLETED
@@ -203,6 +209,8 @@ model User {
   aiAgentConfigsUpdated   AiAgentConfig[]      @relation("AiAgentConfigUpdater")
   amapConfigsUpdated      AmapConfig[]         @relation("AmapConfigUpdater")
   salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
+  weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
+  weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
 }
 
 model PersonnelProfile {
@@ -255,6 +263,7 @@ model Customer {
   opportunities Opportunity[]
   salesCheckIns SalesCheckIn[]
   tags          CustomerTag[]
+  weeklyAssignments SalesWeeklyAssignment[]
 }
 
 model CustomerTag {
@@ -342,6 +351,7 @@ model FollowUp {
   salesCheckIn   SalesCheckIn?
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
   salesDailyLogId String?
+  weeklyAssignment SalesWeeklyAssignment?
 }
 
 model FaceVisitDetail {
@@ -385,6 +395,7 @@ model Opportunity {
   contracts  Contract[]
   stageLogs  OpportunityStageLog[]
   followUps  OpportunityFollowUp[]
+  weeklyAssignments SalesWeeklyAssignment[]
 
   @@index([ownerId])
   @@index([customerId])
@@ -634,6 +645,31 @@ model SalesTask {
   user     User      @relation(fields: [userId], references: [id])
   customer Customer  @relation(fields: [customerId], references: [id])
   followUp FollowUp? @relation(fields: [followUpId], references: [id])
+}
+
+model SalesWeeklyAssignment {
+  id            String                      @id @default(cuid())
+  createdById   String
+  assigneeId    String
+  customerId    String?
+  opportunityId String?
+  title         String
+  description   String?
+  dueAt         DateTime
+  status        SalesWeeklyAssignmentStatus @default(PENDING)
+  completedAt   DateTime?
+  followUpId    String?                     @unique
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+
+  createdBy   User         @relation("WeeklyAssignmentCreator", fields: [createdById], references: [id])
+  assignee    User         @relation("WeeklyAssignmentAssignee", fields: [assigneeId], references: [id])
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
+  followUp    FollowUp?    @relation(fields: [followUpId], references: [id])
+
+  @@index([assigneeId, status, dueAt])
+  @@index([createdById])
 }
 
 model SalesCheckIn {

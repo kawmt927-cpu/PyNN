@@ -29,7 +29,7 @@ export function CustomerGradeSelect({
   className,
 }: Props) {
   const gradeOptions = getCustomerGradeOptions();
-  const options = required ? gradeOptions : withEmptyOption(gradeOptions);
+  const options = withEmptyOption(gradeOptions);
   const displayLabel = required ? `${label} *` : label;
 
   return (

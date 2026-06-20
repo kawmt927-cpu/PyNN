@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
+import type { EntitySearchSelectHandle } from "@/components/ui/entity-search-select";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import type { CheckInMode } from "@/lib/validations/sales-log";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
@@ -38,6 +39,7 @@ export function CheckInForm({
   customerFormOptions: CheckInCustomerFormOptions;
 }) {
   const router = useRouter();
+  const customerSelectRef = useRef<EntitySearchSelectHandle>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [checkInMode, setCheckInMode] = useState<CheckInMode>("interaction");
@@ -56,8 +58,9 @@ export function CheckInForm({
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
 
-  function openCreateCustomer(name = "") {
-    setNewCustomerName(name);
+  function openCreateCustomer(name?: string) {
+    const draft = (name ?? customerSelectRef.current?.getDraftQuery() ?? "").trim();
+    setNewCustomerName(draft);
     setCustomerDialogOpen(true);
   }
 
@@ -181,6 +184,7 @@ export function CheckInForm({
               <div className="flex flex-wrap items-end justify-between gap-2">
                 <div className="min-w-[240px] flex-1">
                   <CustomerSearchSelect
+                    ref={customerSelectRef}
                     id="checkInCustomer"
                     name="customerId"
                     label="客户"

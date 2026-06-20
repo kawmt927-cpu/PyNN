@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import { forwardRef, useCallback } from "react";
 import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import type { CustomerCategory } from "@prisma/client";
 import {
   EntitySearchSelect,
+  type EntitySearchSelectHandle,
   type SearchSelectOption,
 } from "@/components/ui/entity-search-select";
 
@@ -48,24 +49,22 @@ async function fetchCustomers(
   }));
 }
 
-export function CustomerSearchSelect({
-  excludeId,
-  excludeIds,
-  onCreateNew,
-  ...props
-}: Props) {
-  const onSearch = useCallback(
-    (q: string) => fetchCustomers(q, excludeId, excludeIds),
-    [excludeId, excludeIds]
-  );
+export const CustomerSearchSelect = forwardRef<EntitySearchSelectHandle, Props>(
+  function CustomerSearchSelect({ excludeId, excludeIds, onCreateNew, ...props }, ref) {
+    const onSearch = useCallback(
+      (q: string) => fetchCustomers(q, excludeId, excludeIds),
+      [excludeId, excludeIds]
+    );
 
-  return (
-    <EntitySearchSelect
-      {...props}
-      placeholder={props.placeholder ?? "输入客户名称搜索…"}
-      onSearch={onSearch}
-      onCreateNew={onCreateNew}
-      createNewLabel="新增客户"
-    />
-  );
-}
+    return (
+      <EntitySearchSelect
+        ref={ref}
+        {...props}
+        placeholder={props.placeholder ?? "输入客户名称搜索…"}
+        onSearch={onSearch}
+        onCreateNew={onCreateNew}
+        createNewLabel="新增客户"
+      />
+    );
+  }
+);

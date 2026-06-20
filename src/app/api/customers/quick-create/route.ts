@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     );
 
     revalidatePath("/customers");
-    revalidatePath("/sales-log");
+    revalidatePath("/today-work");
     return Response.json({ id: customer.id, name: customer.name });
   } catch (error) {
     if (error instanceof z.ZodError) {

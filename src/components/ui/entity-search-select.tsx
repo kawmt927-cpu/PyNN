@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,10 @@ export type SearchSelectOption = {
   id: string;
   label: string;
   description?: string;
+};
+
+export type EntitySearchSelectHandle = {
+  getDraftQuery: () => string;
 };
 
 type Props = {
@@ -27,21 +31,24 @@ type Props = {
   createNewLabel?: string;
 };
 
-export function EntitySearchSelect({
-  id,
-  name,
-  label,
-  required,
-  placeholder = "输入关键字搜索…",
-  value,
-  selectedLabel,
-  onValueChange,
-  onSearch,
-  disabled,
-  className,
-  onCreateNew,
-  createNewLabel = "新增客户",
-}: Props) {
+export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(function EntitySearchSelect(
+  {
+    id,
+    name,
+    label,
+    required,
+    placeholder = "输入关键字搜索…",
+    value,
+    selectedLabel,
+    onValueChange,
+    onSearch,
+    disabled,
+    className,
+    onCreateNew,
+    createNewLabel = "新增客户",
+  },
+  ref
+) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -51,6 +58,25 @@ export function EntitySearchSelect({
 
   const showSelected = Boolean(value && selectedLabel && !editing);
   const inputValue = showSelected ? selectedLabel : query;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getDraftQuery: () => (editing ? query.trim() : selectedLabel.trim()),
+    }),
+    [editing, query, selectedLabel]
+  );
+
+  const handleCreateNew = useCallback(
+    (draft: string) => {
+      if (!onCreateNew || !draft) return;
+      onCreateNew(draft);
+      setOpen(false);
+      setEditing(false);
+      setQuery("");
+    },
+    [onCreateNew]
+  );
 
   useEffect(() => {
     if (!editing) {
@@ -150,11 +176,7 @@ export function EntitySearchSelect({
                   type="button"
                   className="block w-full px-3 py-2 text-left text-sm font-medium text-primary hover:bg-muted"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    onCreateNew(query.trim());
-                    setOpen(false);
-                    setEditing(false);
-                  }}
+                  onClick={() => handleCreateNew(query.trim())}
                 >
                   {createNewLabel}「{query.trim()}」
                 </button>
@@ -177,10 +199,22 @@ export function EntitySearchSelect({
                   </button>
                 </li>
               ))}
+              {onCreateNew && query.trim() ? (
+                <li className="border-t">
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-2 text-left text-sm font-medium text-primary hover:bg-muted"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleCreateNew(query.trim())}
+                  >
+                    {createNewLabel}「{query.trim()}」
+                  </button>
+                </li>
+              ) : null}
             </ul>
           )}
         </div>
       )}
     </div>
   );
-}
+});
