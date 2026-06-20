@@ -7,26 +7,31 @@ import {
   SIGNING_TYPE_LABELS,
 } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { BackLink } from "@/components/navigation/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { resolveBackNavigation, selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 };
 
-export default async function ContractDetailPage({ params }: Props) {
+export default async function ContractDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"]);
   const contract = await getContractForUser(id, session.user.role, session.user.id);
   if (!contract) notFound();
+
+  const { backHref, backLabel } = resolveBackNavigation(query, "/contracts");
+  const selfPath = selfReturnPath(`/contracts/${id}`, query);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{contract.title}</h1>
-        <Button asChild variant="outline">
-          <Link href="/contracts">返回列表</Link>
-        </Button>
+        <BackLink href={backHref} label={backLabel} />
       </div>
 
       <Card>
@@ -49,7 +54,7 @@ export default async function ContractDetailPage({ params }: Props) {
           <p>
             <span className="text-muted-foreground">签约客户：</span>
             <Link
-              href={`/customers/${contract.signCustomer.id}`}
+              href={withReturnTo(`/customers/${contract.signCustomer.id}`, selfPath)}
               className="text-primary hover:underline"
             >
               {contract.signCustomer.name}
@@ -58,7 +63,7 @@ export default async function ContractDetailPage({ params }: Props) {
           <p>
             <span className="text-muted-foreground">终用户：</span>
             <Link
-              href={`/customers/${contract.endUserCustomer.id}`}
+              href={withReturnTo(`/customers/${contract.endUserCustomer.id}`, selfPath)}
               className="text-primary hover:underline"
             >
               {contract.endUserCustomer.name}
@@ -72,7 +77,7 @@ export default async function ContractDetailPage({ params }: Props) {
             <p>
               <span className="text-muted-foreground">关联商机：</span>
               <Link
-                href={`/opportunities/${contract.opportunity.id}`}
+                href={withReturnTo(`/opportunities/${contract.opportunity.id}`, selfPath)}
                 className="text-primary hover:underline"
               >
                 {contract.opportunity.title}

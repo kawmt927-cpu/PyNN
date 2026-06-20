@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { WECOM_JS_SDK_URL } from "@/lib/wecom/config";
 
 type SdkConfig = {
@@ -21,8 +21,14 @@ type WeixinWindow = Window & {
       success: (res: { latitude: number; longitude: number }) => void;
       fail: (err: unknown) => void;
     }) => void;
-    startRecord: () => void;
-    stopRecord: (opts: { success: (res: { localId: string }) => void; fail: (err: unknown) => void }) => void;
+    startRecord: (opts?: {
+      success?: () => void;
+      fail?: (err: unknown) => void;
+    }) => void;
+    stopRecord: (opts: {
+      success: (res: { localId: string }) => void;
+      fail: (err: unknown) => void;
+    }) => void;
     onVoiceRecordEnd: (opts: { complete: (res: { localId: string }) => void }) => void;
     translateVoice: (opts: {
       localId: string;
@@ -48,9 +54,21 @@ function loadScript(src: string) {
   });
 }
 
+function translateVoiceLocalId(wx: NonNullable<WeixinWindow["wx"]>, localId: string) {
+  return new Promise<string>((resolve, reject) => {
+    wx.translateVoice({
+      localId,
+      isShowProgressTips: 1,
+      success: (r) => resolve(r.translateResult ?? ""),
+      fail: reject,
+    });
+  });
+}
+
 export function useWeComSdk(enabled: boolean) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const voiceEndHandlerRef = useRef<((localId: string) => void) | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -106,6 +124,12 @@ export function useWeComSdk(enabled: boolean) {
           wx.error((err: unknown) => reject(err));
         });
 
+        wx.onVoiceRecordEnd({
+          complete: (res) => {
+            voiceEndHandlerRef.current?.(res.localId);
+          },
+        });
+
         if (!cancelled) setReady(true);
       } catch (e) {
         if (!cancelled) {
@@ -138,20 +162,25 @@ export function useWeComSdk(enabled: boolean) {
     if (!wx || !ready) throw new Error("企业微信 SDK 未就绪");
 
     return new Promise<string>((resolve, reject) => {
-      wx.onVoiceRecordEnd({
-        complete: (res) => {
-          wx.translateVoice({
-            localId: res.localId,
-            isShowProgressTips: 1,
-            success: (r) => resolve(r.translateResult),
-            fail: reject,
-          });
-        },
-      });
+      let settled = false;
+
+      const finish = (localId: string) => {
+        if (settled) return;
+        settled = true;
+        voiceEndHandlerRef.current = null;
+        translateVoiceLocalId(wx, localId).then(resolve).catch(reject);
+      };
+
+      voiceEndHandlerRef.current = finish;
 
       wx.stopRecord({
-        success: () => {},
-        fail: reject,
+        success: (res) => finish(res.localId),
+        fail: (err) => {
+          if (settled) return;
+          settled = true;
+          voiceEndHandlerRef.current = null;
+          reject(err);
+        },
       });
     });
   }, [ready]);
@@ -159,7 +188,13 @@ export function useWeComSdk(enabled: boolean) {
   const startVoiceRecord = useCallback(() => {
     const wx = (window as WeixinWindow).wx;
     if (!wx || !ready) throw new Error("企业微信 SDK 未就绪");
-    wx.startRecord();
+
+    return new Promise<void>((resolve, reject) => {
+      wx.startRecord({
+        success: () => resolve(),
+        fail: reject,
+      });
+    });
   }, [ready]);
 
   return {

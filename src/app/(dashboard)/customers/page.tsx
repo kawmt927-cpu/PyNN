@@ -1,46 +1,92 @@
+import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
-  customerListWhere,
+  canManageCustomerOwner,
   customerListTabs,
   resolveCustomerListView,
 } from "@/lib/customers/access";
 import {
+  buildCustomerListHref,
+  buildCustomerListWhere,
+  hasActiveCustomerListFilters,
+  parseCustomerListFilters,
+} from "@/lib/customers/list-filters";
+import {
   CONFIG_CATEGORY,
+  getConfigOptions,
   labelForConfig,
   loadCustomerFieldLabelMaps,
 } from "@/lib/config-options";
 import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CustomerListFilters } from "@/components/customers/customer-list-filters";
 import { cn } from "@/lib/utils";
+import { rankByNameMatch } from "@/lib/search/fuzzy-text";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{
+    view?: string;
+    q?: string;
+    category?: string;
+    type?: string;
+    grade?: string;
+    source?: string;
+    ownerId?: string;
+  }>;
 };
 
 export default async function CustomersPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const { view: rawView } = await searchParams;
+  const params = await searchParams;
 
-  const view = resolveCustomerListView(rawView, session.user.role);
+  const view = resolveCustomerListView(params.view, session.user.role);
+  const filters = parseCustomerListFilters(params);
   const tabs = customerListTabs(session.user.role);
-  const where = customerListWhere(session.user.role, session.user.id, view);
+  const listPath = buildCustomerListHref(view, filters);
+  const where = buildCustomerListWhere(session.user.role, session.user.id, view, filters);
+  const showOwnerFilter = canManageCustomerOwner(session.user.role) && view === "all";
+  const filtersActive = hasActiveCustomerListFilters(filters);
 
-  const [customers, labelMaps] = await Promise.all([
-    prisma.customer.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      include: { owner: { select: { name: true } } },
-      take: 100,
-    }),
-    loadCustomerFieldLabelMaps(),
-  ]);
+  const [rawCustomers, labelMaps, typeOptions, gradeOptions, sourceOptions, salesUsers] =
+    await Promise.all([
+      prisma.customer.findMany({
+        where,
+        orderBy: filters.q ? { name: "asc" } : { updatedAt: "desc" },
+        include: { owner: { select: { name: true } } },
+        take: filters.q ? 200 : 100,
+      }),
+      loadCustomerFieldLabelMaps(),
+      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
+      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
+      showOwnerFilter
+        ? prisma.user.findMany({
+            where: { role: { in: ["SALES", "SALES_MANAGER"] } },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
+    ]);
+
+  const customers = filters.q
+    ? rankByNameMatch(filters.q, rawCustomers).slice(0, 100)
+    : rawCustomers;
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+
+  const viewTitle =
+    view === "pool" ? "公海池" : view === "all" ? "全部客户" : "我的客户";
+
+  const emptyMessage = filtersActive
+    ? "没有符合条件的客户，请调整搜索或筛选条件。"
+    : view === "pool"
+      ? "公海池暂无客户。"
+      : "暂无客户，点击「新增客户」开始录入。";
 
   return (
     <div className="space-y-6">
@@ -71,17 +117,26 @@ export default async function CustomersPage({ searchParams }: Props) {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
-            {view === "pool" ? "公海池" : view === "all" ? "全部客户" : "我的客户"}
+            {viewTitle}
             <span className="ml-2 text-sm font-normal text-muted-foreground">
-              ({customers.length})
+              ({customers.length}
+              {filtersActive ? " 条匹配" : ""})
             </span>
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <CustomerListFilters
+            view={view}
+            filters={filters}
+            typeOptions={typeOptions}
+            gradeOptions={gradeOptions}
+            sourceOptions={sourceOptions}
+            showOwnerFilter={showOwnerFilter}
+            salesUsers={salesUsers}
+          />
+
           {customers.length === 0 ? (
-            <p className="text-muted-foreground">
-              {view === "pool" ? "公海池暂无客户。" : "暂无客户，点击「新增客户」开始录入。"}
-            </p>
+            <p className="text-muted-foreground">{emptyMessage}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -107,7 +162,7 @@ export default async function CustomersPage({ searchParams }: Props) {
                       <td className="py-3 pr-4">{c.owner?.name ?? "公海池"}</td>
                       <td className="py-3">
                         <Link
-                          href={`/customers/${c.id}`}
+                          href={withReturnTo(`/customers/${c.id}`, listPath)}
                           className="text-primary hover:underline"
                         >
                           详情

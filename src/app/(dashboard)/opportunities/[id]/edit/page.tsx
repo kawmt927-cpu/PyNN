@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -9,21 +8,27 @@ import {
 } from "@/lib/opportunities/access";
 import { CONFIG_CATEGORY, getConfigOptions, loadCustomerFormOptions } from "@/lib/config-options";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
-import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/navigation/back-link";
+import { selfReturnPath } from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 };
 
-export default async function EditOpportunityPage({ params }: Props) {
+export default async function EditOpportunityPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
 
   const full = await prisma.opportunity.findUnique({
     where: { id },
-    include: { owner: { select: { id: true, name: true } } },
+    include: {
+      owner: { select: { id: true, name: true } },
+      customer: { select: { name: true } },
+    },
   });
   if (!full) notFound();
   if (full.status === "ABANDONED") notFound();
@@ -31,13 +36,7 @@ export default async function EditOpportunityPage({ params }: Props) {
 
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [customers, stageOptions, customerFormOptions, salesUsers] = await Promise.all([
-    prisma.customer.findMany({
-      where: session.user.role === "SALES" ? { ownerId: session.user.id } : {},
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-      take: 500,
-    }),
+  const [stageOptions, customerFormOptions, salesUsers] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
     loadCustomerFormOptions(),
     showOwnerSelect
@@ -49,13 +48,13 @@ export default async function EditOpportunityPage({ params }: Props) {
       : Promise.resolve([]),
   ]);
 
+  const detailHref = selfReturnPath(`/opportunities/${id}`, query);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">编辑商机</h1>
-        <Button asChild variant="outline">
-          <Link href={`/opportunities/${id}`}>返回详情</Link>
-        </Button>
+        <BackLink href={detailHref} />
       </div>
 
       <OpportunityForm
@@ -66,7 +65,7 @@ export default async function EditOpportunityPage({ params }: Props) {
         readOnlyOwner={
           showOwnerSelect ? undefined : { id: full.owner.id, name: full.owner.name }
         }
-        customers={customers}
+        initialCustomerName={full.customer.name}
         stageOptions={stageOptions}
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}

@@ -13,13 +13,27 @@ export function canManageOpportunityStatus(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
 }
 
-/** 编辑商机内容、跟进（已放弃不可） */
+/** 编辑商机内容（已放弃不可；已签约仅销售管理/管理员） */
 export function canEditOpportunityContent(
   role: UserRole,
   userId: string,
   opportunity: { ownerId: string; status: OpportunityStatus }
 ) {
   if (opportunity.status === "ABANDONED") return false;
+  if (opportunity.status === "SIGNED") {
+    return canManageOpportunityOwner(role);
+  }
+  if (canManageOpportunityOwner(role)) return true;
+  return opportunity.ownerId === userId;
+}
+
+/** 跟进商机（仅未签约；已签约不可跟进） */
+export function canFollowUpOpportunity(
+  role: UserRole,
+  userId: string,
+  opportunity: { ownerId: string; status: OpportunityStatus }
+) {
+  if (opportunity.status !== "NOT_SIGNED") return false;
   if (canManageOpportunityOwner(role)) return true;
   return opportunity.ownerId === userId;
 }
@@ -36,6 +50,49 @@ export function canEditOpportunity(
 export function opportunityListWhere(role: UserRole, userId: string) {
   if (canViewAllOpportunities(role)) return {};
   return { ownerId: userId };
+}
+
+export type OpportunityListView = "not_signed" | "signed" | "abandoned" | "all";
+
+const OPPORTUNITY_LIST_VIEW_LABELS: Record<OpportunityListView, string> = {
+  not_signed: "未签约商机",
+  signed: "已签约商机",
+  abandoned: "已放弃商机",
+  all: "全部商机",
+};
+
+export function resolveOpportunityListView(rawView: string | undefined): OpportunityListView {
+  if (rawView === "signed") return "signed";
+  if (rawView === "abandoned") return "abandoned";
+  if (rawView === "all") return "all";
+  return "not_signed";
+}
+
+export function opportunityListTabs() {
+  return (["not_signed", "signed", "abandoned", "all"] as const).map((key) => ({
+    key,
+    label: OPPORTUNITY_LIST_VIEW_LABELS[key],
+    href: key === "not_signed" ? "/opportunities" : `/opportunities?view=${key}`,
+  }));
+}
+
+export function opportunityListWhereWithView(
+  role: UserRole,
+  userId: string,
+  view: OpportunityListView = "not_signed"
+) {
+  const base = opportunityListWhere(role, userId);
+  if (view === "all") return base;
+  const statusMap: Record<Exclude<OpportunityListView, "all">, OpportunityStatus> = {
+    not_signed: "NOT_SIGNED",
+    signed: "SIGNED",
+    abandoned: "ABANDONED",
+  };
+  return { ...base, status: statusMap[view] };
+}
+
+export function opportunityListViewLabel(view: OpportunityListView) {
+  return OPPORTUNITY_LIST_VIEW_LABELS[view];
 }
 
 export async function getOpportunityForUser(id: string, role: UserRole, userId: string) {

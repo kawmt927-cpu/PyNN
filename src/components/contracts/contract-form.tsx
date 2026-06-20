@@ -7,24 +7,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
+import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-search-select";
 import { createContract, createContractFromOpportunity } from "@/app/(dashboard)/contracts/actions";
 import { SIGNING_TYPE_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import type { ActionResult } from "@/lib/action-result";
 
-type CustomerOption = { id: string; name: string };
 type SalesOption = { id: string; name: string };
 
 type Props = {
-  customers: CustomerOption[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
   opportunityId?: string;
+  opportunityTitle?: string;
   defaultValues?: {
     title?: string;
     totalAmount?: number;
     signCustomerId?: string;
+    signCustomerName?: string;
     endUserCustomerId?: string;
+    endUserCustomerName?: string;
     ownerId?: string;
   };
   submitLabel?: string;
@@ -43,10 +46,10 @@ function toDateInput(value?: Date | string | null) {
 }
 
 export function ContractForm({
-  customers,
   showOwnerSelect,
   salesUsers = [],
   opportunityId,
+  opportunityTitle,
   defaultValues,
   submitLabel = "创建合同",
 }: Props) {
@@ -54,18 +57,33 @@ export function ContractForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const customerOptions = [
-    { value: "", label: "请选择" },
-    ...customers.map((c) => ({ value: c.id, label: c.name })),
-  ];
+  const [linkedOpportunityId, setLinkedOpportunityId] = useState(opportunityId ?? "");
+  const [linkedOpportunityLabel, setLinkedOpportunityLabel] = useState(opportunityTitle ?? "");
+
+  const [signCustomerId, setSignCustomerId] = useState(defaultValues?.signCustomerId ?? "");
+  const [signCustomerLabel, setSignCustomerLabel] = useState(defaultValues?.signCustomerName ?? "");
+
+  const [endUserCustomerId, setEndUserCustomerId] = useState(
+    defaultValues?.endUserCustomerId ?? defaultValues?.signCustomerId ?? ""
+  );
+  const [endUserCustomerLabel, setEndUserCustomerLabel] = useState(
+    defaultValues?.endUserCustomerName ?? defaultValues?.signCustomerName ?? ""
+  );
 
   function handleSubmit(formData: FormData) {
-    if (opportunityId) formData.set("opportunityId", opportunityId);
+    formData.set("signCustomerId", signCustomerId);
+    formData.set("endUserCustomerId", endUserCustomerId);
+
+    const resolvedOpportunityId = opportunityId ?? linkedOpportunityId;
+    if (resolvedOpportunityId) {
+      formData.set("opportunityId", resolvedOpportunityId);
+    }
+
     startTransition(async () => {
       setError(null);
       try {
-        const result: ActionResult = opportunityId
-          ? await createContractFromOpportunity(opportunityId, formData)
+        const result: ActionResult = resolvedOpportunityId
+          ? await createContractFromOpportunity(resolvedOpportunityId, formData)
           : await createContract(formData);
         if (result.error) {
           setError(result.error);
@@ -90,6 +108,23 @@ export function ContractForm({
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
+        {!opportunityId && (
+          <div className="md:col-span-2">
+            <OpportunitySearchSelect
+              id="opportunityId"
+              name="opportunityId"
+              label="关联商机（可选）"
+              value={linkedOpportunityId}
+              selectedLabel={linkedOpportunityLabel}
+              onValueChange={(id, option) => {
+                setLinkedOpportunityId(id);
+                setLinkedOpportunityLabel(option?.label ?? "");
+              }}
+              status="ALL"
+            />
+          </div>
+        )}
+
         <div className="space-y-2 md:col-span-2">
           <Label htmlFor="title">合同标题 *</Label>
           <Input id="title" name="title" defaultValue={defaultValues?.title ?? ""} required />
@@ -116,20 +151,30 @@ export function ContractForm({
           defaultValue="DIRECT"
         />
 
-        <SelectField
+        <CustomerSearchSelect
           id="signCustomerId"
-          label="签约客户 *"
           name="signCustomerId"
-          options={customerOptions}
-          defaultValue={defaultValues?.signCustomerId ?? ""}
+          label="签约客户 *"
+          required
+          value={signCustomerId}
+          selectedLabel={signCustomerLabel}
+          onValueChange={(id, option) => {
+            setSignCustomerId(id);
+            setSignCustomerLabel(option?.label ?? "");
+          }}
         />
 
-        <SelectField
+        <CustomerSearchSelect
           id="endUserCustomerId"
-          label="终用户 *"
           name="endUserCustomerId"
-          options={customerOptions}
-          defaultValue={defaultValues?.endUserCustomerId ?? defaultValues?.signCustomerId ?? ""}
+          label="终用户 *"
+          required
+          value={endUserCustomerId}
+          selectedLabel={endUserCustomerLabel}
+          onValueChange={(id, option) => {
+            setEndUserCustomerId(id);
+            setEndUserCustomerLabel(option?.label ?? "");
+          }}
         />
 
         {showOwnerSelect && (

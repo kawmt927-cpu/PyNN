@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
 import {
   CustomerFieldsSection,
   emptyCustomerDraft,
@@ -18,7 +19,6 @@ import type { ConfigOptionItem } from "@/lib/config-options";
 import type { ActionResult } from "@/lib/action-result";
 import type { OpportunityStatus } from "@prisma/client";
 
-type CustomerOption = { id: string; name: string };
 type SalesOption = { id: string; name: string };
 
 export type OpportunityFormValues = {
@@ -40,7 +40,8 @@ type Props = {
   mode: "create" | "edit";
   opportunityId?: string;
   submitLabel: string;
-  customers: CustomerOption[];
+  /** 用于编辑时展示已选客户名称 */
+  initialCustomerName?: string;
   stageOptions: ConfigOptionItem[];
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
@@ -53,8 +54,8 @@ type Props = {
   initial?: Partial<OpportunityFormValues>;
 };
 
-function withEmptyOption(options: ConfigOptionItem[], label = "请选择") {
-  return [{ value: "", label }, ...options];
+function withEmptyOption(options: ConfigOptionItem[] | undefined, label = "请选择") {
+  return [{ value: "", label }, ...(options ?? [])];
 }
 
 function buildInitialState(
@@ -99,11 +100,11 @@ export function OpportunityForm({
   mode,
   opportunityId,
   submitLabel,
-  customers,
-  stageOptions,
-  sourceOptions,
-  typeOptions,
-  gradeOptions,
+  initialCustomerName,
+  stageOptions = [],
+  sourceOptions = [],
+  typeOptions = [],
+  gradeOptions = [],
   currentUser,
   readOnlyOwner,
   showOwnerSelect,
@@ -113,7 +114,8 @@ export function OpportunityForm({
   const router = useRouter();
   const [customerMode, setCustomerMode] = useState<"existing" | "new">("existing");
   const [form, setForm] = useState(() => buildInitialState(currentUser.id, initial));
-  const [customerDraft, setCustomerDraft] = useState<CustomerDraftValues>(emptyCustomerDraft);
+  const [customerLabel, setCustomerLabel] = useState(initialCustomerName ?? "");
+  const [customerDraft, setCustomerDraft] = useState<CustomerDraftValues>(emptyCustomerDraft());
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -194,16 +196,17 @@ export function OpportunityForm({
             </label>
           </div>
           {customerMode === "existing" ? (
-            <SelectField
+            <CustomerSearchSelect
               id="customerId"
-              label="客户 *"
               name="customerId"
-              options={[
-                { value: "", label: "请选择客户" },
-                ...customers.map((c) => ({ value: c.id, label: c.name })),
-              ]}
+              label="客户 *"
+              required
               value={form.customerId}
-              onValueChange={(customerId) => patchForm({ customerId })}
+              selectedLabel={customerLabel}
+              onValueChange={(customerId, option) => {
+                patchForm({ customerId });
+                setCustomerLabel(option?.label ?? "");
+              }}
             />
           ) : (
             <CustomerFieldsSection
@@ -236,7 +239,7 @@ export function OpportunityForm({
             id="ownerId"
             label="负责销售 *"
             name="ownerId"
-            options={salesUsers.map((u) => ({ value: u.id, label: u.name }))}
+            options={(salesUsers ?? []).map((u) => ({ value: u.id, label: u.name }))}
             value={form.ownerId}
             onValueChange={(ownerId) => patchForm({ ownerId })}
           />

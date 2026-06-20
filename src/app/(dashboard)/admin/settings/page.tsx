@@ -17,7 +17,11 @@ import {
   SETTINGS_TAB,
 } from "@/lib/config-settings-access";
 import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings";
+import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
+import { AmapSettings } from "@/components/admin/amap-settings";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
+import { getAiAgentConfigForAdmin } from "@/lib/agent/config";
+import { getAmapConfigForAdmin } from "@/lib/amap/config";
 
 type Props = {
   searchParams: Promise<{ tab?: string; module?: string; field?: string }>;
@@ -43,12 +47,14 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     rawField
   );
 
-  const [users, optionsByCategory] = await Promise.all([
+  const [users, optionsByCategory, aiAgentConfig, amapConfig] = await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, email: true, role: true, wecomUserId: true },
     }),
     getAllConfigOptionsGrouped(),
+    role === "ADMIN" ? getAiAgentConfigForAdmin() : Promise.resolve(null),
+    role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
   ]);
 
   const wecomReady = isWeComConfigured();
@@ -80,7 +86,25 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             </Suspense>
           </CardContent>
         </Card>
-      ) : (
+      ) : activeTab === SETTINGS_TAB.AI && aiAgentConfig ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI 助手（Kimi Agent）</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AiAgentSettings initial={aiAgentConfig} />
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.AMAP && amapConfig ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>打卡定位（高德地图）</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AmapSettings initial={amapConfig} />
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.WECOM ? (
         <>
           <Card>
             <CardHeader>
@@ -165,7 +189,7 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             </CardContent>
           </Card>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

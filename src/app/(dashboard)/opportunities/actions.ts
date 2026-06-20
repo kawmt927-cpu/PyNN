@@ -16,6 +16,7 @@ import {
 import {
   canManageOpportunityOwner,
   canEditOpportunityContent,
+  canFollowUpOpportunity,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
 import { buildOpportunityEditChanges } from "@/lib/opportunities/edit-log";
@@ -343,7 +344,6 @@ export async function restoreOpportunityStatus(formData: FormData): Promise<Acti
     const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
     const parsed = restoreOpportunityStatusSchema.parse({
       opportunityId: formData.get("opportunityId"),
-      status: formData.get("status"),
     });
 
     const existing = await prisma.opportunity.findUnique({
@@ -358,10 +358,9 @@ export async function restoreOpportunityStatus(formData: FormData): Promise<Acti
       await tx.opportunity.update({
         where: { id: parsed.opportunityId },
         data: {
-          status: parsed.status,
+          status: "NOT_SIGNED",
           abandonReason: null,
           abandonNote: null,
-          amountLocked: parsed.status === "SIGNED" ? true : existing.amountLocked,
         },
       });
 
@@ -371,7 +370,7 @@ export async function restoreOpportunityStatus(formData: FormData): Promise<Acti
           userId: session.user.id,
           fromStage: existing.stage,
           toStage: existing.stage,
-          note: `状态变更: ${OPPORTUNITY_STATUS_LABELS.ABANDONED} → ${OPPORTUNITY_STATUS_LABELS[parsed.status]}`,
+          note: `状态变更: ${OPPORTUNITY_STATUS_LABELS.ABANDONED} → ${OPPORTUNITY_STATUS_LABELS.NOT_SIGNED}`,
         },
       });
     });
@@ -424,7 +423,7 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
       include: { owner: { select: { name: true } } },
     });
     if (!existing) return { error: "商机不存在或无权访问" };
-    if (!canEditOpportunityContent(session.user.role, session.user.id, existing)) {
+    if (!canFollowUpOpportunity(session.user.role, session.user.id, existing)) {
       return { error: "无权跟进该商机" };
     }
 
@@ -485,7 +484,7 @@ export async function updateOpportunityFollowUp(formData: FormData): Promise<Act
     if (!followUp || followUp.opportunityId !== parsed.opportunityId) {
       return { error: "跟进记录不存在" };
     }
-    if (!canEditOpportunityContent(session.user.role, session.user.id, followUp.opportunity)) {
+    if (!canFollowUpOpportunity(session.user.role, session.user.id, followUp.opportunity)) {
       return { error: "无权修改该跟进记录" };
     }
 

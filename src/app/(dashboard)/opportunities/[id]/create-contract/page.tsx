@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -8,14 +7,17 @@ import {
 } from "@/lib/opportunities/access";
 import { canSignOpportunity } from "@/lib/opportunities/status";
 import { ContractForm } from "@/components/contracts/contract-form";
-import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/navigation/back-link";
+import { selfReturnPath } from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 };
 
-export default async function CreateContractFromOpportunityPage({ params }: Props) {
+export default async function CreateContractFromOpportunityPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
@@ -28,12 +30,7 @@ export default async function CreateContractFromOpportunityPage({ params }: Prop
 
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [customers, salesUsers] = await Promise.all([
-    prisma.customer.findMany({
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-      take: 500,
-    }),
+  const [salesUsers] = await Promise.all([
     showOwnerSelect
       ? prisma.user.findMany({
           where: { role: { in: ["SALES", "SALES_MANAGER"] } },
@@ -43,28 +40,35 @@ export default async function CreateContractFromOpportunityPage({ params }: Prop
       : Promise.resolve([]),
   ]);
 
+  const detailHref = selfReturnPath(`/opportunities/${id}`, query);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">创建合同</h1>
-          <p className="text-sm text-muted-foreground">来自商机：{full.title}</p>
+          <h1 className="text-2xl font-bold">
+            {full.status === "SIGNED" ? "再建合同（拆分）" : "创建合同"}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            来自商机：{full.title}
+            {full.status === "SIGNED" && " · 同一商机可关联多份合同"}
+          </p>
         </div>
-        <Button asChild variant="outline">
-          <Link href={`/opportunities/${id}`}>返回商机</Link>
-        </Button>
+        <BackLink href={detailHref} />
       </div>
 
       <ContractForm
         opportunityId={id}
-        customers={customers}
+        opportunityTitle={full.title}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
         defaultValues={{
           title: full.title,
           totalAmount: Number(full.expectedAmount),
           signCustomerId: full.customerId,
+          signCustomerName: full.customer.name,
           endUserCustomerId: full.customerId,
+          endUserCustomerName: full.customer.name,
           ownerId: full.ownerId,
         }}
         submitLabel="创建合同并生成项目"

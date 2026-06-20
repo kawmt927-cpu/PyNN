@@ -51,7 +51,6 @@ export const abandonOpportunitySchema = z
 
 export const restoreOpportunityStatusSchema = z.object({
   opportunityId: z.string().min(1),
-  status: z.enum(["NOT_SIGNED", "SIGNED"]),
 });
 
 export const contractFormSchema = z.object({

@@ -148,6 +148,11 @@ enum SalesDailyLogRiskFlag {
   RISK
 }
 
+enum SalesCheckInStatus {
+  PENDING
+  COMPLETED
+}
+
 enum PresalesAssignmentStatus {
   ACTIVE
   COMPLETED
@@ -195,6 +200,9 @@ model User {
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
   opportunityStageLogs    OpportunityStageLog[]
   opportunityFollowUps    OpportunityFollowUp[]
+  aiAgentConfigsUpdated   AiAgentConfig[]      @relation("AiAgentConfigUpdater")
+  amapConfigsUpdated      AmapConfig[]         @relation("AmapConfigUpdater")
+  salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
 }
 
 model PersonnelProfile {
@@ -245,6 +253,7 @@ model Customer {
   relationsTo   CustomerRelation[] @relation("CustomerTo")
   claimRequests CustomerClaimRequest[]
   opportunities Opportunity[]
+  salesCheckIns SalesCheckIn[]
 }
 
 model CustomerClaimRequest {
@@ -296,6 +305,7 @@ model Contact {
 
   customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   followUps FollowUp[]
+  checkIns  SalesCheckIn[]
 }
 
 // ─── CRM: Follow-up & Face Visit ─────────────────────────
@@ -320,6 +330,7 @@ model FollowUp {
   user           User             @relation(fields: [userId], references: [id])
   faceVisit      FaceVisitDetail?
   salesTask      SalesTask?
+  salesCheckIn   SalesCheckIn?
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
   salesDailyLogId String?
 }
@@ -616,6 +627,34 @@ model SalesTask {
   followUp FollowUp? @relation(fields: [followUpId], references: [id])
 }
 
+model SalesCheckIn {
+  id              String             @id @default(cuid())
+  userId          String
+  customerId      String?
+  contactId       String?
+  checkedInAt     DateTime           @default(now())
+  latitude        Float?
+  longitude       Float?
+  locationText    String?
+  addressProvince String?
+  addressCity     String?
+  addressDistrict String?
+  addressStreet   String?
+  notes           String?
+  status          SalesCheckInStatus @default(PENDING)
+  followUpId      String?            @unique
+  salesDailyLogId String?
+
+  user          User           @relation("SalesCheckInUser", fields: [userId], references: [id])
+  customer      Customer?      @relation(fields: [customerId], references: [id])
+  contact       Contact?       @relation(fields: [contactId], references: [id])
+  followUp      FollowUp?      @relation(fields: [followUpId], references: [id])
+  salesDailyLog SalesDailyLog? @relation(fields: [salesDailyLogId], references: [id])
+
+  @@index([userId, checkedInAt])
+  @@index([customerId])
+}
+
 model SalesDailyLog {
   id                String              @id @default(cuid())
   userId            String
@@ -629,8 +668,9 @@ model SalesDailyLog {
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id])
+  user      User           @relation(fields: [userId], references: [id])
   followUps FollowUp[]
+  checkIns  SalesCheckIn[]
 
   @@unique([userId, logDate])
 }
@@ -714,4 +754,34 @@ model ConfigOption {
   enabled    Boolean @default(true)
 
   @@unique([category, value])
+}
+
+model AiAgentConfig {
+  id                    String   @id @default("default")
+  enabled               Boolean  @default(false)
+  provider              String   @default("kimi")
+  apiKey                String?
+  apiBase               String   @default("https://api.moonshot.cn/v1")
+  model                 String   @default("kimi-k2.5")
+  maxSteps              Int      @default(5)
+  thinkingEnabled       Boolean  @default(false)
+  salesLogSystemPrompt  String?
+  toolSearchCustomers   Boolean  @default(true)
+  toolSearchOpportunities Boolean @default(true)
+  toolGetCustomer       Boolean  @default(true)
+  toolListFollowUps     Boolean  @default(true)
+  updatedAt             DateTime @updatedAt
+  updatedById           String?
+
+  updatedBy User? @relation("AiAgentConfigUpdater", fields: [updatedById], references: [id])
+}
+
+model AmapConfig {
+  id              String   @id @default("default")
+  webServiceKey   String?
+  jsKey           String?
+  updatedAt       DateTime @updatedAt
+  updatedById     String?
+
+  updatedBy User? @relation("AmapConfigUpdater", fields: [updatedById], references: [id])
 }

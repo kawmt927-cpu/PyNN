@@ -16,15 +16,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpForm } from "@/components/customers/follow-up-form";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
+import { BackLink } from "@/components/navigation/back-link";
 import {
   countCustomerFollowUps,
   getCustomerFollowUpHistory,
 } from "@/lib/follow-ups/unified";
+import { selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
 
-type Props = { params: Promise<{ id: string }> };
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
+};
 
-export default async function CustomerFollowUpsPage({ params }: Props) {
+export default async function CustomerFollowUpsPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
 
   const customer = await getCustomerForUser(id, session.user.role, session.user.id);
@@ -43,6 +49,9 @@ export default async function CustomerFollowUpsPage({ params }: Props) {
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
+  const selfPath = selfReturnPath(`/customers/${id}/follow-ups`, query);
+  const detailHref = selfReturnPath(`/customers/${id}`, query);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -55,11 +64,9 @@ export default async function CustomerFollowUpsPage({ params }: Props) {
           </p>
         </div>
         <div className="flex gap-2">
+          <BackLink href={detailHref} />
           <Button asChild variant="outline">
-            <Link href={`/customers/${id}`}>返回客户详情</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/follow-ups">待跟进列表</Link>
+            <Link href={withReturnTo("/follow-ups", selfPath)}>待跟进列表</Link>
           </Button>
         </div>
       </div>
@@ -93,7 +100,7 @@ export default async function CustomerFollowUpsPage({ params }: Props) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <FollowUpHistoryList followUps={followUps} />
+          <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
         </CardContent>
       </Card>
     </div>

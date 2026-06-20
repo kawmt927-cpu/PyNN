@@ -5,6 +5,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   requireConfigCategoryManage,
+  requireAiAgentSettingsAccess,
+  requireAmapSettingsAccess,
   requireWeComSettingsAccess,
 } from "@/lib/config-settings-access";
 import { configOptionSchema, saveConfigCategoryOptionsSchema } from "@/lib/validations/customer";
@@ -14,6 +16,158 @@ import {
   nextConfigOptionSortOrder,
   renumberConfigOptions,
 } from "@/lib/config-options-sort";
+import { aiAgentConfigSchema } from "@/lib/validations/ai-agent";
+import { getAiAgentConfigRow } from "@/lib/agent/config";
+import { getAmapConfigRow } from "@/lib/amap/config";
+import { resolveCheckInLocation } from "@/lib/amap/reverse-geocode";
+import { amapConfigSchema } from "@/lib/validations/amap";
+import { isKimiThinkingModel } from "@/lib/agent/moonshot-fetch";
+
+function formCheckbox(formData: FormData, name: string): boolean {
+  return formData.get(name) === "on";
+}
+
+function parseAiAgentFormData(formData: FormData) {
+  const apiKeyRaw = (formData.get("apiKey") as string | null)?.trim();
+  return aiAgentConfigSchema.parse({
+    enabled: formCheckbox(formData, "enabled"),
+    provider: "kimi",
+    apiKey: apiKeyRaw || undefined,
+    apiBase: (formData.get("apiBase") as string)?.trim(),
+    model: (formData.get("model") as string)?.trim(),
+    maxSteps: Number(formData.get("maxSteps")),
+    thinkingEnabled: formCheckbox(formData, "thinkingEnabled"),
+    salesLogSystemPrompt: (formData.get("salesLogSystemPrompt") as string)?.trim() || undefined,
+    toolSearchCustomers: formCheckbox(formData, "toolSearchCustomers"),
+    toolSearchOpportunities: formCheckbox(formData, "toolSearchOpportunities"),
+    toolGetCustomer: formCheckbox(formData, "toolGetCustomer"),
+    toolListFollowUps: formCheckbox(formData, "toolListFollowUps"),
+  });
+}
+
+async function resolveApiKeyForTest(formData: FormData): Promise<string> {
+  const parsed = parseAiAgentFormData(formData);
+  if (parsed.apiKey) return parsed.apiKey;
+  const row = await getAiAgentConfigRow();
+  if (row.apiKey?.trim()) return row.apiKey.trim();
+  const envKey = process.env.LLM_API_KEY?.trim();
+  if (envKey) return envKey;
+  throw new Error("请先填写 API Key");
+}
+
+export async function saveAiAgentConfig(formData: FormData) {
+  const session = await requireAiAgentSettingsAccess();
+  const parsed = parseAiAgentFormData(formData);
+  const existing = await getAiAgentConfigRow();
+
+  const apiKey = parsed.apiKey?.trim() || existing.apiKey;
+
+  await prisma.aiAgentConfig.update({
+    where: { id: "default" },
+    data: {
+      enabled: parsed.enabled,
+      provider: parsed.provider,
+      apiKey,
+      apiBase: parsed.apiBase,
+      model: parsed.model,
+      maxSteps: parsed.maxSteps,
+      thinkingEnabled: parsed.thinkingEnabled,
+      salesLogSystemPrompt: parsed.salesLogSystemPrompt || null,
+      toolSearchCustomers: parsed.toolSearchCustomers,
+      toolSearchOpportunities: parsed.toolSearchOpportunities,
+      toolGetCustomer: parsed.toolGetCustomer,
+      toolListFollowUps: parsed.toolListFollowUps,
+      updatedById: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/settings");
+}
+
+export async function testAiAgentConnection(formData: FormData) {
+  await requireAiAgentSettingsAccess();
+  const parsed = parseAiAgentFormData(formData);
+  const apiKey = await resolveApiKeyForTest(formData);
+
+  const response = await fetch(`${parsed.apiBase.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: parsed.model,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 16,
+      ...(isKimiThinkingModel(parsed.model) && !parsed.thinkingEnabled
+        ? { thinking: { type: "disabled" } }
+        : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`连接失败 (${response.status}): ${body.slice(0, 200)}`);
+  }
+
+  return { message: `连接成功，模型 ${parsed.model} 可用` };
+}
+
+function parseAmapFormData(formData: FormData) {
+  return amapConfigSchema.parse({
+    webServiceKey: (formData.get("webServiceKey") as string | null)?.trim() || undefined,
+    jsKey: (formData.get("jsKey") as string | null)?.trim() || undefined,
+  });
+}
+
+async function resolveWebServiceKeyForTest(formData: FormData): Promise<string> {
+  const parsed = parseAmapFormData(formData);
+  if (parsed.webServiceKey) return parsed.webServiceKey;
+  const row = await getAmapConfigRow();
+  if (row.webServiceKey?.trim()) return row.webServiceKey.trim();
+  const envKey =
+    process.env.AMAP_WEB_SERVICE_KEY?.trim() || process.env.AMAP_KEY?.trim();
+  if (envKey) return envKey;
+  throw new Error("请先填写 Web 服务 Key");
+}
+
+export async function saveAmapConfig(formData: FormData) {
+  const session = await requireAmapSettingsAccess();
+  const parsed = parseAmapFormData(formData);
+  const existing = await getAmapConfigRow();
+
+  await prisma.amapConfig.update({
+    where: { id: "default" },
+    data: {
+      webServiceKey: parsed.webServiceKey?.trim() || existing.webServiceKey,
+      jsKey: parsed.jsKey?.trim() || existing.jsKey,
+      updatedById: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/settings");
+  revalidatePath("/sales-log");
+}
+
+export async function testAmapConnection(formData: FormData) {
+  await requireAmapSettingsAccess();
+  const webServiceKey = await resolveWebServiceKeyForTest(formData);
+
+  const location = await resolveCheckInLocation({
+    latitude: 39.908823,
+    longitude: 116.39747,
+    coordType: "gcj02",
+    webServiceKey,
+  });
+
+  if (!location.addressProvince || !location.locationText) {
+    throw new Error("解析结果不完整，请检查 Key 权限是否包含逆地理编码");
+  }
+
+  return {
+    message: `地址解析成功：${location.locationText}`,
+  };
+}
 
 export async function bindWeComUser(formData: FormData) {
   await requireWeComSettingsAccess();

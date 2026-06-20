@@ -21,6 +21,10 @@ export function canAbandonOpportunity(status: OpportunityStatus) {
   return status === "NOT_SIGNED";
 }
 
+export function canAddOpportunityQuote(status: OpportunityStatus) {
+  return status === "NOT_SIGNED";
+}
+
 export function formatAbandonSummary(
   reason: OpportunityAbandonReason,
   note?: string | null

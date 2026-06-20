@@ -3,12 +3,18 @@ import { format } from "date-fns";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
 import { ChangeSummaryList } from "@/components/opportunities/change-summary-list";
 import type { UnifiedFollowUpHistoryItem } from "@/lib/follow-ups/unified";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   followUps: UnifiedFollowUpHistoryItem[];
+  linkReturnTo?: string;
 };
 
-export function FollowUpHistoryList({ followUps }: Props) {
+export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
+  const opportunityHref = (opportunityId: string) =>
+    linkReturnTo
+      ? withReturnTo(`/opportunities/${opportunityId}`, linkReturnTo)
+      : `/opportunities/${opportunityId}`;
   if (followUps.length === 0) {
     return <p className="text-sm text-muted-foreground">暂无跟进记录</p>;
   }
@@ -25,7 +31,7 @@ export function FollowUpHistoryList({ followUps }: Props) {
                 <>
                   {" · "}
                   <Link
-                    href={`/opportunities/${f.opportunity.id}`}
+                    href={opportunityHref(f.opportunity.id)}
                     className="text-primary hover:underline"
                   >
                     商机：{f.opportunity.title}

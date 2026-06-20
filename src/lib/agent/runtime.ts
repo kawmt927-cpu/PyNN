@@ -1,0 +1,47 @@
+import { streamText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { getEffectiveAiAgentConfig } from "@/lib/agent/config";
+import { createMoonshotFetch, getKimiModelStreamSettings } from "@/lib/agent/moonshot-fetch";
+import { createCrmAgentTools, type AgentSession } from "@/lib/agent/tools";
+
+export type { AgentSession };
+
+export async function isAiAgentAvailable() {
+  const config = await getEffectiveAiAgentConfig();
+  return config.enabled && Boolean(config.apiKey);
+}
+
+export async function createSalesLogAgentStream(
+  messages: Parameters<typeof streamText>[0]["messages"],
+  session: AgentSession
+) {
+  const config = await getEffectiveAiAgentConfig();
+
+  if (!config.enabled) {
+    throw new Error("AI 助手未启用，请联系管理员在系统配置中开启");
+  }
+  if (!config.apiKey) {
+    throw new Error("未配置 Kimi API Key，请在系统配置 → AI 助手中设置");
+  }
+
+  const provider = createOpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.apiBase,
+    compatibility: "compatible",
+    fetch: createMoonshotFetch({
+      disableThinking: !config.thinkingEnabled,
+      model: config.model,
+    }),
+  });
+
+  const tools = createCrmAgentTools(session, config);
+
+  return streamText({
+    model: provider(config.model),
+    system: config.salesLogSystemPrompt,
+    messages,
+    tools,
+    maxSteps: Math.max(config.maxSteps, 10),
+    ...getKimiModelStreamSettings(config.model),
+  });
+}

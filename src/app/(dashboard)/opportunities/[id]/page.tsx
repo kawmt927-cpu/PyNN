@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   getOpportunityForUser,
   canEditOpportunityContent,
+  canFollowUpOpportunity,
   canManageOpportunityStatus,
 } from "@/lib/opportunities/access";
 import {
@@ -23,15 +24,23 @@ import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-dat
 import { getOpportunityActivity } from "@/lib/opportunities/activity";
 import { OpportunityActivityList } from "@/components/opportunities/opportunity-activity-list";
 import { OpportunityRestoreStatusActions } from "@/components/opportunities/opportunity-restore-status-actions";
+import { BackLink } from "@/components/navigation/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  resolveBackNavigation,
+  selfReturnPath,
+  withReturnTo,
+} from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 };
 
-export default async function OpportunityDetailPage({ params }: Props) {
+export default async function OpportunityDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
@@ -56,8 +65,11 @@ export default async function OpportunityDetailPage({ params }: Props) {
 
   if (!full) notFound();
 
+  const { backHref, backLabel } = resolveBackNavigation(query, "/opportunities");
+  const selfPath = selfReturnPath(`/opportunities/${id}`, query);
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
   const canEdit = canEditOpportunityContent(session.user.role, session.user.id, full);
+  const canFollowUp = canFollowUpOpportunity(session.user.role, session.user.id, full);
   const canManageStatus = canManageOpportunityStatus(session.user.role);
   const isAbandoned = full.status === "ABANDONED";
   const canSign = canSignOpportunity(full.status);
@@ -82,36 +94,39 @@ export default async function OpportunityDetailPage({ params }: Props) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline">
-            <Link href="/opportunities">返回列表</Link>
-          </Button>
-          {canEdit && (
-            <Button asChild variant="outline">
-              <Link href={`/opportunities/${id}/edit`}>编辑</Link>
-            </Button>
-          )}
+          <BackLink href={backHref} label={backLabel} />
           {canSign && (
             <Button asChild>
-              <Link href={`/opportunities/${id}/create-contract`}>
+              <Link href={withReturnTo(`/opportunities/${id}/create-contract`, selfPath)}>
                 {full.status === "SIGNED" ? "再建合同（拆分）" : "签订销售合同"}
               </Link>
             </Button>
           )}
           <Button asChild variant="outline">
-            <Link href={`/opportunities/${id}/follow-ups`}>商机跟进</Link>
+            <Link href={withReturnTo(`/opportunities/${id}/follow-ups`, selfPath)}>
+              {canFollowUp ? "商机跟进" : "查看跟进"}
+            </Link>
           </Button>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">商机信息</CardTitle>
+            {canEdit && (
+              <Button asChild variant="outline" size="sm">
+                <Link href={withReturnTo(`/opportunities/${id}/edit`, selfPath)}>编辑</Link>
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p>
               <span className="text-muted-foreground">销售对象：</span>
-              <Link href={`/customers/${full.customerId}`} className="text-primary hover:underline">
+              <Link
+                href={withReturnTo(`/customers/${full.customerId}`, selfPath)}
+                className="text-primary hover:underline"
+              >
                 {full.customer.name}
               </Link>
             </p>
@@ -177,7 +192,10 @@ export default async function OpportunityDetailPage({ params }: Props) {
               <ul className="space-y-2 text-sm">
                 {contracts.map((c) => (
                   <li key={c.id}>
-                    <Link href={`/contracts/${c.id}`} className="text-primary hover:underline">
+                    <Link
+                      href={withReturnTo(`/contracts/${c.id}`, selfPath)}
+                      className="text-primary hover:underline"
+                    >
                       {c.title}
                     </Link>
                     <span className="ml-2 text-muted-foreground">
@@ -210,7 +228,7 @@ export default async function OpportunityDetailPage({ params }: Props) {
           <OpportunityActivityList
             items={activity}
             stageLabels={stageLabels}
-            canEditFollowUps={canEdit}
+            canEditFollowUps={canFollowUp}
             opportunityId={id}
             opportunity={opportunitySnapshot}
             stageOptions={stageOptions}

@@ -13,6 +13,7 @@ import {
   getContractForUser,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
+import { canSignOpportunity } from "@/lib/opportunities/status";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
@@ -64,6 +65,9 @@ export async function createContract(formData: FormData): Promise<ActionResult> 
         session.user.id
       );
       if (!opportunity) return { error: "关联商机不存在或无权访问" };
+      if (!canSignOpportunity(opportunity.status)) {
+        return { error: "该商机状态不允许签订销售合同" };
+      }
     }
 
     const contract = await prisma.$transaction(async (tx) => {

@@ -16,30 +16,39 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   opportunityId: string;
+  returnTo?: string;
   canEdit: boolean;
+  canFollowUp: boolean;
   canSign: boolean;
   canAbandon: boolean;
   canManageStatus: boolean;
+  canAddQuote: boolean;
   isAbandoned: boolean;
 };
 
 export function OpportunityRowActions({
   opportunityId,
+  returnTo,
   canEdit,
+  canFollowUp,
   canSign,
   canAbandon,
   canManageStatus,
+  canAddQuote,
   isAbandoned,
 }: Props) {
   const [abandonOpen, setAbandonOpen] = useState(false);
 
-  const detailHref = `/opportunities/${opportunityId}`;
-  const followUpHref = `/opportunities/${opportunityId}/follow-ups`;
-  const editHref = `/opportunities/${opportunityId}/edit`;
-  const contractHref = `/opportunities/${opportunityId}/create-contract`;
+  const link = (href: string) => (returnTo ? withReturnTo(href, returnTo) : href);
+
+  const detailHref = link(`/opportunities/${opportunityId}`);
+  const followUpHref = link(`/opportunities/${opportunityId}/follow-ups`);
+  const editHref = link(`/opportunities/${opportunityId}/edit`);
+  const contractHref = link(`/opportunities/${opportunityId}/create-contract`);
 
   return (
     <>
@@ -53,9 +62,13 @@ export function OpportunityRowActions({
           <DropdownMenuItem asChild>
             <Link href={detailHref}>查看详情</Link>
           </DropdownMenuItem>
-          {canEdit && (
+          {canFollowUp ? (
             <DropdownMenuItem asChild>
               <Link href={followUpHref}>跟进商机</Link>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem asChild>
+              <Link href={followUpHref}>查看跟进</Link>
             </DropdownMenuItem>
           )}
           {canEdit && (
@@ -65,7 +78,9 @@ export function OpportunityRowActions({
           )}
           {canSign && (
             <DropdownMenuItem asChild>
-              <Link href={contractHref}>签订销售合同</Link>
+              <Link href={contractHref}>
+                {!canFollowUp && !isAbandoned ? "再建合同（拆分）" : "签订销售合同"}
+              </Link>
             </DropdownMenuItem>
           )}
           {canAbandon && (
@@ -82,7 +97,7 @@ export function OpportunityRowActions({
             </DropdownMenuSub>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem disabled>新增报价单</DropdownMenuItem>
+          <DropdownMenuItem disabled={!canAddQuote}>新增报价单</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

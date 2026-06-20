@@ -1,7 +1,7 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 
 /** schema 有 breaking 变更时递增，强制丢弃旧 Prisma 单例 */
-const PRISMA_CACHE_VERSION = 7;
+const PRISMA_CACHE_VERSION = 12;
 
 type PrismaClientWithModels = PrismaClient & {
   customerClaimRequest?: { findMany?: unknown };

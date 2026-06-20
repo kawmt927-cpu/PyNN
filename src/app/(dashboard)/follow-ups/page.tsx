@@ -5,10 +5,12 @@ import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
 import { CONFIG_CATEGORY, labelForConfig, loadCustomerFieldLabelMaps } from "@/lib/config-options";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import { format } from "date-fns";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 export default async function FollowUpsPage() {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const now = new Date();
+  const listPath = "/follow-ups";
 
   const [dueFollowUps, upcomingFollowUps, labelMaps] = await Promise.all([
     getPendingFollowUps(session.user.role, session.user.id, "due", now, 100),
@@ -32,7 +34,7 @@ export default async function FollowUpsPage() {
           {dueFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无到期跟进任务。</p>
           ) : (
-            <FollowUpTable items={dueFollowUps} gradeLabels={gradeLabels} />
+            <FollowUpTable items={dueFollowUps} gradeLabels={gradeLabels} listPath={listPath} />
           )}
         </CardContent>
       </Card>
@@ -45,7 +47,7 @@ export default async function FollowUpsPage() {
           {upcomingFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无计划中的跟进。</p>
           ) : (
-            <FollowUpTable items={upcomingFollowUps} gradeLabels={gradeLabels} />
+            <FollowUpTable items={upcomingFollowUps} gradeLabels={gradeLabels} listPath={listPath} />
           )}
         </CardContent>
       </Card>
@@ -56,9 +58,10 @@ export default async function FollowUpsPage() {
 type FollowUpTableProps = {
   items: Awaited<ReturnType<typeof getPendingFollowUps>>;
   gradeLabels: Record<string, string>;
+  listPath: string;
 };
 
-function FollowUpTable({ items, gradeLabels }: FollowUpTableProps) {
+function FollowUpTable({ items, gradeLabels, listPath }: FollowUpTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -81,7 +84,7 @@ function FollowUpTable({ items, gradeLabels }: FollowUpTableProps) {
               <td className="py-3 pr-4">
                 {f.opportunity ? (
                   <Link
-                    href={`/opportunities/${f.opportunity.id}`}
+                    href={withReturnTo(`/opportunities/${f.opportunity.id}`, listPath)}
                     className="text-primary hover:underline"
                   >
                     {f.opportunity.title}
@@ -108,8 +111,8 @@ function FollowUpTable({ items, gradeLabels }: FollowUpTableProps) {
                 <Link
                   href={
                     f.opportunity
-                      ? `/opportunities/${f.opportunity.id}/follow-ups`
-                      : `/customers/${f.customer.id}/follow-ups`
+                      ? withReturnTo(`/opportunities/${f.opportunity.id}/follow-ups`, listPath)
+                      : withReturnTo(`/customers/${f.customer.id}/follow-ups`, listPath)
                   }
                   className="text-primary hover:underline"
                 >

@@ -63,8 +63,8 @@ const hospitalLevelOptions = [
   ...Object.entries(HOSPITAL_LEVEL_LABELS).map(([value, label]) => ({ value, label })),
 ];
 
-function withEmptyOption(options: ConfigOptionItem[], label = "请选择") {
-  return [{ value: "", label }, ...options];
+function withEmptyOption(options: ConfigOptionItem[] | undefined, label = "请选择") {
+  return [{ value: "", label }, ...(options ?? [])];
 }
 
 export function CustomerFieldsSection({
@@ -205,7 +205,7 @@ export function CustomerFieldsSection({
           name="ownerId"
           options={[
             { value: POOL_OWNER_VALUE, label: "公海池（未分配）" },
-            ...salesUsers.map((u) => ({ value: u.id, label: u.name })),
+            ...((salesUsers ?? []).map((u) => ({ value: u.id, label: u.name }))),
           ]}
           value={values.ownerId}
           onValueChange={(ownerId) => onChange({ ownerId })}

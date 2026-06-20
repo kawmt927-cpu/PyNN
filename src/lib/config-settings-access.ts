@@ -8,6 +8,8 @@ export type SettingsScope = "sales" | "project" | "system";
 export const SETTINGS_TAB = {
   FIELDS: "fields",
   WECOM: "wecom",
+  AI: "ai",
+  AMAP: "amap",
 } as const;
 
 export type SettingsTabId = (typeof SETTINGS_TAB)[keyof typeof SETTINGS_TAB];
@@ -26,7 +28,9 @@ export function canAccessSettings(role: UserRole): boolean {
 }
 
 export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
-  if (tab === SETTINGS_TAB.WECOM) return role === "ADMIN";
+  if (tab === SETTINGS_TAB.WECOM || tab === SETTINGS_TAB.AI || tab === SETTINGS_TAB.AMAP) {
+    return role === "ADMIN";
+  }
   if (tab === SETTINGS_TAB.FIELDS) {
     return canAccessSettings(role) && getAccessibleConfigModules(role).length > 0;
   }
@@ -64,6 +68,8 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
   }
   if (role === "ADMIN") {
     tabs.push({ id: SETTINGS_TAB.WECOM, label: "企业微信" });
+    tabs.push({ id: SETTINGS_TAB.AI, label: "AI 助手" });
+    tabs.push({ id: SETTINGS_TAB.AMAP, label: "打卡定位" });
   }
   return tabs;
 }
@@ -96,6 +102,22 @@ export async function requireWeComSettingsAccess() {
   const session = await requireSession();
   if (session.user.role !== "ADMIN") {
     throw new Error("无权修改企业微信配置");
+  }
+  return session;
+}
+
+export async function requireAiAgentSettingsAccess() {
+  const session = await requireSession();
+  if (session.user.role !== "ADMIN") {
+    throw new Error("无权修改 AI 助手配置");
+  }
+  return session;
+}
+
+export async function requireAmapSettingsAccess() {
+  const session = await requireSession();
+  if (session.user.role !== "ADMIN") {
+    throw new Error("无权修改打卡定位配置");
   }
   return session;
 }

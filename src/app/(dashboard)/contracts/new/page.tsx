@@ -1,21 +1,21 @@
-import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { canManageOpportunityOwner } from "@/lib/opportunities/access";
 import { ContractForm } from "@/components/contracts/contract-form";
-import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/navigation/back-link";
+import { resolveBackNavigation } from "@/lib/navigation/return-to";
 
-export default async function NewContractPage() {
+type Props = {
+  searchParams: Promise<{ returnTo?: string }>;
+};
+
+export default async function NewContractPage({ searchParams }: Props) {
+  const query = await searchParams;
+  const { backHref, backLabel } = resolveBackNavigation(query, "/contracts");
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [customers, salesUsers] = await Promise.all([
-    prisma.customer.findMany({
-      where: session.user.role === "SALES" ? { ownerId: session.user.id } : {},
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-      take: 500,
-    }),
+  const [salesUsers] = await Promise.all([
     showOwnerSelect
       ? prisma.user.findMany({
           where: { role: { in: ["SALES", "SALES_MANAGER"] } },
@@ -29,9 +29,7 @@ export default async function NewContractPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">新建合同</h1>
-        <Button asChild variant="outline">
-          <Link href="/contracts">返回列表</Link>
-        </Button>
+        <BackLink href={backHref} label={backLabel} />
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -39,7 +37,6 @@ export default async function NewContractPage() {
       </p>
 
       <ContractForm
-        customers={customers}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
         submitLabel="创建合同并生成项目"

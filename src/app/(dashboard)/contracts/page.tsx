@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { contractListWhere } from "@/lib/opportunities/access";
 import { CONTRACT_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { withReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -23,6 +24,8 @@ export default async function ContractsPage() {
     },
     take: 100,
   });
+
+  const listPath = "/contracts";
 
   return (
     <div className="space-y-6">
@@ -74,7 +77,7 @@ export default async function ContractsPage() {
                       <td className="py-3 pr-4">
                         {c.opportunity ? (
                           <Link
-                            href={`/opportunities/${c.opportunity.id}`}
+                            href={withReturnTo(`/opportunities/${c.opportunity.id}`, listPath)}
                             className="text-primary hover:underline"
                           >
                             {c.opportunity.title}
@@ -84,7 +87,10 @@ export default async function ContractsPage() {
                         )}
                       </td>
                       <td className="py-3">
-                        <Link href={`/contracts/${c.id}`} className="text-primary hover:underline">
+                        <Link
+                          href={withReturnTo(`/contracts/${c.id}`, listPath)}
+                          className="text-primary hover:underline"
+                        >
                           详情
                         </Link>
                       </td>

@@ -22,11 +22,21 @@ import { ContactList } from "@/components/customers/contact-list";
 import { CustomerRelationsPanel } from "@/components/customers/customer-relations-panel";
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
+import { BackLink } from "@/components/navigation/back-link";
+import {
+  resolveBackNavigation,
+  selfReturnPath,
+  withReturnTo,
+} from "@/lib/navigation/return-to";
 
-type Props = { params: Promise<{ id: string }> };
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
+};
 
-export default async function CustomerDetailPage({ params }: Props) {
+export default async function CustomerDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const db = getPrismaClient();
   const customer = await getCustomerForUser(id, session.user.role, session.user.id);
@@ -37,7 +47,7 @@ export default async function CustomerDetailPage({ params }: Props) {
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const [salesUsers, labelMaps, pendingClaimForSales, pendingClaimCount, relationCandidates, followUpCount] =
+  const [salesUsers, labelMaps, pendingClaimForSales, pendingClaimCount, followUpCount] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -61,20 +71,6 @@ export default async function CustomerDetailPage({ params }: Props) {
             where: { customerId: customer.id, status: "PENDING" },
           })
         : Promise.resolve(0),
-      db.customer.findMany({
-        where: {
-          id: {
-            notIn: [
-              customer.id,
-              ...customer.relationsFrom.map((r) => r.relatedCustomerId),
-              ...customer.relationsTo.map((r) => r.customerId),
-            ],
-          },
-        },
-        select: { id: true, name: true, category: true, customerType: true },
-        orderBy: { name: "asc" },
-        take: 200,
-      }),
       countCustomerFollowUps(customer.id),
     ]);
 
@@ -95,11 +91,20 @@ export default async function CustomerDetailPage({ params }: Props) {
     })),
   ];
 
+  const relationExcludeIds = [
+    customer.id,
+    ...customer.relationsFrom.map((r) => r.relatedCustomerId),
+    ...customer.relationsTo.map((r) => r.customerId),
+  ];
+
   const location = [customer.province, customer.city, customer.district]
     .filter(Boolean)
     .join(" ");
 
   const canEdit = customer.ownerId === session.user.id || canManage;
+
+  const { backHref, backLabel } = resolveBackNavigation(query, "/customers");
+  const selfPath = selfReturnPath(`/customers/${id}`, query);
 
   return (
     <div className="space-y-6">
@@ -113,17 +118,15 @@ export default async function CustomerDetailPage({ params }: Props) {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link href="/customers">返回列表</Link>
-          </Button>
+          <BackLink href={backHref} label={backLabel} />
           <Button asChild variant={canEdit ? "default" : "outline"}>
-            <Link href={`/customers/${customer.id}/follow-ups`}>
+            <Link href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}>
               {canEdit ? "客户跟进" : "查看跟进"}
             </Link>
           </Button>
           {canEdit && (
             <Button asChild>
-              <Link href={`/customers/${customer.id}/edit`}>编辑</Link>
+              <Link href={withReturnTo(`/customers/${customer.id}/edit`, selfPath)}>编辑</Link>
             </Button>
           )}
         </div>
@@ -207,9 +210,10 @@ export default async function CustomerDetailPage({ params }: Props) {
             <CustomerRelationsPanel
               customerId={customer.id}
               relations={relations}
-              candidates={canEdit ? relationCandidates : []}
+              excludeIds={relationExcludeIds}
               typeLabels={typeLabels}
               readOnly={!canEdit}
+              linkReturnTo={selfPath}
             />
         </CardContent>
       </Card>
@@ -223,7 +227,7 @@ export default async function CustomerDetailPage({ params }: Props) {
             </span>
           </CardTitle>
           <Button asChild variant="outline" size="sm">
-            <Link href={`/customers/${customer.id}/follow-ups`}>
+            <Link href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}>
               {canEdit ? "前往跟进" : "查看全部"}
             </Link>
           </Button>
