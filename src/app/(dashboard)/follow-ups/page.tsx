@@ -93,13 +93,16 @@ function FollowUpTable({ items, listPath }: FollowUpTableProps) {
                 <CustomerGradeIcon grade={f.customer.customerGrade} />
               </td>
               <td className="py-3 pr-4">
-                {FOLLOW_UP_METHOD_LABELS[f.method]}
+                {f.method ? FOLLOW_UP_METHOD_LABELS[f.method] : "—"}
                 {f.source === "opportunity" && (
                   <span className="ml-1 text-xs text-muted-foreground">(商机)</span>
                 )}
+                {f.source === "grade_expiry" && (
+                  <span className="ml-1 text-xs text-orange-600">(等级到期)</span>
+                )}
               </td>
               <td className="max-w-xs truncate py-3 pr-4">{f.content}</td>
-              <td className="py-3 pr-4">{f.user.name}</td>
+              <td className="py-3 pr-4">{f.user?.name ?? "—"}</td>
               <td className="py-3 pr-4">
                 {format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
               </td>

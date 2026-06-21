@@ -41,7 +41,7 @@ function TodayWorkActionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "group relative flex w-full gap-4 rounded-xl border-2 border-dashed p-4 text-left transition-all",
+        "group relative flex h-full w-full gap-4 rounded-xl border-2 border-dashed p-4 text-left transition-all",
         "border-muted-foreground/20 bg-card hover:border-primary/60 hover:bg-primary/5 hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       )}
@@ -55,7 +55,7 @@ function TodayWorkActionCard({
       >
         {icon}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 flex flex-col">
         <div className="flex items-start justify-between gap-2">
           <p className="text-sm font-semibold text-foreground">{title}</p>
           <ChevronRight
@@ -63,8 +63,8 @@ function TodayWorkActionCard({
             aria-hidden
           />
         </div>
-        <div className="mt-1">{children}</div>
-        <p className="mt-2 text-xs font-medium text-primary/80 group-hover:text-primary">
+        <div className="mt-1 flex-1">{children}</div>
+        <p className="mt-3 text-xs font-medium text-primary/80 group-hover:text-primary">
           {hint}
         </p>
       </div>
@@ -75,6 +75,7 @@ function TodayWorkActionCard({
 type Props = {
   pendingCheckIns: number;
   checkInCount: number;
+  todayFollowUpCount: number;
   dailyLogStatus: SalesDailyLogStatus | null;
   checkInContent: ReactNode;
   dailyReportContent: ReactNode;
@@ -84,6 +85,7 @@ type Props = {
 export function TodayWorkCards({
   pendingCheckIns,
   checkInCount,
+  todayFollowUpCount,
   dailyLogStatus,
   checkInContent,
   dailyReportContent,
@@ -97,7 +99,7 @@ export function TodayWorkCards({
     <>
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">点击下方卡片打开对应功能</p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid items-stretch gap-3 sm:grid-cols-2">
           <TodayWorkActionCard
             title="往来打卡"
             hint="点击进入 · 定位打卡与往来记录"
@@ -105,13 +107,21 @@ export function TodayWorkCards({
             icon={<MapPinned className="h-6 w-6" aria-hidden />}
             onClick={() => setCheckInOpen(true)}
           >
-            <p className="text-2xl font-bold tabular-nums">{checkInCount}</p>
-            <p className="text-xs text-muted-foreground">
-              今日打卡
-              {pendingCheckIns > 0 ? (
-                <span className="text-orange-600"> · {pendingCheckIns} 条待完善</span>
-              ) : null}
-            </p>
+            <div className="flex gap-6">
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{todayFollowUpCount}</p>
+                <p className="text-xs text-muted-foreground">今日往来</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums">{checkInCount}</p>
+                <p className="text-xs text-muted-foreground">
+                  今日打卡
+                  {pendingCheckIns > 0 ? (
+                    <span className="text-orange-600"> · {pendingCheckIns} 条待完善</span>
+                  ) : null}
+                </p>
+              </div>
+            </div>
           </TodayWorkActionCard>
 
           <TodayWorkActionCard
@@ -123,7 +133,7 @@ export function TodayWorkCards({
           >
             <p
               className={cn(
-                "text-2xl font-bold",
+                "text-2xl font-bold leading-none",
                 dailyLogStatus === "SUBMITTED" || dailyLogStatus === "RISK_SUBMITTED"
                   ? "text-green-600"
                   : dailyLogStatus === "IN_PROGRESS" || dailyLogStatus === "PENDING_CONFIRM"
@@ -133,6 +143,7 @@ export function TodayWorkCards({
             >
               {logLabel}
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">日报状态</p>
           </TodayWorkActionCard>
         </div>
       </div>

@@ -45,6 +45,7 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
     fields: [
       { category: CONFIG_CATEGORY.CUSTOMER_SOURCE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_SOURCE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TYPE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TYPE] },
+      { category: CONFIG_CATEGORY.CUSTOMER_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_GRADE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TAG, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TAG] },
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
     ],
@@ -192,6 +193,22 @@ export async function loadCustomerFormOptions() {
     typeOptions,
     gradeOptions: getCustomerGradeOptions(),
     tagOptions,
+  };
+}
+
+export async function loadInteractionFormOptions() {
+  const [sourceOptions, typeOptions, tagOptions, stageOptions] = await Promise.all([
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    getCustomerTagDefinitions(),
+    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+  ]);
+  return {
+    sourceOptions,
+    typeOptions,
+    gradeOptions: getCustomerGradeOptions(),
+    tagOptions,
+    stageOptions,
   };
 }
 

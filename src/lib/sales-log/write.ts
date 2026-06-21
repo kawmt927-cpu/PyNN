@@ -164,11 +164,13 @@ export async function createFollowUpFromAgent(
     customerId?: string;
     customerName?: string;
     contactId?: string;
+    opportunityId?: string;
     method: FollowUpMethod;
     content: string;
     result?: string;
     followUpAt: string;
     nextFollowUpAt?: string;
+    nextFollowUpMethod?: FollowUpMethod;
     suggestedGrade?: string | null;
     location?: string;
     department?: string;
@@ -182,6 +184,20 @@ export async function createFollowUpFromAgent(
   const content = input.content.trim();
   if (!content) throw new Error("跟进内容不能为空");
 
+  if (input.contactId) {
+    const contact = await prisma.contact.findFirst({
+      where: { id: input.contactId, customerId },
+    });
+    if (!contact) throw new Error("联系人不属于该客户");
+  }
+
+  if (input.opportunityId) {
+    const opportunity = await prisma.opportunity.findFirst({
+      where: { id: input.opportunityId, customerId },
+    });
+    if (!opportunity) throw new Error("商机不存在或不属于该客户");
+  }
+
   const suggestedGrade = assertCustomerGrade(input.suggestedGrade);
   const applyGrade = Boolean(suggestedGrade);
 
@@ -193,12 +209,14 @@ export async function createFollowUpFromAgent(
       data: {
         customerId,
         contactId: input.contactId || undefined,
+        opportunityId: input.opportunityId || undefined,
         userId: ctx.userId,
         method: input.method,
         content,
         result: input.result?.trim() || null,
         followUpAt,
         nextFollowUpAt: input.nextFollowUpAt ? new Date(input.nextFollowUpAt) : undefined,
+        nextFollowUpMethod: input.nextFollowUpMethod || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: applyGrade,
         salesDailyLogId: ctx.dailyLogId,
@@ -268,6 +286,7 @@ export async function submitDailyLogFromAgent(
     data: {
       dailyReport,
       structuredOutput,
+      submittedAt: new Date(),
       status: input.riskFlag
         ? SalesDailyLogStatus.RISK_SUBMITTED
         : SalesDailyLogStatus.SUBMITTED,

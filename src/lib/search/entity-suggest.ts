@@ -48,10 +48,10 @@ export async function searchOpportunitiesForUser(
   role: UserRole,
   userId: string,
   q: string,
-  options?: { status?: OpportunityStatus | "ALL" }
+  options?: { status?: OpportunityStatus | "ALL"; customerId?: string }
 ) {
   const trimmed = q.trim();
-  if (!trimmed) return [];
+  if (!trimmed && !options?.customerId) return [];
 
   const base = opportunityListWhere(role, userId);
   const status = options?.status ?? "ALL";
@@ -59,12 +59,17 @@ export async function searchOpportunitiesForUser(
   const where: Prisma.OpportunityWhereInput = {
     ...base,
     ...(status !== "ALL" ? { status } : {}),
-    OR: [
-      buildBroadNameWhere("title", trimmed) as Prisma.OpportunityWhereInput,
-      {
-        customer: buildBroadNameWhere("name", trimmed) as Prisma.CustomerWhereInput,
-      },
-    ],
+    ...(options?.customerId ? { customerId: options.customerId } : {}),
+    ...(trimmed
+      ? {
+          OR: [
+            buildBroadNameWhere("title", trimmed) as Prisma.OpportunityWhereInput,
+            {
+              customer: buildBroadNameWhere("name", trimmed) as Prisma.CustomerWhereInput,
+            },
+          ],
+        }
+      : {}),
   };
 
   const rows = await prisma.opportunity.findMany({

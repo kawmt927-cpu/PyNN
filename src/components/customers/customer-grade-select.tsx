@@ -12,6 +12,8 @@ type Props = {
   onValueChange?: (value: string) => void;
   required?: boolean;
   className?: string;
+  labelClassName?: string;
+  disabled?: boolean;
 };
 
 function withEmptyOption(options: { value: string; label: string }[]) {
@@ -27,6 +29,8 @@ export function CustomerGradeSelect({
   onValueChange,
   required = false,
   className,
+  labelClassName,
+  disabled,
 }: Props) {
   const gradeOptions = getCustomerGradeOptions();
   const options = withEmptyOption(gradeOptions);
@@ -43,6 +47,8 @@ export function CustomerGradeSelect({
       onValueChange={onValueChange}
       required={required}
       className={className}
+      labelClassName={labelClassName}
+      disabled={disabled}
     />
   );
 }

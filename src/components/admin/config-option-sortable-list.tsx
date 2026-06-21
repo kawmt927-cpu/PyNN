@@ -21,6 +21,7 @@ export type ConfigOptionRow = {
   sortOrder: number;
   enabled: boolean;
   color?: string | null;
+  followUpIntervalDays?: number | null;
 };
 
 type Props = {

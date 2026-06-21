@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { UserRole } from "@prisma/client";
+import { UserRole, type FollowUpMethod } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
@@ -178,8 +178,10 @@ export async function createFollowUp(formData: FormData) {
     result: formData.get("result") || undefined,
     followUpAt: formData.get("followUpAt"),
     nextFollowUpAt: formData.get("nextFollowUpAt") || null,
+    nextFollowUpMethod: formData.get("nextFollowUpMethod") || null,
     suggestedGrade: formData.get("suggestedGrade") || null,
-    contactId: formData.get("contactId") || null,
+    contactId: formData.get("contactId"),
+    opportunityId: formData.get("opportunityId") || null,
     location: formData.get("location") || undefined,
     department: formData.get("department") || undefined,
     companions: formData.get("companions") || undefined,
@@ -196,17 +198,31 @@ export async function createFollowUp(formData: FormData) {
   const suggestedGrade = assertCustomerGrade(parsed.suggestedGrade);
   const applyGrade = Boolean(suggestedGrade);
 
+  if (parsed.opportunityId) {
+    const opp = await prisma.opportunity.findFirst({
+      where: { id: parsed.opportunityId, customerId: parsed.customerId },
+    });
+    if (!opp) throw new Error("商机不存在或不属于该客户");
+  }
+
+  const contact = await prisma.contact.findFirst({
+    where: { id: parsed.contactId, customerId: parsed.customerId },
+  });
+  if (!contact) throw new Error("联系人不属于该客户");
+
   await prisma.$transaction(async (tx) => {
     const followUp = await tx.followUp.create({
       data: {
         customerId: parsed.customerId,
-        contactId: parsed.contactId || undefined,
+        contactId: parsed.contactId,
+        opportunityId: parsed.opportunityId || undefined,
         userId: session.user.id,
         method: parsed.method,
         content: parsed.content,
         result: parsed.result,
         followUpAt: new Date(parsed.followUpAt),
         nextFollowUpAt: parsed.nextFollowUpAt ? new Date(parsed.nextFollowUpAt) : undefined,
+        nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: Boolean(applyGrade),
       },
@@ -235,6 +251,9 @@ export async function createFollowUp(formData: FormData) {
   revalidatePath("/follow-ups");
   revalidatePath(`/customers/${parsed.customerId}`);
   revalidatePath(`/customers/${parsed.customerId}/follow-ups`);
+  if (parsed.opportunityId) {
+    revalidatePath(`/opportunities/${parsed.opportunityId}`);
+  }
   redirect(`/customers/${parsed.customerId}/follow-ups`);
 }
 

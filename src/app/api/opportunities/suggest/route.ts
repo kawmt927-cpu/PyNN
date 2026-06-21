@@ -16,18 +16,20 @@ export async function GET(req: Request) {
 
   const params = Object.fromEntries(new URL(req.url).searchParams);
   const q = params.q?.trim() ?? "";
+  const customerId = params.customerId?.trim();
   const statusParam = params.status as OpportunityStatus | "ALL" | undefined;
   const status =
     statusParam && ["NOT_SIGNED", "SIGNED", "ABANDONED", "ALL"].includes(statusParam)
       ? statusParam
       : "ALL";
 
-  if (!q) {
+  if (!q && !customerId) {
     return Response.json({ items: [] });
   }
 
   const rows = await searchOpportunitiesForUser(session.user.role, session.user.id, q, {
     status: status === "ALL" ? "ALL" : status,
+    customerId,
   });
 
   const items = rows.map((row) => ({

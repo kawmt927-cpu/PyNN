@@ -9,6 +9,7 @@ import {
   CONFIG_CATEGORY,
   labelForConfig,
   loadCustomerFieldLabelMaps,
+  loadInteractionFormOptions,
 } from "@/lib/config-options";
 import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
@@ -39,10 +40,11 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const canManage = canManageCustomerOwner(session.user.role);
   const canEdit = customer.ownerId === session.user.id || canManage;
 
-  const [followUps, followUpCount, labelMaps] = await Promise.all([
+  const [followUps, followUpCount, labelMaps, formOptions] = await Promise.all([
     getCustomerFollowUpHistory(id, 50),
     countCustomerFollowUps(id),
     loadCustomerFieldLabelMaps(),
+    loadInteractionFormOptions(),
   ]);
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
@@ -80,7 +82,11 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
             <CardTitle className="text-lg">新增跟进</CardTitle>
           </CardHeader>
           <CardContent>
-            <FollowUpForm customerId={customer.id} contacts={customer.contacts} />
+            <FollowUpForm
+              customerId={customer.id}
+              customerName={customer.name}
+              stageOptions={formOptions.stageOptions}
+            />
           </CardContent>
         </Card>
       ) : (

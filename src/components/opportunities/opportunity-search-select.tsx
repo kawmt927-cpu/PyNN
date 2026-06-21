@@ -18,14 +18,19 @@ type Props = {
   selectedLabel: string;
   onValueChange: (value: string, option?: SearchSelectOption) => void;
   status?: OpportunityStatus | "ALL";
+  customerId?: string;
   disabled?: boolean;
+  className?: string;
 };
 
 async function fetchOpportunities(
   q: string,
-  status?: OpportunityStatus | "ALL"
+  status?: OpportunityStatus | "ALL",
+  customerId?: string
 ): Promise<SearchSelectOption[]> {
-  const params = new URLSearchParams({ q });
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (customerId) params.set("customerId", customerId);
   if (status && status !== "ALL") params.set("status", status);
 
   const res = await fetch(`/api/opportunities/suggest?${params.toString()}`);
@@ -52,12 +57,16 @@ async function fetchOpportunities(
   }));
 }
 
-export function OpportunitySearchSelect({ status, ...props }: Props) {
-  const onSearch = useCallback((q: string) => fetchOpportunities(q, status), [status]);
+export function OpportunitySearchSelect({ status, customerId, className, ...props }: Props) {
+  const onSearch = useCallback(
+    (q: string) => fetchOpportunities(q, status, customerId),
+    [status, customerId]
+  );
 
   return (
     <EntitySearchSelect
       {...props}
+      className={className}
       placeholder={props.placeholder ?? "输入商机名称搜索…"}
       onSearch={onSearch}
     />

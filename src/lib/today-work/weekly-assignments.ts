@@ -20,6 +20,24 @@ const listInclude = {
   createdBy: { select: { name: true } },
 } as const;
 
+export async function listAllAssignmentsForUser(userId: string, take = 100) {
+  return prisma.salesWeeklyAssignment.findMany({
+    where: { assigneeId: userId, status: { not: "CANCELLED" } },
+    orderBy: [{ dueAt: "desc" }],
+    take,
+    include: listInclude,
+  });
+}
+
+export async function listAllAssignmentsForManager(take = 200) {
+  return prisma.salesWeeklyAssignment.findMany({
+    where: { status: { not: "CANCELLED" } },
+    orderBy: [{ dueAt: "desc" }],
+    take,
+    include: listInclude,
+  });
+}
+
 export async function listPendingWeeklyAssignmentsForUser(
   userId: string,
   take = 20

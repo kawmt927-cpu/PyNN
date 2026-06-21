@@ -13,6 +13,8 @@ type Props = {
   onValueChange?: (value: string) => void;
   required?: boolean;
   className?: string;
+  labelClassName?: string;
+  disabled?: boolean;
 };
 
 export function SelectField({
@@ -25,11 +27,15 @@ export function SelectField({
   onValueChange,
   required,
   className,
+  labelClassName,
+  disabled,
 }: Props) {
   const controlled = value !== undefined;
   return (
     <div className={cn("space-y-2", className)}>
-      <Label htmlFor={id}>{label}</Label>
+      <Label htmlFor={id} className={cn("block", labelClassName)}>
+        {label}
+      </Label>
       <select
         id={id}
         name={name}
@@ -37,7 +43,11 @@ export function SelectField({
           ? { value, onChange: (e) => onValueChange?.(e.target.value) }
           : { defaultValue })}
         required={required}
-        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        disabled={disabled}
+        className={cn(
+          "flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          disabled ? "cursor-not-allowed bg-muted text-muted-foreground" : "bg-background"
+        )}
       >
         {options?.map((opt) => (
           <option key={opt.value} value={opt.value}>

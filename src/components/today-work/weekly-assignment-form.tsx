@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
-import { createWeeklyAssignment } from "@/app/(dashboard)/weekly-tasks/actions";
+import { createWeeklyAssignment } from "@/app/(dashboard)/plans-tasks/actions";
 
 type SalesUser = { id: string; name: string };
 
@@ -33,14 +33,14 @@ export function WeeklyAssignmentForm({ salesUsers }: { salesUsers: SalesUser[] }
     formData.set("customerId", customerId);
 
     startTransition(async () => {
-      const result = await createWeeklyAssignment(formData);
-      if (result.error) {
-        setError(result.error);
-        return;
+      try {
+        await createWeeklyAssignment(formData);
+        setCustomerId("");
+        setCustomerLabel("");
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "创建失败");
       }
-      setCustomerId("");
-      setCustomerLabel("");
-      router.refresh();
     });
   }
 
@@ -97,7 +97,7 @@ export function WeeklyAssignmentForm({ salesUsers }: { salesUsers: SalesUser[] }
       {error ? <p className="text-sm text-destructive md:col-span-2">{error}</p> : null}
       <div className="md:col-span-2">
         <Button type="submit" disabled={pending || !customerId}>
-          {pending ? "创建中…" : "创建每周任务"}
+          {pending ? "创建中…" : "创建指派任务"}
         </Button>
       </div>
     </form>

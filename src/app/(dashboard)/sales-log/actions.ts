@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/session";
 import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
 import { createFollowUpFromAgent } from "@/lib/sales-log/write";
 import { manualLogFormSchema } from "@/lib/validations/sales-log";
+import type { FollowUpMethod } from "@prisma/client";
 
 export async function createManualLogAction(formData: FormData) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
@@ -13,12 +14,15 @@ export async function createManualLogAction(formData: FormData) {
   try {
     const parsed = manualLogFormSchema.parse({
       customerId: formData.get("customerId"),
-      contactId: formData.get("contactId") || null,
+      contactId: formData.get("contactId"),
       method: formData.get("method"),
       content: formData.get("content"),
       result: formData.get("result") || null,
       followUpAt: formData.get("followUpAt"),
+      suggestedGrade: formData.get("suggestedGrade") || null,
+      opportunityId: formData.get("opportunityId") || null,
       nextFollowUpAt: formData.get("nextFollowUpAt") || null,
+      nextFollowUpMethod: formData.get("nextFollowUpMethod") || null,
       location: formData.get("location") || null,
       detailedNotes: formData.get("detailedNotes") || null,
     });
@@ -33,18 +37,22 @@ export async function createManualLogAction(formData: FormData) {
       },
       {
         customerId: parsed.customerId,
-        contactId: parsed.contactId || undefined,
+        contactId: parsed.contactId,
+        opportunityId: parsed.opportunityId || undefined,
         method: parsed.method,
         content: parsed.content,
         result: parsed.result ?? undefined,
         followUpAt: parsed.followUpAt,
         nextFollowUpAt: parsed.nextFollowUpAt ?? undefined,
+        nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
+        suggestedGrade: parsed.suggestedGrade,
         location: parsed.location ?? undefined,
         detailedNotes: parsed.detailedNotes ?? undefined,
       }
     );
 
     revalidatePath("/sales-log");
+    revalidatePath("/today-work");
     revalidatePath("/follow-ups");
     return { ok: true as const };
   } catch (error) {

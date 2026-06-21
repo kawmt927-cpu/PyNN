@@ -2,21 +2,24 @@ import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { getEffectiveAmapConfig } from "@/lib/amap/config";
 import { listTodayCheckIns, checkInRequiresFollowUp } from "@/lib/sales-log/check-in";
+import { listTodayFollowUps } from "@/lib/sales-log/today-follow-ups";
 import { getTodayDailyLogForUser } from "@/lib/sales-log/daily-log";
 import { TodayWorkCards } from "@/components/today-work/today-work-cards";
 import {
   CheckInSection,
   DailyReportSection,
 } from "@/components/today-work/sales-daily-section";
-import { TodayPendingActionsPanel } from "@/components/today-work/today-pending-actions-panel";
+import { TodayUpcomingList } from "@/components/today-work/today-upcoming-list";
+import { TodayWorkRecordsPanel } from "@/components/today-work/today-work-records";
 import { AiLogLink } from "@/components/sales-log/daily-work-forms";
 
 export default async function TodayWorkPage() {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const returnPath = "/today-work";
 
-  const [checkIns, dailyLog, amap] = await Promise.all([
+  const [checkIns, followUps, dailyLog, amap] = await Promise.all([
     listTodayCheckIns(session.user.role, session.user.id),
+    listTodayFollowUps(session.user.role, session.user.id),
     getTodayDailyLogForUser(session.user.id),
     getEffectiveAmapConfig(),
   ]);
@@ -31,7 +34,7 @@ export default async function TodayWorkPage() {
       <div>
         <h1 className="text-2xl font-bold">今日工作</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          打卡、往来记录、待跟进与每周任务集中在此；收工后可通过 AI 助理提交日报。
+          打卡与日报；本周待办与今日全部工作记录集中在此。
         </p>
       </div>
 
@@ -53,6 +56,7 @@ export default async function TodayWorkPage() {
       <TodayWorkCards
         pendingCheckIns={pendingCheckIns}
         checkInCount={checkIns.length}
+        todayFollowUpCount={followUps.length}
         dailyLogStatus={dailyLog?.status ?? null}
         dailyReportActions={<AiLogLink />}
         checkInContent={
@@ -60,6 +64,7 @@ export default async function TodayWorkPage() {
             role={session.user.role}
             userId={session.user.id}
             mapKey={mapKey}
+            geocodeReady={amapConfigured}
           />
         }
         dailyReportContent={
@@ -72,11 +77,13 @@ export default async function TodayWorkPage() {
         }
       />
 
-      <TodayPendingActionsPanel
+      <TodayUpcomingList
         role={session.user.role}
         userId={session.user.id}
         returnPath={returnPath}
       />
+
+      <TodayWorkRecordsPanel role={session.user.role} userId={session.user.id} />
     </div>
   );
 }

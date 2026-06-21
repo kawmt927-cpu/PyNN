@@ -4,7 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import type { ResolvedCheckInLocation } from "@/lib/amap/types";
+import {
+  geolocationErrorMessage,
+  getBrowserGeolocation,
+  isSecureLocationContext,
+} from "@/lib/geo/device-location";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
+import { isWeComClient, useWeComSdk } from "@/hooks/use-wecom-sdk";
 
 export type CheckInLocationValue = ResolvedCheckInLocation;
 
@@ -12,6 +18,7 @@ type Props = {
   value: CheckInLocationValue | null;
   onChange: (value: CheckInLocationValue | null) => void;
   mapKey: string | null;
+  geocodeReady?: boolean;
   disabled?: boolean;
 };
 
@@ -43,7 +50,44 @@ function loadAmapScript(key: string) {
   });
 }
 
-export function CheckInLocationPicker({ value, onChange, mapKey, disabled }: Props) {
+async function reverseGeocode(input: {
+  latitude: number;
+  longitude: number;
+  coordType: "wgs84" | "gcj02";
+}): Promise<ResolvedCheckInLocation> {
+  const res = await fetch("/api/geo/reverse", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  let data: { error?: string } & Partial<ResolvedCheckInLocation> = {};
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    if (res.status === 401) {
+      throw new Error("登录已过期，请刷新页面后重试");
+    }
+    throw new Error("地址解析服务异常，请稍后重试");
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error || "地址解析失败");
+  }
+
+  return data as ResolvedCheckInLocation;
+}
+
+export function CheckInLocationPicker({
+  value,
+  onChange,
+  mapKey,
+  geocodeReady = true,
+  disabled,
+}: Props) {
+  const inWeCom = isWeComClient();
+  const wecom = useWeComSdk(inWeCom);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<AMap.Map | null>(null);
   const markerRef = useRef<AMap.Marker | null>(null);
@@ -64,6 +108,14 @@ export function CheckInLocationPicker({ value, onChange, mapKey, disabled }: Pro
       markerRef.current.setPosition([lng, lat]);
     }
   }, []);
+
+  const resolveAtCoordinates = useCallback(
+    async (latitude: number, longitude: number, coordType: "wgs84" | "gcj02") => {
+      const location = await reverseGeocode({ latitude, longitude, coordType });
+      onChange(location);
+    },
+    [onChange]
+  );
 
   useEffect(() => {
     if (!mapKey || !mapContainerRef.current || !value) return;
@@ -110,40 +162,37 @@ export function CheckInLocationPicker({ value, onChange, mapKey, disabled }: Pro
   }, []);
 
   async function handleLocate() {
+    if (!geocodeReady) {
+      setError("未配置高德 Web 服务 Key，请联系管理员在系统配置 → 打卡定位中设置");
+      return;
+    }
+
     setLocating(true);
     setError(null);
+
     try {
-      if (!navigator.geolocation) {
-        throw new Error("当前浏览器不支持定位，请允许位置权限");
+      if (inWeCom) {
+        if (wecom.error) {
+          throw new Error(`企业微信定位不可用：${wecom.error}`);
+        }
+        if (!wecom.ready) {
+          throw new Error("企业微信定位初始化中，请稍后再试");
+        }
+        const pos = await wecom.getLocation();
+        await resolveAtCoordinates(pos.latitude, pos.longitude, "gcj02");
+        return;
       }
 
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
-        });
-      });
-
-      const res = await fetch("/api/geo/reverse", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          coordType: "wgs84",
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "地址解析失败");
+      if (!isSecureLocationContext()) {
+        throw new Error(
+          "当前页面非安全连接，浏览器无法使用 GPS。请通过 https:// 或 localhost 访问"
+        );
       }
 
-      onChange(data as CheckInLocationValue);
+      const pos = await getBrowserGeolocation();
+      await resolveAtCoordinates(pos.coords.latitude, pos.coords.longitude, "wgs84");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "定位失败");
+      setError(geolocationErrorMessage(e));
     } finally {
       setLocating(false);
     }
@@ -153,10 +202,26 @@ export function CheckInLocationPicker({ value, onChange, mapKey, disabled }: Pro
     <div className="space-y-3 md:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Label>定位与地图</Label>
-        <Button type="button" variant="outline" size="sm" disabled={disabled || locating} onClick={handleLocate}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={disabled || locating || !geocodeReady}
+          onClick={handleLocate}
+        >
           {locating ? "定位解析中…" : value ? "重新定位" : "获取定位并解析地址"}
         </Button>
       </div>
+
+      {!geocodeReady ? (
+        <p className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-200">
+          未配置高德 Web 服务 Key，无法解析地址。请管理员在{" "}
+          <a href="/admin/settings?tab=amap" className="font-medium underline">
+            系统配置 → 打卡定位
+          </a>{" "}
+          中填写。
+        </p>
+      ) : null}
 
       {!mapKey ? (
         <p className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-200">
@@ -184,6 +249,10 @@ export function CheckInLocationPicker({ value, onChange, mapKey, disabled }: Pro
           )}
         </div>
       )}
+
+      {inWeCom && geocodeReady ? (
+        <p className="text-xs text-muted-foreground">企业微信内将使用企业微信定位接口获取 GPS。</p>
+      ) : null}
 
       {value ? (
         <div className="rounded-md border bg-muted/40 p-3 text-sm">

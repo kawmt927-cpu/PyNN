@@ -144,7 +144,7 @@ export default function MobileLogPage() {
                 <Link href="/sales-log">外勤日志</Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
-                <Link href="/dashboard">返回</Link>
+                <Link href="/today-work">返回</Link>
               </Button>
             </div>
           )}

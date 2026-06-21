@@ -33,7 +33,7 @@ export default function LoginPage() {
       setError("邮箱或密码错误");
       return false;
     }
-    router.push("/dashboard");
+    router.push("/");
     router.refresh();
     return true;
   }

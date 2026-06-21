@@ -152,8 +152,8 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
   );
 
   return (
-    <div ref={rootRef} className={cn("relative space-y-2", className)}>
-      <Label htmlFor={id}>{label}</Label>
+    <div ref={rootRef} className={cn(label ? "space-y-2" : "space-y-0", className)}>
+      {label ? <Label htmlFor={id}>{label}</Label> : null}
       <input type="hidden" name={name} value={value} required={required} />
       <Input
         id={id}

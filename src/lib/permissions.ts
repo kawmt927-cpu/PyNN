@@ -73,9 +73,7 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { href: "/today-work", label: "今日工作", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/mobile/log", label: "AI 日志", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/weekly-tasks", label: "每周任务", roles: ["SALES_MANAGER", "ADMIN"] },
-  { href: "/dashboard", label: "仪表盘", roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
+  { href: "/plans-tasks", label: "计划与任务", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/approvals", label: "审批", roles: ["SALES_MANAGER", "ADMIN"] },
@@ -91,6 +89,11 @@ export const NAV_ITEMS: NavItem[] = [
 
 export function getNavForRole(role: UserRole): NavItem[] {
   return NAV_ITEMS.filter((item) => item.roles.includes(role));
+}
+
+/** 登录后默认首页：该角色侧栏第一项 */
+export function getDefaultHomeForRole(role: UserRole): string {
+  return getNavForRole(role)[0]?.href ?? "/login";
 }
 
 export function canAccess(role: UserRole, resource: string, action: string): boolean {

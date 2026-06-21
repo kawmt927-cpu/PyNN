@@ -65,8 +65,11 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                       </div>
                       <p className="text-sm text-muted-foreground line-clamp-1">{item.content}</p>
                       <p className="text-xs text-muted-foreground">
-                        {FOLLOW_UP_METHOD_LABELS[item.method]} · 计划{" "}
-                        {format(item.nextFollowUpAt, "MM-dd HH:mm")}
+                        {item.method ? FOLLOW_UP_METHOD_LABELS[item.method] : "等级到期"}
+                        {item.source === "grade_expiry" ? "" : " · 计划 "}
+                        {item.source !== "grade_expiry"
+                          ? format(item.nextFollowUpAt, "MM-dd HH:mm")
+                          : `截止 ${format(item.nextFollowUpAt, "MM-dd")}`}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">

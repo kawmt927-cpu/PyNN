@@ -25,9 +25,9 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
         <li key={`${f.source}-${f.id}`} className="rounded-md border p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">
+              {f.contact ? `${f.contact.name} · ` : ""}
               {FOLLOW_UP_METHOD_LABELS[f.method]} · {f.user.name}
-              {f.contact && ` · ${f.contact.name}`}
-              {f.source === "opportunity" && f.opportunity && (
+              {f.opportunity && (
                 <>
                   {" · "}
                   <Link
@@ -51,7 +51,11 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
           {f.result && <p className="mt-1 text-muted-foreground">结果：{f.result}</p>}
           {f.nextFollowUpAt && (
             <p className="mt-1 text-orange-600">
-              下次跟进：{format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
+              下次跟进：
+              {f.nextFollowUpMethod
+                ? `${FOLLOW_UP_METHOD_LABELS[f.nextFollowUpMethod as keyof typeof FOLLOW_UP_METHOD_LABELS]} · `
+                : ""}
+              {format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
             </p>
           )}
           {f.faceVisit && (

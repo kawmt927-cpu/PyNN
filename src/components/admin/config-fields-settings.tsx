@@ -11,6 +11,7 @@ import {
   type ConfigModuleDef,
 } from "@/lib/config-options";
 import { CustomerFieldOptionsPanel } from "@/components/admin/customer-field-options-panel";
+import { CustomerGradeOptionsPanel } from "@/components/admin/customer-grade-options-panel";
 import { CustomerTagOptionsPanel } from "@/components/admin/customer-tag-options-panel";
 
 type ConfigOptionRow = {
@@ -21,6 +22,7 @@ type ConfigOptionRow = {
   sortOrder: number;
   enabled: boolean;
   color?: string | null;
+  followUpIntervalDays?: number | null;
 };
 
 type Props = {
@@ -189,6 +191,12 @@ export function ConfigFieldsSettings({
 
       {activeField.category === CONFIG_CATEGORY.CUSTOMER_TAG ? (
         <CustomerTagOptionsPanel
+          key={`${activeModule.id}-${activeField.category}`}
+          options={activeOptions}
+          onDirtyChange={setIsDirty}
+        />
+      ) : activeField.category === CONFIG_CATEGORY.CUSTOMER_GRADE ? (
+        <CustomerGradeOptionsPanel
           key={`${activeModule.id}-${activeField.category}`}
           options={activeOptions}
           onDirtyChange={setIsDirty}

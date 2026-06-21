@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { cancelWeeklyAssignment } from "@/app/(dashboard)/weekly-tasks/actions";
+import { cancelWeeklyAssignment } from "@/app/(dashboard)/plans-tasks/actions";
 
 export function CancelWeeklyAssignmentButton({ id }: { id: string }) {
   const router = useRouter();

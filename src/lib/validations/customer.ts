@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isCustomerTagColor } from "@/lib/customers/tag-colors";
+import { SALES_LOG_METHODS } from "@/lib/sales-log/methods";
 
 export const customerFormSchema = z.object({
   name: z.string().min(1, "请输入客户名称"),
@@ -25,13 +26,19 @@ export type CustomerFormInput = z.infer<typeof customerFormSchema>;
 
 export const followUpFormSchema = z.object({
   customerId: z.string().min(1),
-  method: z.enum(["PHONE", "WECHAT", "FACE_VISIT", "ONLINE_MEETING", "OTHER"]),
+  method: z.enum(SALES_LOG_METHODS),
   content: z.string().min(1, "请填写跟进内容"),
   result: z.string().optional(),
   followUpAt: z.string().min(1),
   nextFollowUpAt: z.string().optional().nullable(),
+  nextFollowUpMethod: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
   suggestedGrade: z.string().optional().nullable(),
-  contactId: z.string().optional().nullable(),
+  contactId: z.string().min(1, "请选择联系人"),
+  opportunityId: z.string().optional().nullable(),
   location: z.string().optional(),
   department: z.string().optional(),
   companions: z.string().optional(),
@@ -70,6 +77,17 @@ export const saveCustomerTagOptionsSchema = z.object({
         .string()
         .regex(/^#[0-9A-Fa-f]{6}$/, "颜色格式无效")
         .refine(isCustomerTagColor, "请选择预设标签颜色"),
+    })
+  ),
+});
+
+export const saveCustomerGradeOptionsSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().nullable(),
+      label: z.string().min(1, "显示名称不能为空"),
+      enabled: z.boolean(),
+      followUpIntervalDays: z.coerce.number().int().min(1, "往来间隔至少 1 天"),
     })
   ),
 });

@@ -1,4 +1,4 @@
-import { SalesCheckInStatus, UserRole } from "@prisma/client";
+import { SalesCheckInStatus, UserRole, type FollowUpMethod } from "@prisma/client";
 import { getCustomerForUser } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import { getTodayRange, salesCheckInListWhere } from "@/lib/sales-log/access";
@@ -9,7 +9,43 @@ import { formatCheckInLocation } from "@/lib/sales-log/format-location";
 import type { AgentWriteContext } from "@/lib/sales-log/write";
 import { createFollowUpFromAgent } from "@/lib/sales-log/write";
 
-export async function createSalesCheckIn(input: {
+export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInStatus) {
+  const { start, end } = getTodayRange();
+  return prisma.salesCheckIn.findMany({
+    where: {
+      userId,
+      checkedInAt: { gte: start, lt: end },
+      ...(status ? { status } : {}),
+    },
+    orderBy: { checkedInAt: "desc" },
+    include: {
+      customer: { select: { id: true, name: true } },
+      contact: { select: { id: true, name: true, title: true } },
+      user: { select: { id: true, name: true } },
+      followUp: { select: { id: true, method: true, content: true } },
+    },
+  });
+}
+
+export async function listTodayCustomerCheckInsForUser(userId: string, customerId: string) {
+  const { start, end } = getTodayRange();
+  return prisma.salesCheckIn.findMany({
+    where: {
+      userId,
+      customerId,
+      checkedInAt: { gte: start, lt: end },
+    },
+    orderBy: { checkedInAt: "desc" },
+    select: {
+      id: true,
+      checkedInAt: true,
+      status: true,
+      customer: { select: { name: true } },
+    },
+  });
+}
+
+type CheckInWriteInput = {
   userId: string;
   role: UserRole;
   checkInMode?: CheckInMode | typeof LEGACY_CHECK_IN_MODE_WITH_CUSTOMER;
@@ -25,13 +61,111 @@ export async function createSalesCheckIn(input: {
   notes?: string | null;
   completeInteractionNow?: boolean;
   followUp?: CheckInFollowUpInput | null;
-}) {
+};
+
+async function assertCheckInWriteAccess(checkIn: { userId: string }, role: UserRole, userId: string) {
+  if (role === "SALES" && checkIn.userId !== userId) {
+    throw new Error("无权操作该打卡记录");
+  }
+}
+
+export async function updateSalesCheckIn(
+  checkInId: string,
+  input: CheckInWriteInput
+) {
+  const existing = await prisma.salesCheckIn.findUnique({
+    where: { id: checkInId },
+    include: { customer: { select: { name: true } } },
+  });
+  if (!existing) throw new Error("打卡记录不存在");
+  await assertCheckInWriteAccess(existing, input.role, input.userId);
+
+  const mode = normalizeCheckInMode(input.checkInMode);
+  const isInteraction = mode === "interaction";
+  const customerId = isInteraction && input.customerId?.trim() ? input.customerId.trim() : null;
+
+  if (isInteraction && !customerId) throw new Error("请选择客户");
+  if (isInteraction && input.contactId) {
+    const contact = await prisma.contact.findFirst({
+      where: { id: input.contactId, customerId: customerId! },
+    });
+    if (!contact) throw new Error("联系人不属于该客户");
+  }
+  if (input.completeInteractionNow && !input.followUp?.content?.trim()) {
+    throw new Error("请填写往来内容");
+  }
+
+  const dailyLog = await ensureTodayDailyLog(input.userId);
+  const ctx: AgentWriteContext = {
+    userId: input.userId,
+    role: input.role,
+    dailyLogId: dailyLog.id,
+  };
+
+  const checkIn = await prisma.salesCheckIn.update({
+    where: { id: checkInId },
+    data: {
+      customerId: customerId ?? undefined,
+      contactId: isInteraction ? input.contactId || undefined : undefined,
+      checkedInAt: new Date(),
+      latitude: input.latitude ?? undefined,
+      longitude: input.longitude ?? undefined,
+      locationText: input.locationText?.trim() || undefined,
+      addressProvince: input.addressProvince?.trim() || undefined,
+      addressCity: input.addressCity?.trim() || undefined,
+      addressDistrict: input.addressDistrict?.trim() || undefined,
+      addressStreet: input.addressStreet?.trim() || undefined,
+      notes: input.notes?.trim() || undefined,
+      salesDailyLogId: dailyLog.id,
+    },
+    include: {
+      customer: { select: { name: true } },
+      contact: { select: { name: true, title: true } },
+    },
+  });
+
+  if (
+    isInteraction &&
+    input.completeInteractionNow &&
+    input.followUp &&
+    existing.status === SalesCheckInStatus.PENDING
+  ) {
+    const locationLabel = formatCheckInLocation(input);
+    const followUpResult = await createFollowUpFromAgent(ctx, {
+      customerId: customerId!,
+      contactId: input.contactId ?? undefined,
+      method: input.followUp.method,
+      content: input.followUp.content,
+      result: input.followUp.result ?? undefined,
+      followUpAt: checkIn.checkedInAt.toISOString(),
+      nextFollowUpAt: input.followUp.nextFollowUpAt ?? undefined,
+      nextFollowUpMethod: (input.followUp.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
+      suggestedGrade: input.followUp.suggestedGrade ?? undefined,
+      opportunityId: input.followUp.opportunityId ?? undefined,
+      location: input.followUp.location ?? locationLabel,
+      detailedNotes: input.followUp.detailedNotes ?? undefined,
+    });
+
+    await prisma.salesCheckIn.update({
+      where: { id: checkIn.id },
+      data: {
+        status: SalesCheckInStatus.COMPLETED,
+        followUpId: followUpResult.followUpId,
+      },
+    });
+  }
+
+  return checkIn;
+}
+
+export async function createSalesCheckIn(input: CheckInWriteInput) {
   const mode = normalizeCheckInMode(input.checkInMode);
   const isInteraction = mode === "interaction";
   const customerId = isInteraction && input.customerId?.trim() ? input.customerId.trim() : null;
 
   if (isInteraction) {
     if (!customerId) throw new Error("请选择客户");
+    if (!input.contactId?.trim()) throw new Error("请选择联系人");
 
     const customer = await getCustomerForUser(customerId, input.role, input.userId);
     if (!customer) throw new Error("客户不存在或无权访问");
@@ -89,6 +223,9 @@ export async function createSalesCheckIn(input: {
       result: input.followUp.result ?? undefined,
       followUpAt: checkIn.checkedInAt.toISOString(),
       nextFollowUpAt: input.followUp.nextFollowUpAt ?? undefined,
+      nextFollowUpMethod: (input.followUp.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
+      suggestedGrade: input.followUp.suggestedGrade ?? undefined,
+      opportunityId: input.followUp.opportunityId ?? undefined,
       location: input.followUp.location ?? locationLabel,
       detailedNotes: input.followUp.detailedNotes ?? undefined,
     });
@@ -133,6 +270,54 @@ export function checkInStatusLabel(checkIn: { customerId: string | null; status:
   return "已完善";
 }
 
+export async function completeSalesCheckInManually(input: {
+  checkInId: string;
+  userId: string;
+  role: UserRole;
+  contactId: string;
+  method: Parameters<typeof createFollowUpFromAgent>[1]["method"];
+  content: string;
+  result?: string | null;
+  suggestedGrade?: string | null;
+  opportunityId?: string | null;
+  nextFollowUpAt?: string | null;
+  nextFollowUpMethod?: Parameters<typeof createFollowUpFromAgent>[1]["method"];
+  location?: string | null;
+  detailedNotes?: string | null;
+}) {
+  const dailyLog = await ensureTodayDailyLog(input.userId);
+
+  const checkIn = await prisma.salesCheckIn.findUnique({
+    where: { id: input.checkInId },
+    select: { id: true, customerId: true, contactId: true },
+  });
+  if (!checkIn?.customerId) throw new Error("打卡记录无效");
+
+  if (input.contactId !== checkIn.contactId) {
+    await prisma.salesCheckIn.update({
+      where: { id: input.checkInId },
+      data: { contactId: input.contactId },
+    });
+  }
+
+  return completeCheckInFromAgent(
+    { userId: input.userId, role: input.role, dailyLogId: dailyLog.id },
+    {
+      checkInId: input.checkInId,
+      contactId: input.contactId,
+      method: input.method,
+      content: input.content,
+      result: input.result ?? undefined,
+      suggestedGrade: input.suggestedGrade,
+      opportunityId: input.opportunityId ?? undefined,
+      nextFollowUpAt: input.nextFollowUpAt ?? undefined,
+      nextFollowUpMethod: input.nextFollowUpMethod,
+      location: input.location ?? undefined,
+      detailedNotes: input.detailedNotes ?? undefined,
+    }
+  );
+}
+
 export async function deleteSalesCheckIn(input: {
   checkInId: string;
   userId: string;
@@ -166,11 +351,14 @@ export async function completeCheckInFromAgent(
   ctx: AgentWriteContext,
   input: {
     checkInId: string;
+    contactId?: string;
+    opportunityId?: string;
     method: Parameters<typeof createFollowUpFromAgent>[1]["method"];
     content: string;
     result?: string;
     followUpAt?: string;
     nextFollowUpAt?: string;
+    nextFollowUpMethod?: Parameters<typeof createFollowUpFromAgent>[1]["method"];
     suggestedGrade?: string | null;
     location?: string;
     detailedNotes?: string;
@@ -199,12 +387,14 @@ export async function completeCheckInFromAgent(
 
   const followUpResult = await createFollowUpFromAgent(ctx, {
     customerId: checkIn.customerId,
-    contactId: checkIn.contactId ?? undefined,
+    contactId: input.contactId ?? checkIn.contactId ?? undefined,
+    opportunityId: input.opportunityId,
     method: input.method,
     content: input.content,
     result: input.result,
     followUpAt: input.followUpAt ?? checkIn.checkedInAt.toISOString(),
     nextFollowUpAt: input.nextFollowUpAt,
+    nextFollowUpMethod: input.nextFollowUpMethod,
     suggestedGrade: input.suggestedGrade,
     location: input.location ?? checkIn.locationText ?? undefined,
     detailedNotes: input.detailedNotes,

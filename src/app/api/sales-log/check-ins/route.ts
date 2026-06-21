@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
-import { createSalesCheckIn } from "@/lib/sales-log/check-in";
+import { createSalesCheckIn, updateSalesCheckIn } from "@/lib/sales-log/check-in";
 import { checkInFormSchema } from "@/lib/validations/sales-log";
 import type { UserRole } from "@prisma/client";
 
@@ -24,14 +24,20 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const parsed = checkInFormSchema.parse(body);
-
-    await createSalesCheckIn({
+    const payload = {
       userId: session.user.id,
       role: session.user.role,
       ...parsed,
-    });
+    };
+
+    if (parsed.updateCheckInId?.trim()) {
+      await updateSalesCheckIn(parsed.updateCheckInId.trim(), payload);
+    } else {
+      await createSalesCheckIn(payload);
+    }
 
     revalidatePath("/sales-log");
+    revalidatePath("/today-work");
     return Response.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) {

@@ -9,7 +9,7 @@ import {
   requireAmapSettingsAccess,
   requireWeComSettingsAccess,
 } from "@/lib/config-settings-access";
-import { configOptionSchema, saveConfigCategoryOptionsSchema, saveCustomerTagOptionsSchema } from "@/lib/validations/customer";
+import { configOptionSchema, saveConfigCategoryOptionsSchema, saveCustomerGradeOptionsSchema, saveCustomerTagOptionsSchema } from "@/lib/validations/customer";
 import { generateConfigOptionValue, CONFIG_CATEGORY } from "@/lib/config-options";
 import { normalizeTagColor } from "@/lib/customers/tags";
 import { clearConfigOptionReferences } from "@/lib/config-options-cleanup";
@@ -490,6 +490,79 @@ export async function saveCustomerTagOptions(formData: FormData) {
   revalidatePath("/admin/settings");
   revalidatePath("/customers");
   revalidatePath("/follow-ups");
+}
+
+export async function saveCustomerGradeOptions(
+  items: Array<{
+    id: string | null;
+    label: string;
+    enabled: boolean;
+    followUpIntervalDays: number;
+  }>
+) {
+  const category = CONFIG_CATEGORY.CUSTOMER_GRADE;
+  await requireConfigCategoryManage(category);
+
+  const parsed = saveCustomerGradeOptionsSchema.parse({ items });
+
+  const labels = parsed.items.map((item) => item.label.trim());
+  if (new Set(labels).size !== labels.length) {
+    throw new Error("显示名称不能重复");
+  }
+
+  const existing = await prisma.configOption.findMany({ where: { category } });
+  const existingById = new Map(existing.map((opt) => [opt.id, opt]));
+  const keptIds = new Set(
+    parsed.items.map((item) => item.id).filter((id): id is string => Boolean(id))
+  );
+
+  for (const id of keptIds) {
+    if (!existingById.has(id)) throw new Error("包含无效选项，请刷新后重试");
+  }
+
+  const toDelete = existing.filter((opt) => !keptIds.has(opt.id));
+
+  await prisma.$transaction(async (tx) => {
+    for (const opt of toDelete) {
+      await clearConfigOptionReferences(tx, opt.category, opt.value);
+      await tx.configOption.delete({ where: { id: opt.id } });
+    }
+
+    for (let index = 0; index < parsed.items.length; index++) {
+      const item = parsed.items[index];
+      const sortOrder = index + 1;
+
+      if (item.id) {
+        await tx.configOption.update({
+          where: { id: item.id },
+          data: {
+            label: item.label.trim(),
+            enabled: item.enabled,
+            followUpIntervalDays: item.followUpIntervalDays,
+            sortOrder,
+          },
+        });
+      } else {
+        await tx.configOption.create({
+          data: {
+            category,
+            value: generateConfigOptionValue(category),
+            label: item.label.trim(),
+            enabled: item.enabled,
+            followUpIntervalDays: item.followUpIntervalDays,
+            sortOrder,
+          },
+        });
+      }
+    }
+
+    await renumberConfigOptions(tx, category);
+  });
+
+  revalidatePath("/admin/settings");
+  revalidatePath("/customers");
+  revalidatePath("/follow-ups");
+  revalidatePath("/plans-tasks");
 }
 
 export async function toggleConfigOption(formData: FormData) {

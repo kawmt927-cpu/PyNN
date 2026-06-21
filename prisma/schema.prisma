@@ -159,6 +159,17 @@ enum SalesWeeklyAssignmentStatus {
   CANCELLED
 }
 
+enum SalesPlanPeriod {
+  YEAR
+  MONTH
+}
+
+enum SalesPlanItemStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
 enum PresalesAssignmentStatus {
   ACTIVE
   COMPLETED
@@ -187,7 +198,8 @@ model User {
   ownedCustomers     Customer[]           @relation("CustomerOwner")
   followUps          FollowUp[]
   contracts          Contract[]           @relation("ContractOwner")
-  salesTargets       SalesTarget[]
+  salesTargets        SalesTarget[]
+  salesMonthlyTargets SalesMonthlyTarget[]
   salesTasks         SalesTask[]
   salesDailyLogs     SalesDailyLog[]
   salesCostsIncurred SalesCost[]          @relation("SalesCostSalesUser")
@@ -211,6 +223,7 @@ model User {
   salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
   weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
   weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
+  salesPlanBoards          SalesPlanBoard[]
 }
 
 model PersonnelProfile {
@@ -264,6 +277,7 @@ model Customer {
   salesCheckIns SalesCheckIn[]
   tags          CustomerTag[]
   weeklyAssignments SalesWeeklyAssignment[]
+  planItems         SalesPlanItem[]
 }
 
 model CustomerTag {
@@ -338,14 +352,17 @@ model FollowUp {
   result                String?
   followUpAt            DateTime
   nextFollowUpAt        DateTime?
+  nextFollowUpMethod    FollowUpMethod?
   suggestedGrade        String?
   gradeApplied          Boolean        @default(false)
+  opportunityId         String?
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
   customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact        Contact?         @relation(fields: [contactId], references: [id])
   user           User             @relation(fields: [userId], references: [id])
+  opportunity    Opportunity?     @relation(fields: [opportunityId], references: [id])
   faceVisit      FaceVisitDetail?
   salesTask      SalesTask?
   salesCheckIn   SalesCheckIn?
@@ -395,7 +412,9 @@ model Opportunity {
   contracts  Contract[]
   stageLogs  OpportunityStageLog[]
   followUps  OpportunityFollowUp[]
+  linkedFollowUps FollowUp[]
   weeklyAssignments SalesWeeklyAssignment[]
+  planItems         SalesPlanItem[]
 
   @@index([ownerId])
   @@index([customerId])
@@ -623,12 +642,33 @@ model SalesTarget {
   userId        String
   year          Int
   salesTarget   Decimal
+  costTarget    Decimal
   profitTarget  Decimal
   paymentTarget Decimal
 
   user User @relation(fields: [userId], references: [id])
 
   @@unique([userId, year])
+}
+
+model SalesMonthlyTarget {
+  id            String  @id @default(cuid())
+  userId        String
+  year          Int
+  month         Int
+  salesTarget   Decimal
+  costTarget    Decimal
+  profitTarget  Decimal
+  paymentTarget Decimal
+  channelDevTarget        Int?
+  projectDevTarget        Int?
+  paymentCollectionTarget Decimal?
+  maintenanceTarget       Int?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, year, month])
+  @@index([userId, year])
 }
 
 model SalesTask {
@@ -672,6 +712,42 @@ model SalesWeeklyAssignment {
   @@index([createdById])
 }
 
+model SalesPlanBoard {
+  id        String          @id @default(cuid())
+  userId    String
+  period    SalesPlanPeriod
+  year      Int
+  month     Int?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items SalesPlanItem[]
+
+  @@unique([userId, period, year, month])
+  @@index([userId, year])
+}
+
+model SalesPlanItem {
+  id            String              @id @default(cuid())
+  boardId       String
+  title         String
+  description   String?
+  status        SalesPlanItemStatus @default(TODO)
+  sortOrder     Int                 @default(0)
+  dueAt         DateTime?
+  customerId    String?
+  opportunityId String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  board       SalesPlanBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  customer    Customer?      @relation(fields: [customerId], references: [id])
+  opportunity Opportunity?   @relation(fields: [opportunityId], references: [id])
+
+  @@index([boardId, status, sortOrder])
+}
+
 model SalesCheckIn {
   id              String             @id @default(cuid())
   userId          String
@@ -710,6 +786,7 @@ model SalesDailyLog {
   status            SalesDailyLogStatus @default(IN_PROGRESS)
   riskFlag          Boolean             @default(false)
   riskNotes         String?
+  submittedAt       DateTime?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
@@ -718,6 +795,12 @@ model SalesDailyLog {
   checkIns  SalesCheckIn[]
 
   @@unique([userId, logDate])
+}
+
+model SalesKpiConfig {
+  id                      String   @id @default("default")
+  projectDevMinStageValue   String?
+  updatedAt                 DateTime @updatedAt
 }
 
 model SalesCost {
@@ -796,8 +879,9 @@ model ConfigOption {
   value      String
   label      String
   sortOrder  Int    @default(0)
-  color      String?
-  enabled    Boolean @default(true)
+  color                String?
+  enabled              Boolean @default(true)
+  followUpIntervalDays Int?
 
   @@unique([category, value])
 }

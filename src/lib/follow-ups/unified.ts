@@ -1,6 +1,7 @@
 import type { FollowUpMethod } from "@prisma/client";
 import { getPrismaClient } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
+import { getGradeExpiryPendingCustomers } from "@/lib/customers/grade-expiry";
 
 export type UnifiedFollowUpHistoryItem = {
   id: string;
@@ -10,6 +11,7 @@ export type UnifiedFollowUpHistoryItem = {
   result: string | null;
   followUpAt: Date;
   nextFollowUpAt: Date | null;
+  nextFollowUpMethod?: FollowUpMethod | null;
   user: { name: string };
   contact: { name: string } | null;
   faceVisit: {
@@ -23,12 +25,12 @@ export type UnifiedFollowUpHistoryItem = {
 
 export type UnifiedPendingFollowUp = {
   id: string;
-  source: "customer" | "opportunity";
-  method: FollowUpMethod;
+  source: "customer" | "opportunity" | "grade_expiry";
+  method: FollowUpMethod | null;
   content: string;
   nextFollowUpAt: Date;
   customer: { id: string; name: string; customerGrade: string | null };
-  user: { name: string };
+  user: { name: string } | null;
   opportunity: { id: string; title: string } | null;
 };
 
@@ -49,6 +51,7 @@ export async function getCustomerFollowUpHistory(
         user: { select: { name: true } },
         contact: { select: { name: true } },
         faceVisit: true,
+        opportunity: { select: { id: true, title: true } },
       },
     }),
     db.opportunityFollowUp.findMany({
@@ -69,10 +72,11 @@ export async function getCustomerFollowUpHistory(
       result: item.result,
       followUpAt: item.followUpAt,
       nextFollowUpAt: item.nextFollowUpAt,
+      nextFollowUpMethod: item.nextFollowUpMethod,
       user: item.user,
       contact: item.contact,
       faceVisit: item.faceVisit,
-      opportunity: null,
+      opportunity: item.opportunity,
       changeSummary: null,
     })),
     ...opportunityFollowUps.map((item) => ({
@@ -180,6 +184,28 @@ export async function getPendingFollowUps(
         opportunity: { id: item.opportunity.id, title: item.opportunity.title },
       })),
   ];
+
+  if (mode === "due") {
+    const gradeExpiry = await getGradeExpiryPendingCustomers(role, userId, now, take);
+    const existingCustomerIds = new Set(unified.map((item) => item.customer.id));
+    for (const item of gradeExpiry) {
+      if (existingCustomerIds.has(item.customerId)) continue;
+      unified.push({
+        id: `grade-expiry:${item.customerId}`,
+        source: "grade_expiry",
+        method: null,
+        content: "超过等级规定的往来间隔，需尽快跟进",
+        nextFollowUpAt: item.dueAt,
+        customer: {
+          id: item.customerId,
+          name: item.customerName,
+          customerGrade: item.customerGrade,
+        },
+        user: null,
+        opportunity: null,
+      });
+    }
+  }
 
   return unified
     .sort((a, b) => a.nextFollowUpAt.getTime() - b.nextFollowUpAt.getTime())

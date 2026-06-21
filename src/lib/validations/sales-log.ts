@@ -17,6 +17,13 @@ export const checkInFollowUpSchema = z.object({
   content: z.string().min(1, "请填写往来内容"),
   result: z.string().optional().nullable(),
   nextFollowUpAt: z.string().optional().nullable(),
+  nextFollowUpMethod: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  suggestedGrade: z.string().optional().nullable(),
+  opportunityId: z.string().optional().nullable(),
   location: z.string().optional().nullable(),
   detailedNotes: z.string().optional().nullable(),
 });
@@ -38,11 +45,15 @@ export const checkInFormSchema = z
     notes: z.string().optional().nullable(),
     completeInteractionNow: z.boolean().optional().default(false),
     followUp: checkInFollowUpSchema.optional().nullable(),
+    updateCheckInId: z.string().optional().nullable(),
   })
   .superRefine((data, ctx) => {
     const mode = normalizeCheckInMode(data.checkInMode);
     if (mode === "interaction" && !data.customerId?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请选择客户", path: ["customerId"] });
+    }
+    if (mode === "interaction" && !data.contactId?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请选择联系人", path: ["contactId"] });
     }
     if (mode === "interaction" && data.completeInteractionNow) {
       if (!data.followUp?.content?.trim()) {
@@ -58,14 +69,53 @@ export const checkInFormSchema = z
 
 export type CheckInFollowUpInput = z.infer<typeof checkInFollowUpSchema>;
 
+export const completeCheckInSchema = z.object({
+  contactId: z.string().min(1, "请选择联系人"),
+  method: z.enum(SALES_LOG_METHODS),
+  content: z.string().min(1, "请填写往来内容"),
+  result: z.string().optional().nullable(),
+  suggestedGrade: z.string().optional().nullable(),
+  opportunityId: z.string().optional().nullable(),
+  nextFollowUpAt: z.string().optional().nullable(),
+  nextFollowUpMethod: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  location: z.string().optional().nullable(),
+  detailedNotes: z.string().optional().nullable(),
+});
+
 export const manualLogFormSchema = z.object({
   customerId: z.string().min(1, "请选择客户"),
-  contactId: z.string().optional().nullable(),
+  contactId: z.string().min(1, "请选择联系人"),
   method: z.enum(SALES_LOG_METHODS),
   content: z.string().min(1, "请填写往来内容"),
   result: z.string().optional().nullable(),
   followUpAt: z.string().min(1, "请选择往来时间"),
+  suggestedGrade: z.string().optional().nullable(),
+  opportunityId: z.string().optional().nullable(),
   nextFollowUpAt: z.string().optional().nullable(),
+  nextFollowUpMethod: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
   location: z.string().optional().nullable(),
   detailedNotes: z.string().optional().nullable(),
+});
+
+export const quickContactSchema = z.object({
+  name: z.string().min(1, "请输入联系人姓名"),
+  title: z.string().optional(),
+  phone: z.string().optional(),
+  role: z.enum(["DECISION_MAKER", "TECHNICAL", "OTHER"]).default("OTHER"),
+});
+
+export const quickOpportunitySchema = z.object({
+  customerId: z.string().min(1),
+  title: z.string().min(1, "请输入商机名称"),
+  stage: z.string().min(1, "请选择商机阶段"),
+  expectedAmount: z.coerce.number().positive("预计金额须大于 0"),
+  expectedCloseDate: z.string().min(1, "请选择预计签约月份"),
 });

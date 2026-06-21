@@ -14,7 +14,8 @@ export async function listTodayFollowUps(role: UserRole, userId: string) {
     orderBy: { followUpAt: "desc" },
     include: {
       customer: { select: { id: true, name: true } },
-      contact: { select: { name: true } },
+      contact: { select: { id: true, name: true, title: true } },
+      opportunity: { select: { id: true, title: true } },
       user: { select: { name: true } },
       salesCheckIn: { select: { id: true } },
     },
