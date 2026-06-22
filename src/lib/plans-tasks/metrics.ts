@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { sumContractPaymentsForOwner } from "@/lib/contracts/payment-actuals";
+import { signedContractStatusFilter } from "@/lib/contracts/access";
 
 export type SalesMetrics = {
   sales: number;
@@ -33,14 +35,10 @@ function periodRange(year: number, month?: number) {
   };
 }
 
-const signedContractFilter = {
-  status: { not: "PENDING_SIGN" as const },
-};
-
 const signedContractWhere = (userId: string, start: Date, end: Date) => ({
   ownerId: userId,
   signedAt: { gte: start, lt: end },
-  ...signedContractFilter,
+  ...signedContractStatusFilter(),
 });
 
 async function computeSalesAmount(userId: string, start: Date, end: Date): Promise<number> {
@@ -52,21 +50,14 @@ async function computeSalesAmount(userId: string, start: Date, end: Date): Promi
 }
 
 async function computePaymentAmount(userId: string, start: Date, end: Date): Promise<number> {
-  const rows = await prisma.paymentInstallment.aggregate({
-    where: {
-      paidAt: { gte: start, lt: end },
-      contract: { ownerId: userId },
-    },
-    _sum: { paidAmount: true },
-  });
-  return Number(rows._sum.paidAmount ?? 0);
+  return sumContractPaymentsForOwner(userId, start, end);
 }
 
 async function computeCostAmount(userId: string, start: Date, end: Date): Promise<number> {
   const [products, salesCosts] = await Promise.all([
     prisma.contractProduct.findMany({
       where: { contract: signedContractWhere(userId, start, end) },
-      select: { actualCostPrice: true },
+      select: { costAmount: true, actualCostPrice: true },
     }),
     prisma.salesCost.aggregate({
       where: {
@@ -77,19 +68,28 @@ async function computeCostAmount(userId: string, start: Date, end: Date): Promis
     }),
   ]);
 
-  const productCost = products.reduce((sum, row) => sum + Number(row.actualCostPrice), 0);
+  const productCost = products.reduce(
+    (sum, row) => sum + Number(row.costAmount || row.actualCostPrice),
+    0
+  );
   return productCost + Number(salesCosts._sum.totalAmount ?? 0);
 }
 
 async function computeProfitAmount(userId: string, start: Date, end: Date): Promise<number> {
-  const products = await prisma.contractProduct.findMany({
-    where: { contract: signedContractWhere(userId, start, end) },
-    select: { salesAmount: true, actualCostPrice: true },
+  const contracts = await prisma.contract.findMany({
+    where: signedContractWhere(userId, start, end),
+    select: {
+      totalAmount: true,
+      products: { select: { costAmount: true, actualCostPrice: true } },
+    },
   });
-  const contractProfit = products.reduce(
-    (sum, row) => sum + Number(row.salesAmount) - Number(row.actualCostPrice),
-    0
-  );
+  const contractProfit = contracts.reduce((sum, contract) => {
+    const productCost = contract.products.reduce(
+      (s, row) => s + Number(row.costAmount || row.actualCostPrice),
+      0
+    );
+    return sum + Number(contract.totalAmount) - productCost;
+  }, 0);
 
   const costs = await prisma.salesCost.aggregate({
     where: {

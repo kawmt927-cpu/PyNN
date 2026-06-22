@@ -27,6 +27,7 @@ type Props = {
   onSearch: (query: string) => Promise<SearchSelectOption[]>;
   disabled?: boolean;
   className?: string;
+  labelClassName?: string;
   onCreateNew?: (query: string) => void;
   createNewLabel?: string;
 };
@@ -44,6 +45,7 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
     onSearch,
     disabled,
     className,
+    labelClassName,
     onCreateNew,
     createNewLabel = "新增客户",
   },
@@ -152,8 +154,12 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
   );
 
   return (
-    <div ref={rootRef} className={cn(label ? "space-y-2" : "space-y-0", className)}>
-      {label ? <Label htmlFor={id}>{label}</Label> : null}
+    <div ref={rootRef} className={cn("relative", label ? "space-y-2" : "space-y-0", className)}>
+      {label ? (
+        <Label htmlFor={id} className={labelClassName}>
+          {label}
+        </Label>
+      ) : null}
       <input type="hidden" name={name} value={value} required={required} />
       <Input
         id={id}

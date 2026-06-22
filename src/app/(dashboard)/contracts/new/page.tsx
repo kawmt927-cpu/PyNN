@@ -4,6 +4,7 @@ import { canManageOpportunityOwner } from "@/lib/opportunities/access";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { resolveBackNavigation } from "@/lib/navigation/return-to";
+import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
 
 type Props = {
   searchParams: Promise<{ returnTo?: string }>;
@@ -15,14 +16,13 @@ export default async function NewContractPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [salesUsers] = await Promise.all([
-    showOwnerSelect
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+  const [salesUsers, paymentMethods] = await Promise.all([
+    prisma.user.findMany({
+      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
   ]);
 
   return (
@@ -33,13 +33,15 @@ export default async function NewContractPage({ searchParams }: Props) {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        可直接创建合同，无需关联商机；保存后将自动创建对应项目。
+        销售提交后需销售管理审核；销售管理/管理员提交后直接签署并创建项目。
       </p>
 
       <ContractForm
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
-        submitLabel="创建合同并生成项目"
+        currentUserId={session.user.id}
+        paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
+        submitLabel="提交销售合同"
       />
     </div>
   );

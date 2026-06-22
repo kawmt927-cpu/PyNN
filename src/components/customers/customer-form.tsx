@@ -69,6 +69,11 @@ function withEmptyOption(options: ConfigOptionItem[], label = "请选择") {
   return [{ value: "", label }, ...options];
 }
 
+/** 两列网格内统一标签行高，使左右输入框对齐 */
+const FORM_GRID_CELL = "grid min-w-0 grid-rows-[2.75rem_auto] gap-2 space-y-0";
+const FORM_GRID_LABEL = "self-end leading-snug";
+const FORM_FULL_WIDTH = "space-y-2 md:col-span-2";
+
 export function CustomerForm({
   mode,
   customerId,
@@ -181,7 +186,7 @@ export function CustomerForm({
           医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。
         </p>
       ) : null}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
         {isCreate ? (
           <div className="flex flex-wrap items-end gap-2 md:col-span-2">
             <div className="min-w-[240px] flex-1 space-y-2">
@@ -206,14 +211,27 @@ export function CustomerForm({
             ) : null}
           </div>
         ) : (
-          <div className="space-y-2 md:col-span-2">
+          <div className={FORM_FULL_WIDTH}>
             <Label htmlFor="name">客户名称 *</Label>
             <Input id="name" name="name" defaultValue={initial?.name ?? ""} required />
           </div>
         )}
 
-        <div className="space-y-2">
-          <Label htmlFor="category">客户类别 *</Label>
+        <SelectField
+          id="customerType"
+          label="关系类型 *"
+          name="customerType"
+          options={withEmptyOption(typeOptions)}
+          defaultValue={initial?.customerType ?? ""}
+          required
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
+        />
+
+        <div className={FORM_GRID_CELL}>
+          <Label htmlFor="category" className={FORM_GRID_LABEL}>
+            客户类别 *
+          </Label>
           <select
             id="category"
             name="category"
@@ -230,18 +248,19 @@ export function CustomerForm({
           </select>
         </div>
 
-        <SelectField
-          id="customerType"
-          label="关系类型 *"
-          name="customerType"
-          options={withEmptyOption(typeOptions)}
-          defaultValue={initial?.customerType ?? ""}
+        <CustomerGradeSelect
+          defaultValue={initial?.customerGrade ?? ""}
           required
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
         />
 
-        <CustomerGradeSelect defaultValue={initial?.customerGrade ?? ""} required />
-
-        <CustomerTagSelect options={tagOptions} defaultValue={initialTagValues} />
+        <CustomerTagSelect
+          options={tagOptions}
+          defaultValue={initialTagValues}
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
+        />
 
         <SelectField
           id="source"
@@ -249,6 +268,8 @@ export function CustomerForm({
           name="source"
           options={withEmptyOption(sourceOptions)}
           defaultValue={initial?.source ?? ""}
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
         />
 
         {category === "HOSPITAL" && (
@@ -262,9 +283,13 @@ export function CustomerForm({
                   options={hospitalLevelOptions}
                   value={hospitalLevel}
                   onValueChange={(value) => setHospitalLevel(value as HospitalLevel | "")}
+                  className={FORM_GRID_CELL}
+                  labelClassName={FORM_GRID_LABEL}
                 />
-                <div className="space-y-2">
-                  <Label htmlFor="bedCount">床位数</Label>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="bedCount" className={FORM_GRID_LABEL}>
+                    床位数
+                  </Label>
                   <Input
                     id="bedCount"
                     name="bedCount"
@@ -283,9 +308,13 @@ export function CustomerForm({
                   name="hospitalLevel"
                   options={hospitalLevelOptions}
                   defaultValue={initial?.hospitalLevel ?? ""}
+                  className={FORM_GRID_CELL}
+                  labelClassName={FORM_GRID_LABEL}
                 />
-                <div className="space-y-2">
-                  <Label htmlFor="bedCount">床位数</Label>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="bedCount" className={FORM_GRID_LABEL}>
+                    床位数
+                  </Label>
                   <Input
                     id="bedCount"
                     name="bedCount"
@@ -301,8 +330,10 @@ export function CustomerForm({
 
         {isCreate ? (
           <>
-            <div className="space-y-2">
-              <Label htmlFor="province">省</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="province" className={FORM_GRID_LABEL}>
+                省
+              </Label>
               <Input
                 id="province"
                 name="province"
@@ -310,12 +341,16 @@ export function CustomerForm({
                 onChange={(e) => setProvince(e.target.value)}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="city">市</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="city" className={FORM_GRID_LABEL}>
+                市
+              </Label>
               <Input id="city" name="city" value={city} onChange={(e) => setCity(e.target.value)} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="district">区/县</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="district" className={FORM_GRID_LABEL}>
+                区/县
+              </Label>
               <Input
                 id="district"
                 name="district"
@@ -326,22 +361,28 @@ export function CustomerForm({
           </>
         ) : (
           <>
-            <div className="space-y-2">
-              <Label htmlFor="province">省</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="province" className={FORM_GRID_LABEL}>
+                省
+              </Label>
               <Input id="province" name="province" defaultValue={initial?.province ?? ""} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="city">市</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="city" className={FORM_GRID_LABEL}>
+                市
+              </Label>
               <Input id="city" name="city" defaultValue={initial?.city ?? ""} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="district">区/县</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="district" className={FORM_GRID_LABEL}>
+                区/县
+              </Label>
               <Input id="district" name="district" defaultValue={initial?.district ?? ""} />
             </div>
           </>
         )}
 
-        <div className="space-y-2 md:col-span-2">
+        <div className={FORM_FULL_WIDTH}>
           <Label htmlFor="existingSystem">现有系统</Label>
           <Input
             id="existingSystem"
@@ -360,10 +401,12 @@ export function CustomerForm({
               ...salesUsers.map((u) => ({ value: u.id, label: u.name })),
             ]}
             defaultValue={defaultOwner}
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
           />
         )}
 
-        <div className="space-y-2 md:col-span-2">
+        <div className={FORM_FULL_WIDTH}>
           <Label htmlFor="notes">备注</Label>
           <Textarea id="notes" name="notes" defaultValue={initial?.notes ?? ""} rows={4} />
         </div>

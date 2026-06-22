@@ -10,6 +10,7 @@ export const CONFIG_CATEGORY = {
   CUSTOMER_TAG: "customer_tag",
   OPPORTUNITY_STAGE: "opportunity_stage",
   PROJECT_COST_CATEGORY: "project_cost_category",
+  CONTRACT_PAYMENT_METHOD: "contract_payment_method",
 } as const;
 
 export type ConfigCategory = (typeof CONFIG_CATEGORY)[keyof typeof CONFIG_CATEGORY];
@@ -21,6 +22,7 @@ export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CUSTOMER_TAG]: "客户标签",
   [CONFIG_CATEGORY.OPPORTUNITY_STAGE]: "商机阶段",
   [CONFIG_CATEGORY.PROJECT_COST_CATEGORY]: "项目成本类别",
+  [CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD]: "合同支付方式",
 };
 
 /** 可扩展的配置模块树：一级模块 → 二级字段 */
@@ -48,6 +50,7 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
       { category: CONFIG_CATEGORY.CUSTOMER_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_GRADE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TAG, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TAG] },
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
+      { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD] },
     ],
   },
   {
@@ -180,6 +183,9 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "PROPOSAL", label: "方案", sortOrder: 3 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "QUOTATION", label: "报价", sortOrder: 4 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEGOTIATION", label: "谈判", sortOrder: 5 },
+  { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "BANK_TRANSFER", label: "银行转账", sortOrder: 1 },
+  { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "ACCEPTANCE", label: "承兑汇票", sortOrder: 2 },
+  { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "OTHER", label: "其他", sortOrder: 3 },
 ] as const;
 
 export async function loadCustomerFormOptions() {

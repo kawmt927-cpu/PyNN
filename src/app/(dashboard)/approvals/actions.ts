@@ -120,5 +120,9 @@ export async function rejectCustomerClaim(formData: FormData) {
 export async function getPendingApprovalCount() {
   const db = getPrismaClient();
   await requireRole(["SALES_MANAGER", "ADMIN"]);
-  return db.customerClaimRequest.count({ where: { status: "PENDING" } });
+  const [claims, contracts] = await Promise.all([
+    db.customerClaimRequest.count({ where: { status: "PENDING" } }),
+    db.contract.count({ where: { status: "PENDING_APPROVAL" } }),
+  ]);
+  return claims + contracts;
 }

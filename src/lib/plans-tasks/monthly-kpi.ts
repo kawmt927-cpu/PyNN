@@ -1,6 +1,8 @@
 import { endOfDay, startOfDay } from "date-fns";
 import { FollowUpMethod, SalesDailyLogStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { signedContractStatusFilter } from "@/lib/contracts/access";
+import { sumContractPaymentsForOwner } from "@/lib/contracts/payment-actuals";
 import { getLastInteractionBefore } from "@/lib/customers/grade-expiry";
 import {
   computeGradeFollowUpDueAt,
@@ -120,7 +122,7 @@ async function countProjectDevelopment(
       ownerId: userId,
       signedAt: { gte: start, lt: end },
       opportunityId: { not: null },
-      status: { not: "PENDING_SIGN" },
+      ...signedContractStatusFilter(),
     },
     select: { opportunityId: true },
   });
@@ -146,14 +148,7 @@ async function countProjectDevelopment(
 }
 
 async function sumPaymentCollection(userId: string, start: Date, end: Date): Promise<number> {
-  const rows = await prisma.paymentInstallment.aggregate({
-    where: {
-      paidAt: { gte: start, lt: end },
-      contract: { ownerId: userId },
-    },
-    _sum: { paidAmount: true },
-  });
-  return Number(rows._sum.paidAmount ?? 0);
+  return sumContractPaymentsForOwner(userId, start, end);
 }
 
 async function computeProcessCompliance(

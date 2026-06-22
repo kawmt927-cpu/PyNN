@@ -46,6 +46,8 @@ export const CUSTOMER_CLAIM_STATUS_LABELS = {
 } as const;
 
 export const CONTRACT_STATUS_LABELS = {
+  PENDING_APPROVAL: "待审核",
+  REJECTED: "已驳回",
   PENDING_SIGN: "待签署",
   SIGNED_PENDING_IMPL: "已签署待实施",
   IMPLEMENTING: "实施中",

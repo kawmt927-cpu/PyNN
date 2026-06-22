@@ -22,6 +22,8 @@ type Props = {
   excludeIds?: string[];
   disabled?: boolean;
   onCreateNew?: (query: string) => void;
+  className?: string;
+  labelClassName?: string;
 };
 
 async function fetchCustomers(

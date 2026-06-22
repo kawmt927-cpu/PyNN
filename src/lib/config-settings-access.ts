@@ -7,6 +7,7 @@ export type SettingsScope = "sales" | "project" | "system";
 
 export const SETTINGS_TAB = {
   FIELDS: "fields",
+  PRODUCTS: "products",
   WECOM: "wecom",
   AI: "ai",
   AMAP: "amap",
@@ -30,6 +31,9 @@ export function canAccessSettings(role: UserRole): boolean {
 export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
   if (tab === SETTINGS_TAB.WECOM || tab === SETTINGS_TAB.AI || tab === SETTINGS_TAB.AMAP) {
     return role === "ADMIN";
+  }
+  if (tab === SETTINGS_TAB.PRODUCTS) {
+    return role === "ADMIN" || role === "SALES_MANAGER";
   }
   if (tab === SETTINGS_TAB.FIELDS) {
     return canAccessSettings(role) && getAccessibleConfigModules(role).length > 0;
@@ -65,6 +69,9 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
   const tabs: Array<{ id: SettingsTabId; label: string }> = [];
   if (getAccessibleConfigModules(role).length > 0) {
     tabs.push({ id: SETTINGS_TAB.FIELDS, label: "字段选项" });
+  }
+  if (role === "ADMIN" || role === "SALES_MANAGER") {
+    tabs.push({ id: SETTINGS_TAB.PRODUCTS, label: "产品服务" });
   }
   if (role === "ADMIN") {
     tabs.push({ id: SETTINGS_TAB.WECOM, label: "企业微信" });

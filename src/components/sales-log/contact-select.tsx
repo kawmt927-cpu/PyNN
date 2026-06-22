@@ -14,10 +14,12 @@ export function ContactSelect({
   customerId,
   value,
   onChange,
+  required,
 }: {
   customerId: string;
   value: string;
   onChange: (value: string) => void;
+  required?: boolean;
 }) {
   const [contacts, setContacts] = useState<ContactOption[]>([]);
 
@@ -31,6 +33,7 @@ export function ContactSelect({
       .then((res) => (res.ok ? res.json() : { items: [] }))
       .then((data: { items: ContactOption[] }) => {
         setContacts(data.items ?? []);
+        if (value) return;
         const primary = data.items?.find((c) => c.isPrimary);
         if (primary) onChange(primary.id);
       })
@@ -49,9 +52,15 @@ export function ContactSelect({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      required={required}
       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
     >
-      <option value="">不指定联系人</option>
+      {!required && <option value="">不指定联系人</option>}
+      {required && !value && (
+        <option value="" disabled>
+          请选择联系人
+        </option>
+      )}
       {contacts.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name}

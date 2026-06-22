@@ -19,6 +19,7 @@ import {
 import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings";
 import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
 import { AmapSettings } from "@/components/admin/amap-settings";
+import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { getAiAgentConfigForAdmin } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
@@ -47,7 +48,7 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     rawField
   );
 
-  const [users, optionsByCategory, aiAgentConfig, amapConfig] = await Promise.all([
+  const [users, optionsByCategory, aiAgentConfig, amapConfig, productTemplates] = await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, email: true, role: true, wecomUserId: true },
@@ -55,6 +56,9 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     getAllConfigOptionsGrouped(),
     role === "ADMIN" ? getAiAgentConfigForAdmin() : Promise.resolve(null),
     role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.PRODUCTS
+      ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
+      : Promise.resolve([]),
   ]);
 
   const wecomReady = isWeComConfigured();
@@ -84,6 +88,26 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
                 initialField={defaultField?.category}
               />
             </Suspense>
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.PRODUCTS ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>产品服务模板</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-4 text-sm text-muted-foreground">
+              维护合同签约时可选择的产品及默认成本；合同售价以合同金额为准。
+            </p>
+            <ProductTemplatesPanel
+              items={productTemplates.map((row) => ({
+                id: row.id,
+                name: row.name,
+                description: row.description,
+                baselineCostPrice: Number(row.baselineCostPrice),
+                enabled: row.enabled,
+              }))}
+            />
           </CardContent>
         </Card>
       ) : activeTab === SETTINGS_TAB.AI && aiAgentConfig ? (

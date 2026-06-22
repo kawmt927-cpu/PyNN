@@ -15,6 +15,7 @@ type Props = {
   defaultValue?: string[];
   onValueChange?: (values: string[]) => void;
   className?: string;
+  labelClassName?: string;
 };
 
 export function CustomerTagSelect({
@@ -26,6 +27,7 @@ export function CustomerTagSelect({
   defaultValue = [],
   onValueChange,
   className,
+  labelClassName,
 }: Props) {
   const isControlled = value !== undefined;
   const [internalValue, setInternalValue] = useState(defaultValue);
@@ -48,7 +50,9 @@ export function CustomerTagSelect({
   if (options.length === 0) {
     return (
       <div className={cn("space-y-2", className)}>
-        {label ? <Label>{label}</Label> : null}
+        {label ? (
+          <Label className={labelClassName}>{label}</Label>
+        ) : null}
         <p className="text-sm text-muted-foreground">暂无可用标签，请管理员在系统配置中维护。</p>
       </div>
     );
@@ -56,8 +60,12 @@ export function CustomerTagSelect({
 
   return (
     <div className={cn("space-y-2", className)}>
-      {label ? <Label id={id}>{label}</Label> : null}
-      <div className="flex flex-wrap gap-2" role="group" aria-labelledby={id}>
+      {label ? (
+        <Label id={id} className={labelClassName}>
+          {label}
+        </Label>
+      ) : null}
+      <div className="flex min-h-10 flex-wrap items-center gap-2" role="group" aria-labelledby={id}>
         {options.map((option) => {
           const active = selected.has(option.value);
           return (

@@ -9,6 +9,7 @@ import { canSignOpportunity } from "@/lib/opportunities/status";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { selfReturnPath } from "@/lib/navigation/return-to";
+import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -30,14 +31,13 @@ export default async function CreateContractFromOpportunityPage({ params, search
 
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [salesUsers] = await Promise.all([
-    showOwnerSelect
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+  const [salesUsers, paymentMethods] = await Promise.all([
+    prisma.user.findMany({
+      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
   ]);
 
   const detailHref = selfReturnPath(`/opportunities/${id}`, query);
@@ -62,6 +62,8 @@ export default async function CreateContractFromOpportunityPage({ params, search
         opportunityTitle={full.title}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
+        currentUserId={session.user.id}
+        paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
         defaultValues={{
           title: full.title,
           totalAmount: Number(full.expectedAmount),
@@ -70,8 +72,9 @@ export default async function CreateContractFromOpportunityPage({ params, search
           endUserCustomerId: full.customerId,
           endUserCustomerName: full.customer.name,
           ownerId: full.ownerId,
+          ourRepresentativeId: session.user.id,
         }}
-        submitLabel="创建合同并生成项目"
+        submitLabel="提交销售合同"
       />
     </div>
   );

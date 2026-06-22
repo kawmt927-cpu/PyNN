@@ -53,16 +53,4 @@ export const restoreOpportunityStatusSchema = z.object({
   opportunityId: z.string().min(1),
 });
 
-export const contractFormSchema = z.object({
-  title: z.string().min(1, "请输入合同标题"),
-  totalAmount: z.coerce.number().positive("合同金额须大于 0"),
-  signingType: z.enum(["DIRECT", "INDIRECT"]),
-  signCustomerId: z.string().min(1, "请选择签约客户"),
-  endUserCustomerId: z.string().min(1, "请选择终用户"),
-  ownerId: z.string().optional().nullable(),
-  opportunityId: z.string().optional().nullable(),
-  signedAt: z.string().optional().nullable(),
-  effectiveAt: z.string().optional().nullable(),
-  expiresAt: z.string().optional().nullable(),
-  notes: z.string().optional(),
-});
+export { contractFormSchema } from "@/lib/validations/contract";

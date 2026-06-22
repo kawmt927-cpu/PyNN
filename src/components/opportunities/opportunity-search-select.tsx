@@ -21,6 +21,7 @@ type Props = {
   customerId?: string;
   disabled?: boolean;
   className?: string;
+  labelClassName?: string;
 };
 
 async function fetchOpportunities(
@@ -57,7 +58,13 @@ async function fetchOpportunities(
   }));
 }
 
-export function OpportunitySearchSelect({ status, customerId, className, ...props }: Props) {
+export function OpportunitySearchSelect({
+  status,
+  customerId,
+  className,
+  labelClassName,
+  ...props
+}: Props) {
   const onSearch = useCallback(
     (q: string) => fetchOpportunities(q, status, customerId),
     [status, customerId]
@@ -67,6 +74,7 @@ export function OpportunitySearchSelect({ status, customerId, className, ...prop
     <EntitySearchSelect
       {...props}
       className={className}
+      labelClassName={labelClassName}
       placeholder={props.placeholder ?? "输入商机名称搜索…"}
       onSearch={onSearch}
     />

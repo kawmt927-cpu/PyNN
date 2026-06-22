@@ -66,6 +66,8 @@ enum SigningType {
 }
 
 enum ContractStatus {
+  PENDING_APPROVAL
+  REJECTED
   PENDING_SIGN
   SIGNED_PENDING_IMPL
   IMPLEMENTING
@@ -215,6 +217,10 @@ model User {
   projectCosts       ProjectCost[]
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
   customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
+  contractsAsOurRep       Contract[]             @relation("ContractOurRep")
+  contractsSubmitted      Contract[]             @relation("ContractSubmitter")
+  contractsApproved       Contract[]             @relation("ContractApprover")
+  contractPaymentsRecorded ContractPaymentRecord[] @relation("ContractPaymentRecorder")
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
   opportunityStageLogs    OpportunityStageLog[]
   opportunityFollowUps    OpportunityFollowUp[]
@@ -335,9 +341,10 @@ model Contact {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  followUps FollowUp[]
-  checkIns  SalesCheckIn[]
+  customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  followUps        FollowUp[]
+  checkIns         SalesCheckIn[]
+  contractsAsSign  Contract[] @relation("ContractSignContact")
 }
 
 // ─── CRM: Follow-up & Face Visit ─────────────────────────
@@ -458,31 +465,47 @@ model OpportunityFollowUp {
 // ─── CRM: Contract ───────────────────────────────────────
 
 model Contract {
-  id                String         @id @default(cuid())
-  title             String
-  totalAmount       Decimal
-  signingType       SigningType
-  status            ContractStatus @default(PENDING_SIGN)
-  signCustomerId    String
-  endUserCustomerId String
-  ownerId           String
-  opportunityId     String?
-  signedAt          DateTime?
-  effectiveAt       DateTime?
-  expiresAt         DateTime?
-  notes             String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  contractNo          String?        @unique
+  title               String
+  totalAmount         Decimal
+  signingType         SigningType
+  status              ContractStatus @default(PENDING_APPROVAL)
+  signCustomerId      String
+  endUserCustomerId   String
+  signContactId       String?
+  ourRepresentativeId String?
+  paymentMethod       String?
+  ownerId             String
+  opportunityId       String?
+  signedAt            DateTime?
+  effectiveAt         DateTime?
+  expiresAt           DateTime?
+  notes               String?
+  submittedAt         DateTime?
+  submittedById       String?
+  approvedAt          DateTime?
+  approvedById        String?
+  rejectedAt          DateTime?
+  rejectReason        String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
-  signCustomer    Customer            @relation("SignCustomer", fields: [signCustomerId], references: [id])
-  endUserCustomer Customer            @relation("EndUserCustomer", fields: [endUserCustomerId], references: [id])
-  owner           User                @relation("ContractOwner", fields: [ownerId], references: [id])
-  opportunity     Opportunity?        @relation(fields: [opportunityId], references: [id])
-  products        ContractProduct[]
-  installments    PaymentInstallment[]
-  project         Project?
+  signCustomer      Customer                 @relation("SignCustomer", fields: [signCustomerId], references: [id])
+  endUserCustomer   Customer                 @relation("EndUserCustomer", fields: [endUserCustomerId], references: [id])
+  signContact       Contact?                 @relation("ContractSignContact", fields: [signContactId], references: [id])
+  ourRepresentative User?                    @relation("ContractOurRep", fields: [ourRepresentativeId], references: [id])
+  owner             User                     @relation("ContractOwner", fields: [ownerId], references: [id])
+  submittedBy       User?                    @relation("ContractSubmitter", fields: [submittedById], references: [id])
+  approvedBy        User?                    @relation("ContractApprover", fields: [approvedById], references: [id])
+  opportunity       Opportunity?             @relation(fields: [opportunityId], references: [id])
+  products          ContractProduct[]
+  installments      PaymentInstallment[]
+  paymentRecords    ContractPaymentRecord[]
+  project           Project?
 
   @@index([opportunityId])
+  @@index([status])
 }
 
 model ContractProduct {
@@ -491,14 +514,31 @@ model ContractProduct {
   productServiceId     String?
   productName          String
   description          String?
-  salesAmount          Decimal
-  baselineCostPrice    Decimal
-  actualCostPrice      Decimal
+  costAmount           Decimal @default(0)
+  salesAmount          Decimal @default(0)
+  baselineCostPrice    Decimal @default(0)
+  actualCostPrice      Decimal @default(0)
   costAdjustment       Decimal @default(0)
   costAdjustmentReason String?
 
   contract       Contract               @relation(fields: [contractId], references: [id], onDelete: Cascade)
   productService ProductServiceTemplate? @relation(fields: [productServiceId], references: [id])
+}
+
+model ContractPaymentRecord {
+  id           String   @id @default(cuid())
+  contractId   String
+  amount       Decimal
+  paidAt       DateTime
+  notes        String?
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  recordedBy User     @relation("ContractPaymentRecorder", fields: [recordedById], references: [id])
+
+  @@index([contractId])
+  @@index([paidAt])
 }
 
 model PaymentInstallment {
