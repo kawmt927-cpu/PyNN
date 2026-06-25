@@ -6,7 +6,10 @@ import {
   UserRole,
 } from "@prisma/client";
 import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
+import { findDuplicateCustomerByName } from "@/lib/customers/duplicate-name";
 import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
+import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { prisma } from "@/lib/prisma";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
 
@@ -101,13 +104,12 @@ export async function createCustomerFromAgent(
   const name = input.name.trim();
   if (!name) throw new Error("客户名称不能为空");
 
-  const duplicates = await searchCustomersForUser(ctx.role, ctx.userId, name);
-  const exactDuplicate = duplicates.find((row) => row.name === name);
-  if (exactDuplicate) {
+  const duplicate = await findDuplicateCustomerByName(name);
+  if (duplicate) {
     return {
       success: false as const,
-      error: `客户「${name}」已存在`,
-      existingCustomerId: exactDuplicate.id,
+      error: `客户「${duplicate.name}」已存在`,
+      existingCustomerId: duplicate.id,
     };
   }
 
@@ -184,6 +186,18 @@ export async function createFollowUpFromAgent(
   const content = input.content.trim();
   if (!content) throw new Error("跟进内容不能为空");
 
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { customerGrade: true },
+  });
+  const planError = validateNextFollowUpPlan(
+    input.suggestedGrade,
+    input.nextFollowUpAt,
+    input.nextFollowUpMethod,
+    customer?.customerGrade
+  );
+  if (planError) throw new Error(planError);
+
   if (input.contactId) {
     const contact = await prisma.contact.findFirst({
       where: { id: input.contactId, customerId },
@@ -215,7 +229,7 @@ export async function createFollowUpFromAgent(
         content,
         result: input.result?.trim() || null,
         followUpAt,
-        nextFollowUpAt: input.nextFollowUpAt ? new Date(input.nextFollowUpAt) : undefined,
+        nextFollowUpAt: parsePlannedFollowUpDateInput(input.nextFollowUpAt),
         nextFollowUpMethod: input.nextFollowUpMethod || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: applyGrade,

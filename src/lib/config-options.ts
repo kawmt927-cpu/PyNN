@@ -8,6 +8,9 @@ export const CONFIG_CATEGORY = {
   CUSTOMER_TYPE: "customer_type",
   CUSTOMER_GRADE: "customer_grade",
   CUSTOMER_TAG: "customer_tag",
+  CONTACT_TITLE: "contact_title",
+  CONTACT_DEPARTMENT: "contact_department",
+  CONTACT_ROLE: "contact_role",
   OPPORTUNITY_STAGE: "opportunity_stage",
   PROJECT_COST_CATEGORY: "project_cost_category",
   CONTRACT_PAYMENT_METHOD: "contract_payment_method",
@@ -20,6 +23,9 @@ export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CUSTOMER_TYPE]: "关系类型",
   [CONFIG_CATEGORY.CUSTOMER_GRADE]: "客户等级",
   [CONFIG_CATEGORY.CUSTOMER_TAG]: "客户标签",
+  [CONFIG_CATEGORY.CONTACT_TITLE]: "联系人职务",
+  [CONFIG_CATEGORY.CONTACT_DEPARTMENT]: "联系人科室/部门",
+  [CONFIG_CATEGORY.CONTACT_ROLE]: "联系人角色",
   [CONFIG_CATEGORY.OPPORTUNITY_STAGE]: "商机阶段",
   [CONFIG_CATEGORY.PROJECT_COST_CATEGORY]: "项目成本类别",
   [CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD]: "合同支付方式",
@@ -49,6 +55,9 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
       { category: CONFIG_CATEGORY.CUSTOMER_TYPE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TYPE] },
       { category: CONFIG_CATEGORY.CUSTOMER_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_GRADE] },
       { category: CONFIG_CATEGORY.CUSTOMER_TAG, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TAG] },
+      { category: CONFIG_CATEGORY.CONTACT_TITLE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_TITLE] },
+      { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_DEPARTMENT] },
+      { category: CONFIG_CATEGORY.CONTACT_ROLE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_ROLE] },
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
       { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD] },
     ],
@@ -178,6 +187,21 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "CHANNEL", label: "渠道", sortOrder: 2 },
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "PARTNER", label: "合作伙伴", sortOrder: 3 },
   ...DEFAULT_CUSTOMER_GRADE_CONFIG_OPTIONS,
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "DEAN", label: "院长", sortOrder: 1 },
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "VICE_DEAN", label: "副院长", sortOrder: 2 },
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "DIRECTOR", label: "主任", sortOrder: 3 },
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "DEPUTY_DIRECTOR", label: "副主任", sortOrder: 4 },
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "SECTION_CHIEF", label: "科长", sortOrder: 5 },
+  { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "IT_DIRECTOR", label: "信息中心主任", sortOrder: 6 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "IT", label: "信息科", sortOrder: 1 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "MEDICAL_AFFAIRS", label: "医务科", sortOrder: 2 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "NURSING", label: "护理部", sortOrder: 3 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "OUTPATIENT", label: "门诊部", sortOrder: 4 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "INPATIENT", label: "住院部", sortOrder: 5 },
+  { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, value: "ADMIN_OFFICE", label: "院办", sortOrder: 6 },
+  { category: CONFIG_CATEGORY.CONTACT_ROLE, value: "DECISION_MAKER", label: "决策人", sortOrder: 1 },
+  { category: CONFIG_CATEGORY.CONTACT_ROLE, value: "TECHNICAL", label: "技术对接人", sortOrder: 2 },
+  { category: CONFIG_CATEGORY.CONTACT_ROLE, value: "OTHER", label: "其他", sortOrder: 3 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "INITIAL_VISIT", label: "初访", sortOrder: 1 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEEDS_CONFIRM", label: "需求确认", sortOrder: 2 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "PROPOSAL", label: "方案", sortOrder: 3 },
@@ -188,31 +212,51 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "OTHER", label: "其他", sortOrder: 3 },
 ] as const;
 
+export async function getCustomerGradeLabelMap(): Promise<Record<string, string>> {
+  const options = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE);
+  const map = Object.fromEntries(options.map((option) => [option.value, option.label]));
+  for (const option of getCustomerGradeOptions()) {
+    if (!map[option.value]) map[option.value] = option.label;
+  }
+  return map;
+}
+
+export async function loadContactFormOptions() {
+  const [titleOptions, departmentOptions, roleOptions] = await Promise.all([
+    getConfigOptions(CONFIG_CATEGORY.CONTACT_TITLE),
+    getConfigOptions(CONFIG_CATEGORY.CONTACT_DEPARTMENT),
+    getConfigOptions(CONFIG_CATEGORY.CONTACT_ROLE),
+  ]);
+  return { titleOptions, departmentOptions, roleOptions };
+}
+
 export async function loadCustomerFormOptions() {
-  const [sourceOptions, typeOptions, tagOptions] = await Promise.all([
+  const [sourceOptions, typeOptions, gradeOptions, tagOptions] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
     getCustomerTagDefinitions(),
   ]);
   return {
     sourceOptions,
     typeOptions,
-    gradeOptions: getCustomerGradeOptions(),
+    gradeOptions,
     tagOptions,
   };
 }
 
 export async function loadInteractionFormOptions() {
-  const [sourceOptions, typeOptions, tagOptions, stageOptions] = await Promise.all([
+  const [sourceOptions, typeOptions, gradeOptions, tagOptions, stageOptions] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
     getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
     getCustomerTagDefinitions(),
     getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
   ]);
   return {
     sourceOptions,
     typeOptions,
-    gradeOptions: getCustomerGradeOptions(),
+    gradeOptions,
     tagOptions,
     stageOptions,
   };
@@ -222,9 +266,7 @@ export async function loadCustomerFieldLabelMaps() {
   const maps = await getConfigOptionMaps([
     CONFIG_CATEGORY.CUSTOMER_SOURCE,
     CONFIG_CATEGORY.CUSTOMER_TYPE,
+    CONFIG_CATEGORY.CUSTOMER_GRADE,
   ]);
-  maps[CONFIG_CATEGORY.CUSTOMER_GRADE] = Object.fromEntries(
-    getCustomerGradeOptions().map((option) => [option.value, option.label])
-  );
   return maps;
 }

@@ -2,12 +2,23 @@ import { prisma } from "@/lib/prisma";
 
 const KPI_CONFIG_ID = "default";
 
+export type SalesKpiConfigView = {
+  projectDevMinStageValue: string | null;
+};
+
 export async function getSalesKpiConfig() {
   const row = await prisma.salesKpiConfig.findUnique({ where: { id: KPI_CONFIG_ID } });
   if (row) return row;
   return prisma.salesKpiConfig.create({
     data: { id: KPI_CONFIG_ID },
   });
+}
+
+export async function getSalesKpiConfigView(): Promise<SalesKpiConfigView> {
+  const row = await getSalesKpiConfig();
+  return {
+    projectDevMinStageValue: row.projectDevMinStageValue,
+  };
 }
 
 export async function saveProjectDevMinStage(value: string | null) {

@@ -115,17 +115,20 @@ function ComplianceKpiCard({
   );
 }
 
-export function MonthlyKpiDashboard({ kpi }: { kpi: MonthlyKpiBundle }) {
+export function MonthlyKpiDashboard({
+  kpi,
+  subjectName,
+}: {
+  kpi: MonthlyKpiBundle;
+  subjectName?: string;
+}) {
   const { targets, actuals, year, month } = kpi;
 
   return (
     <section className="space-y-3">
-      <div>
-        <h2 className="text-lg font-semibold">
-          {year} 年 {month} 月 KPI
-        </h2>
-        <p className="text-sm text-muted-foreground">渠道/项目/回款催收/过程规范/维护赋能五项月度指标</p>
-      </div>
+      {subjectName ? (
+        <p className="text-sm text-muted-foreground">{subjectName} · 个人月度 KPI</p>
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <CountKpiCard
           label="渠道开发"

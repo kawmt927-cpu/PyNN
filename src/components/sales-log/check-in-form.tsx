@@ -8,9 +8,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
 import type { EntitySearchSelectHandle } from "@/components/ui/entity-search-select";
+import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import type { CheckInMode } from "@/lib/validations/sales-log";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
+import {
+  customerGradeFormValue,
+  customerGradeSubmitValue,
+} from "@/lib/customers/grade";
 import {
   CheckInLocationPicker,
   type CheckInLocationValue,
@@ -24,6 +30,13 @@ import {
   CheckInDuplicateDialog,
   type TodayCustomerCheckInItem,
 } from "@/components/sales-log/check-in-duplicate-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { cn } from "@/lib/utils";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
@@ -61,6 +74,7 @@ export function CheckInForm({
   const [entryTiming, setEntryTiming] = useState<EntryTiming>("now");
   const [customerId, setCustomerId] = useState("");
   const [customerLabel, setCustomerLabel] = useState("");
+  const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(null);
   const [contactId, setContactId] = useState("");
   const [location, setLocation] = useState<CheckInLocationValue | null>(null);
   const [method, setMethod] = useState<SalesLogMethod>("FACE_VISIT");
@@ -77,6 +91,8 @@ export function CheckInForm({
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicateItems, setDuplicateItems] = useState<TodayCustomerCheckInItem[]>([]);
   const [duplicatePayload, setDuplicatePayload] = useState<Record<string, unknown> | null>(null);
+  const [noLocationConfirmOpen, setNoLocationConfirmOpen] = useState(false);
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
 
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
@@ -109,6 +125,7 @@ export function CheckInForm({
     setEntryTiming("later");
     setCustomerId("");
     setCustomerLabel("");
+    setCurrentCustomerGrade(null);
     setContactId("");
     setLocation(null);
     setMethod("FACE_VISIT");
@@ -121,10 +138,75 @@ export function CheckInForm({
     setNextFollowUpMethod("");
   }
 
+  function buildPayload(notes: string | null) {
+    const locationLabel = location ? formatCheckInLocation(location) : null;
+
+    return {
+      checkInMode,
+      customerId: isInteraction ? customerId : null,
+      contactId: isInteraction ? contactId || null : null,
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+      locationText: location?.locationText ?? null,
+      addressProvince: location?.addressProvince ?? null,
+      addressCity: location?.addressCity ?? null,
+      addressDistrict: location?.addressDistrict ?? null,
+      addressStreet: location?.addressStreet ?? null,
+      notes,
+      completeInteractionNow: completeNow,
+      followUp: completeNow
+        ? {
+            method,
+            content: content.trim(),
+            suggestedGrade: customerGradeSubmitValue(suggestedGrade, currentCustomerGrade),
+            opportunityId: opportunityId || null,
+            nextFollowUpAt: nextFollowUpAt || null,
+            nextFollowUpMethod: nextFollowUpMethod || null,
+            location: method === "FACE_VISIT" ? locationLabel : null,
+            detailedNotes: method === "FACE_VISIT" ? detailedNotes.trim() || null : null,
+          }
+        : null,
+    };
+  }
+
+  function runSubmit(payload: Record<string, unknown>, updateCheckInId?: string) {
+    startTransition(async () => {
+      try {
+        if (isInteraction && customerId) {
+          const dupRes = await fetch(
+            `/api/sales-log/check-ins/today?customerId=${encodeURIComponent(customerId)}`,
+            { credentials: "include" }
+          );
+          if (dupRes.ok) {
+            const dupData = (await dupRes.json()) as { items?: TodayCustomerCheckInItem[] };
+            const items = dupData.items ?? [];
+            if (items.length > 0 && !updateCheckInId) {
+              setDuplicateItems(items);
+              setDuplicatePayload(payload);
+              setDuplicateOpen(true);
+              return;
+            }
+          }
+        }
+
+        await submitCheckIn(payload, updateCheckInId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
+        return;
+      }
+      setDuplicateOpen(false);
+      setDuplicatePayload(null);
+      setNoLocationConfirmOpen(false);
+      setPendingPayload(null);
+      resetForm();
+      router.refresh();
+    });
+  }
+
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    if (!location) {
+    if (!isInteraction && !location) {
       setError("请先获取定位并解析地址");
       return;
     }
@@ -140,66 +222,34 @@ export function CheckInForm({
       setError("请填写往来内容");
       return;
     }
-
-    const notes = (new FormData(e.currentTarget).get("notes") as string | null)?.trim() || null;
-    const locationLabel = formatCheckInLocation(location);
-
-    const payload = {
-      checkInMode,
-      customerId: isInteraction ? customerId : null,
-      contactId: isInteraction ? contactId || null : null,
-      latitude: location.latitude,
-      longitude: location.longitude,
-      locationText: location.locationText,
-      addressProvince: location.addressProvince,
-      addressCity: location.addressCity,
-      addressDistrict: location.addressDistrict,
-      addressStreet: location.addressStreet,
-      notes,
-      completeInteractionNow: completeNow,
-      followUp: completeNow
-        ? {
-            method,
-            content: content.trim(),
-            suggestedGrade: suggestedGrade || null,
-            opportunityId: opportunityId || null,
-            nextFollowUpAt: nextFollowUpAt || null,
-            nextFollowUpMethod: nextFollowUpMethod || null,
-            location: method === "FACE_VISIT" ? locationLabel : null,
-            detailedNotes: method === "FACE_VISIT" ? detailedNotes.trim() || null : null,
-          }
-        : null,
-    };
-
-    startTransition(async () => {
-      try {
-        if (isInteraction && customerId) {
-          const dupRes = await fetch(
-            `/api/sales-log/check-ins/today?customerId=${encodeURIComponent(customerId)}`,
-            { credentials: "include" }
-          );
-          if (dupRes.ok) {
-            const dupData = (await dupRes.json()) as { items?: TodayCustomerCheckInItem[] };
-            const items = dupData.items ?? [];
-            if (items.length > 0) {
-              setDuplicateItems(items);
-              setDuplicatePayload(payload);
-              setDuplicateOpen(true);
-              return;
-            }
-          }
-        }
-
-        await submitCheckIn(payload);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
+    if (completeNow) {
+      const planError = validateNextFollowUpPlan(
+        suggestedGrade,
+        nextFollowUpAt,
+        nextFollowUpMethod,
+        currentCustomerGrade
+      );
+      if (planError) {
+        setError(planError);
         return;
       }
-      setDuplicateOpen(false);
-      setDuplicatePayload(null);
-      resetForm();
-      router.refresh();
-    });
+    }
+
+    const notes = (new FormData(e.currentTarget).get("notes") as string | null)?.trim() || null;
+    const payload = buildPayload(notes);
+
+    if (isInteraction && !location) {
+      setPendingPayload(payload);
+      setNoLocationConfirmOpen(true);
+      return;
+    }
+
+    runSubmit(payload);
+  }
+
+  function handleConfirmNoLocation() {
+    if (!pendingPayload) return;
+    runSubmit(pendingPayload);
   }
 
   function handleDuplicateModify(checkInId: string) {
@@ -214,6 +264,8 @@ export function CheckInForm({
       }
       setDuplicateOpen(false);
       setDuplicatePayload(null);
+      setNoLocationConfirmOpen(false);
+      setPendingPayload(null);
       resetForm();
       router.refresh();
     });
@@ -231,6 +283,8 @@ export function CheckInForm({
       }
       setDuplicateOpen(false);
       setDuplicatePayload(null);
+      setNoLocationConfirmOpen(false);
+      setPendingPayload(null);
       resetForm();
       router.refresh();
     });
@@ -290,6 +344,9 @@ export function CheckInForm({
                     onValueChange={(id, option) => {
                       setCustomerId(id);
                       setCustomerLabel(option?.label ?? "");
+                      const grade = option?.customerGrade ?? null;
+                      setCurrentCustomerGrade(grade);
+                      setSuggestedGrade(customerGradeFormValue(grade));
                       setContactId("");
                       setOpportunityId("");
                       setOpportunityLabel("");
@@ -433,44 +490,25 @@ export function CheckInForm({
                     label="客户等级（可选）"
                     value={suggestedGrade}
                     onValueChange={setSuggestedGrade}
+                    options={customerFormOptions.gradeOptions}
                     labelClassName={alignedFieldLabelClass}
                     disabled={!customerReady}
                   />
-                  <div className="space-y-4 rounded-md border bg-background/60 p-3 md:col-span-2">
+                  <div className="space-y-3 rounded-md border bg-background/60 p-3 md:col-span-2">
                     <p className="text-sm font-medium">下次往来计划</p>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="checkInNextMethod">计划方式</Label>
-                        <select
-                          id="checkInNextMethod"
-                          value={nextFollowUpMethod}
-                          disabled={!customerReady}
-                          onChange={(e) => setNextFollowUpMethod(e.target.value as SalesLogMethod | "")}
-                          className={cn(
-                            "flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm",
-                            customerReady ? "bg-background" : disabledFieldClass
-                          )}
-                        >
-                          <option value="">请选择</option>
-                          {SALES_LOG_METHOD_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="checkInNextAt">计划时间</Label>
-                        <Input
-                          id="checkInNextAt"
-                          type="datetime-local"
-                          value={nextFollowUpAt}
-                          disabled={!customerReady}
-                          onChange={(e) => setNextFollowUpAt(e.target.value)}
-                          className={cn(!customerReady && disabledFieldClass)}
-                        />
-                      </div>
-                    </div>
+                    <NextFollowUpPlanFields
+                      methodId="checkInNextMethod"
+                      methodValue={nextFollowUpMethod}
+                      onMethodChange={setNextFollowUpMethod}
+                      dateId="checkInNextAt"
+                      dateValue={nextFollowUpAt}
+                      onDateChange={setNextFollowUpAt}
+                      suggestedGrade={suggestedGrade}
+                      currentCustomerGrade={currentCustomerGrade}
+                      disabled={!customerReady}
+                      methodSelectClassName={cn(!customerReady && disabledFieldClass)}
+                      dateInputClassName={cn(!customerReady && disabledFieldClass)}
+                    />
                   </div>
                   {method === "FACE_VISIT" && (
                     <div className="space-y-2 md:col-span-2">
@@ -507,6 +545,7 @@ export function CheckInForm({
           mapKey={mapKey}
           geocodeReady={geocodeReady}
           disabled={pending}
+          optional={isInteraction}
         />
         <div className="space-y-2 md:col-span-2">
           <Label htmlFor="checkInNotes">备注（可选）</Label>
@@ -516,7 +555,12 @@ export function CheckInForm({
         <div className="md:col-span-2">
           <Button
             type="submit"
-            disabled={pending || !location || (isInteraction && (!customerId || !contactId)) || (completeNow && !content.trim())}
+            disabled={
+              pending ||
+              (!isInteraction && !location) ||
+              (isInteraction && (!customerId || !contactId)) ||
+              (completeNow && !content.trim())
+            }
           >
             {pending ? "提交中…" : completeNow ? "提交往来打卡" : "提交打卡"}
           </Button>
@@ -532,6 +576,32 @@ export function CheckInForm({
         onModify={handleDuplicateModify}
         onCreateNew={handleDuplicateCreateNew}
       />
+
+      <Dialog open={noLocationConfirmOpen} onOpenChange={setNoLocationConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>未获取定位</DialogTitle>
+            <DialogDescription>
+              您尚未获取定位，本次往来打卡将不记录地点信息。确定继续提交吗？
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setNoLocationConfirmOpen(false);
+                setPendingPayload(null);
+              }}
+            >
+              返回定位
+            </Button>
+            <Button type="button" disabled={pending} onClick={handleConfirmNoLocation}>
+              {pending ? "提交中…" : "确认提交"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <QuickCustomerDialog
         open={customerDialogOpen}

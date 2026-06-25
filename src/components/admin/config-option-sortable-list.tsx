@@ -30,6 +30,10 @@ type Props = {
   onUpdateLabel: (id: string, label: string) => void;
   onToggleEnabled: (id: string) => void;
   onDelete: (opt: { id: string; label: string }) => void;
+  labelColumnName?: string;
+  leadingColumnLabel?: string;
+  leadingColumnClassName?: string;
+  renderLeading?: (item: DraftConfigOption) => React.ReactNode;
   extraColumnLabel?: string;
   extraColumnClassName?: string;
   renderExtra?: (item: DraftConfigOption) => React.ReactNode;
@@ -41,6 +45,10 @@ export function ConfigOptionSortableList({
   onUpdateLabel,
   onToggleEnabled,
   onDelete,
+  labelColumnName = "显示名称",
+  leadingColumnLabel,
+  leadingColumnClassName = "w-20",
+  renderLeading,
   extraColumnLabel,
   extraColumnClassName = "w-[9.5rem]",
   renderExtra,
@@ -82,6 +90,7 @@ export function ConfigOptionSortableList({
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col className="w-10" />
+            {renderLeading ? <col className={leadingColumnClassName} /> : null}
             <col />
             {renderExtra ? <col className={extraColumnClassName} /> : null}
             <col className="w-16" />
@@ -91,7 +100,10 @@ export function ConfigOptionSortableList({
           <thead>
             <tr className="border-b text-muted-foreground">
               <th className="pb-2" aria-label="拖拽排序" />
-              <th className="pb-2 pr-4 text-left font-medium">显示名称</th>
+              {renderLeading ? (
+                <th className="pb-2 text-center font-medium">{leadingColumnLabel ?? ""}</th>
+              ) : null}
+              <th className="pb-2 pr-4 text-left font-medium">{labelColumnName}</th>
               {renderExtra ? (
                 <th className="pb-2 text-center font-medium">{extraColumnLabel ?? "扩展"}</th>
               ) : null}
@@ -119,6 +131,9 @@ export function ConfigOptionSortableList({
                     <GripVertical className="h-4 w-4" />
                   </button>
                 </td>
+                {renderLeading ? (
+                  <td className="py-3 text-center align-middle">{renderLeading(opt)}</td>
+                ) : null}
                 <td className="py-3 pr-4 align-middle">
                   <Input
                     value={opt.label}

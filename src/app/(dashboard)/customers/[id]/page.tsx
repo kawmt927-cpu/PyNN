@@ -14,6 +14,7 @@ import {
   CONFIG_CATEGORY,
   labelForConfig,
   loadCustomerFieldLabelMaps,
+  loadContactFormOptions,
 } from "@/lib/config-options";
 import { countCustomerFollowUps } from "@/lib/follow-ups/unified";
 import { Button } from "@/components/ui/button";
@@ -50,7 +51,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const [salesUsers, labelMaps, tagDefinitions, pendingClaimForSales, pendingClaimCount, followUpCount] =
+  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -61,6 +62,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         : Promise.resolve([]),
       loadCustomerFieldLabelMaps(),
       getCustomerTagDefinitions(),
+      loadContactFormOptions(),
       isSales && inPool
         ? db.customerClaimRequest.findFirst({
             where: {
@@ -80,6 +82,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
+  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const relations = [
     ...customer.relationsFrom.map((r) => ({
@@ -122,7 +125,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
             {customer.customerGrade ? (
               <>
                 {" · "}
-                <CustomerGradeIcon grade={customer.customerGrade} showLabel className="inline-flex" />
+                <CustomerGradeIcon
+                  grade={customer.customerGrade}
+                  showLabel
+                  labelMap={gradeLabels}
+                  className="inline-flex"
+                />
               </>
             ) : null}
           </p>
@@ -201,7 +209,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
             <Row label="关系类型" value={labelForConfig(typeLabels, customer.customerType)} />
             <Row
               label="客户等级"
-              value={<CustomerGradeIcon grade={customer.customerGrade} showLabel />}
+              value={
+                <CustomerGradeIcon
+                  grade={customer.customerGrade}
+                  labelMap={gradeLabels}
+                />
+              }
             />
             <Row label="客户来源" value={labelForConfig(sourceLabels, customer.source)} />
             <Row label="备注" value={customer.notes ?? "—"} />
@@ -217,6 +230,9 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
               customerId={customer.id}
               contacts={customer.contacts}
               readOnly={!canEdit}
+              titleOptions={contactFormOptions.titleOptions}
+              departmentOptions={contactFormOptions.departmentOptions}
+              roleOptions={contactFormOptions.roleOptions}
             />
           </CardContent>
         </Card>

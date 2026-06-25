@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { bindWeComUser, unbindWeComUser } from "./actions";
 import { isWeComConfigured } from "@/lib/wecom/config";
-import { getAllConfigOptionsGrouped } from "@/lib/config-options";
+import { getAllConfigOptionsGrouped, CONFIG_CATEGORY, getConfigOptions } from "@/lib/config-options";
 import {
   canAccessSettingsTab,
   getAccessibleConfigModules,
@@ -19,10 +19,14 @@ import {
 import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings";
 import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
 import { AmapSettings } from "@/components/admin/amap-settings";
+import { KpiSettings } from "@/components/admin/kpi-settings";
 import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { getAiAgentConfigForAdmin } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
+import {
+  getSalesKpiConfigView,
+} from "@/lib/plans-tasks/kpi-config";
 
 type Props = {
   searchParams: Promise<{ tab?: string; module?: string; field?: string }>;
@@ -48,7 +52,8 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     rawField
   );
 
-  const [users, optionsByCategory, aiAgentConfig, amapConfig, productTemplates] = await Promise.all([
+  const [users, optionsByCategory, aiAgentConfig, amapConfig, productTemplates, kpiConfig, stageOptions] =
+    await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, email: true, role: true, wecomUserId: true },
@@ -58,6 +63,10 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
     activeTab === SETTINGS_TAB.PRODUCTS
       ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
+      : Promise.resolve([]),
+    activeTab === SETTINGS_TAB.KPI ? getSalesKpiConfigView() : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.KPI
+      ? getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE)
       : Promise.resolve([]),
   ]);
 
@@ -108,6 +117,15 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
                 enabled: row.enabled,
               }))}
             />
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.KPI && kpiConfig ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>KPI 设置</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <KpiSettings kpiConfig={kpiConfig} stageOptions={stageOptions} />
           </CardContent>
         </Card>
       ) : activeTab === SETTINGS_TAB.AI && aiAgentConfig ? (

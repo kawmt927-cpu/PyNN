@@ -1,14 +1,16 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { isSameCustomerName } from "@/lib/customers/duplicate-name";
 import { cn } from "@/lib/utils";
 
 export type SearchSelectOption = {
   id: string;
   label: string;
   description?: string;
+  customerGrade?: string | null;
 };
 
 export type EntitySearchSelectHandle = {
@@ -60,6 +62,12 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
 
   const showSelected = Boolean(value && selectedLabel && !editing);
   const inputValue = showSelected ? selectedLabel : query;
+  const trimmedQuery = query.trim();
+  const hasExactMatch = useMemo(
+    () => trimmedQuery.length > 0 && options.some((option) => isSameCustomerName(option.label, trimmedQuery)),
+    [options, trimmedQuery]
+  );
+  const showCreateNew = Boolean(onCreateNew && trimmedQuery && !hasExactMatch);
 
   useImperativeHandle(
     ref,
@@ -177,14 +185,14 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
           ) : options.length === 0 ? (
             <div className="py-1">
               <p className="px-3 py-2 text-sm text-muted-foreground">暂无匹配结果</p>
-              {onCreateNew && query.trim() ? (
+              {showCreateNew ? (
                 <button
                   type="button"
                   className="block w-full px-3 py-2 text-left text-sm font-medium text-primary hover:bg-muted"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleCreateNew(query.trim())}
+                  onClick={() => handleCreateNew(trimmedQuery)}
                 >
-                  {createNewLabel}「{query.trim()}」
+                  {createNewLabel}「{trimmedQuery}」
                 </button>
               ) : null}
             </div>
@@ -205,15 +213,15 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
                   </button>
                 </li>
               ))}
-              {onCreateNew && query.trim() ? (
+              {showCreateNew ? (
                 <li className="border-t">
                   <button
                     type="button"
                     className="block w-full px-3 py-2 text-left text-sm font-medium text-primary hover:bg-muted"
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleCreateNew(query.trim())}
+                    onClick={() => handleCreateNew(trimmedQuery)}
                   >
-                    {createNewLabel}「{query.trim()}」
+                    {createNewLabel}「{trimmedQuery}」
                   </button>
                 </li>
               ) : null}

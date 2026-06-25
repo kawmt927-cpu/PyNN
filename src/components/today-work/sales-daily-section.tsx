@@ -113,9 +113,11 @@ export async function CheckInSection({ role, userId, mapKey, geocodeReady }: Sec
                           checkInId={row.id}
                           customerId={row.customer.id}
                           customerName={row.customer.name}
+                          currentCustomerGrade={row.customer.customerGrade}
                           contactId={row.contact?.id}
                           locationLabel={formatCheckInLocation(row)}
                           stageOptions={interactionFormOptions.stageOptions}
+                          gradeOptions={interactionFormOptions.gradeOptions}
                         />
                       ) : null}
                       <CheckInDeleteButton
@@ -171,7 +173,12 @@ export async function DailyReportSection({
           </p>
         )}
 
-      <ManualLogForm formOptions={{ stageOptions: interactionFormOptions.stageOptions }} />
+      <ManualLogForm
+        formOptions={{
+          stageOptions: interactionFormOptions.stageOptions,
+          gradeOptions: interactionFormOptions.gradeOptions,
+        }}
+      />
       <div className="overflow-x-auto">
         <div className="mb-2">
           <p className="text-sm font-medium">今日往来记录</p>

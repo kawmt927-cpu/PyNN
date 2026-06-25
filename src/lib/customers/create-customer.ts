@@ -1,5 +1,6 @@
 import { UserRole } from "@prisma/client";
 import { canManageCustomerOwner } from "@/lib/customers/access";
+import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { prisma } from "@/lib/prisma";
 import type { CustomerFormInput } from "@/lib/validations/customer";
 import { requireCustomerGrade } from "@/lib/customers/grade";
@@ -34,6 +35,8 @@ export async function createCustomerRecord(
   data: CustomerFormInput
 ) {
   const configFields = await validateCustomerConfigFields(data);
+
+  await assertCustomerNameAvailable(data.name);
 
   const customer = await prisma.customer.create({
     data: {

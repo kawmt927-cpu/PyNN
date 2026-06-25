@@ -72,6 +72,15 @@ export function weeklyAssignmentFollowUpHref(
   return null;
 }
 
+export async function listPendingWeeklyAssignmentsForManager(take = 50): Promise<WeeklyAssignmentListItem[]> {
+  return prisma.salesWeeklyAssignment.findMany({
+    where: { status: "PENDING" },
+    orderBy: [{ dueAt: "asc" }],
+    take,
+    include: listInclude,
+  });
+}
+
 export function canManageWeeklyAssignments(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
 }

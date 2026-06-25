@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,14 +10,22 @@ import { CustomerGradeSelect } from "@/components/customers/customer-grade-selec
 import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-search-select";
 import { ContactSelectField } from "@/components/sales-log/contact-select-field";
 import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity-dialog";
+import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import { createFollowUp } from "@/app/(dashboard)/customers/actions";
+import {
+  customerGradeFormValue,
+  customerGradeSubmitValue,
+} from "@/lib/customers/grade";
 import type { ConfigOptionItem } from "@/lib/config-options";
 
 type Props = {
   customerId: string;
   customerName: string;
+  currentCustomerGrade?: string | null;
   stageOptions: ConfigOptionItem[];
+  gradeOptions: ConfigOptionItem[];
 };
 
 function todayLocalDatetime() {
@@ -25,37 +34,93 @@ function todayLocalDatetime() {
   return d.toISOString().slice(0, 16);
 }
 
-export function FollowUpForm({ customerId, customerName, stageOptions }: Props) {
+export function FollowUpForm({
+  customerId,
+  customerName,
+  currentCustomerGrade,
+  stageOptions,
+  gradeOptions,
+}: Props) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<SalesLogMethod>("PHONE");
-  const [contactId, setContactId] = useState("");
+  const [contactIds, setContactIds] = useState<string[]>([]);
   const [opportunityId, setOpportunityId] = useState("");
   const [opportunityLabel, setOpportunityLabel] = useState("");
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
-  const [suggestedGrade, setSuggestedGrade] = useState("");
+  const [suggestedGrade, setSuggestedGrade] = useState(() =>
+    customerGradeFormValue(currentCustomerGrade)
+  );
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
 
   const isFaceVisit = method === "FACE_VISIT";
 
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    const form = e.currentTarget;
+
+    const planError = validateNextFollowUpPlan(
+      suggestedGrade,
+      nextFollowUpAt,
+      nextFollowUpMethod,
+      currentCustomerGrade
+    );
+    if (planError) {
+      setError(planError);
+      return;
+    }
+
+    const formData = new FormData(form);
+    formData.set("customerId", customerId);
+    formData.delete("contactIds");
+    for (const id of contactIds) {
+      formData.append("contactIds", id);
+    }
+    formData.set("method", method);
+    formData.set("suggestedGrade", customerGradeSubmitValue(suggestedGrade, currentCustomerGrade) ?? "");
+    formData.set("opportunityId", opportunityId);
+    formData.set("nextFollowUpAt", nextFollowUpAt);
+    formData.set("nextFollowUpMethod", nextFollowUpMethod);
+
+    startTransition(async () => {
+      const result = await createFollowUp(formData);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (result.redirectTo) {
+        router.push(result.redirectTo);
+        router.refresh();
+        return;
+      }
+      form.reset();
+      setContactIds([]);
+      setMethod("PHONE");
+      setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
+      setNextFollowUpAt("");
+      setNextFollowUpMethod("");
+      setOpportunityId("");
+      setOpportunityLabel("");
+    });
+  }
+
   return (
     <>
-      <form action={createFollowUp} className="space-y-4">
-        <input type="hidden" name="customerId" value={customerId} />
-        <input type="hidden" name="contactId" value={contactId} />
-        <input type="hidden" name="opportunityId" value={opportunityId} />
-        <input type="hidden" name="suggestedGrade" value={suggestedGrade} />
-        <input type="hidden" name="nextFollowUpAt" value={nextFollowUpAt} />
-        <input type="hidden" name="nextFollowUpMethod" value={nextFollowUpMethod} />
-
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           <ContactSelectField
             customerId={customerId}
-            value={contactId}
-            onChange={setContactId}
+            multiple
+            value={contactIds}
+            onChange={setContactIds}
             required
+            className="md:col-span-2"
           />
 
-          <div className="space-y-2">
+          <div className="space-y-2 md:col-span-2">
             <div className="flex items-center justify-between gap-2">
               <Label>关联商机</Label>
               <Button
@@ -116,6 +181,8 @@ export function FollowUpForm({ customerId, customerName, stageOptions }: Props) 
             label="客户等级（可选，选择后将更新客户等级）"
             value={suggestedGrade}
             onValueChange={setSuggestedGrade}
+            options={gradeOptions}
+            className="md:col-span-2"
           />
           <p className="text-xs text-muted-foreground md:col-span-2">
             选择后会同步更新客户档案中的等级；不选择则只记录跟进。
@@ -131,35 +198,18 @@ export function FollowUpForm({ customerId, customerName, stageOptions }: Props) 
             <Textarea id="result" name="result" rows={2} />
           </div>
 
-          <div className="space-y-4 rounded-md border bg-muted/20 p-4 md:col-span-2">
+          <div className="space-y-3 rounded-md border bg-muted/20 p-4 md:col-span-2">
             <p className="text-sm font-medium">下次往来计划</p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="nextMethod">计划方式</Label>
-                <select
-                  id="nextMethod"
-                  value={nextFollowUpMethod}
-                  onChange={(e) => setNextFollowUpMethod(e.target.value as SalesLogMethod | "")}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">请选择</option>
-                  {SALES_LOG_METHOD_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nextFollowUpAt">计划时间</Label>
-                <Input
-                  id="nextFollowUpAt"
-                  type="datetime-local"
-                  value={nextFollowUpAt}
-                  onChange={(e) => setNextFollowUpAt(e.target.value)}
-                />
-              </div>
-            </div>
+            <NextFollowUpPlanFields
+              methodId="nextMethod"
+              methodValue={nextFollowUpMethod}
+              onMethodChange={setNextFollowUpMethod}
+              dateId="nextFollowUpAt"
+              dateValue={nextFollowUpAt}
+              onDateChange={setNextFollowUpAt}
+              suggestedGrade={suggestedGrade}
+              currentCustomerGrade={currentCustomerGrade}
+            />
           </div>
 
           {isFaceVisit && (
@@ -187,8 +237,9 @@ export function FollowUpForm({ customerId, customerName, stageOptions }: Props) 
           )}
         </div>
 
-        <Button type="submit" disabled={!contactId}>
-          保存跟进
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <Button type="submit" disabled={pending || contactIds.length === 0}>
+          {pending ? "保存中…" : "保存跟进"}
         </Button>
       </form>
 

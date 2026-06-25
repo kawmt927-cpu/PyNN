@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getCustomerGradeLabelMap } from "@/lib/config-options";
 import { requireRole } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
@@ -12,9 +13,10 @@ export default async function FollowUpsPage() {
   const now = new Date();
   const listPath = "/follow-ups";
 
-  const [dueFollowUps, upcomingFollowUps] = await Promise.all([
+  const [dueFollowUps, upcomingFollowUps, gradeLabels] = await Promise.all([
     getPendingFollowUps(session.user.role, session.user.id, "due", now, 100),
     getPendingFollowUps(session.user.role, session.user.id, "upcoming", now, 50),
+    getCustomerGradeLabelMap(),
   ]);
 
   return (
@@ -31,7 +33,7 @@ export default async function FollowUpsPage() {
           {dueFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无到期跟进任务。</p>
           ) : (
-            <FollowUpTable items={dueFollowUps} listPath={listPath} />
+            <FollowUpTable items={dueFollowUps} listPath={listPath} gradeLabels={gradeLabels} />
           )}
         </CardContent>
       </Card>
@@ -44,7 +46,7 @@ export default async function FollowUpsPage() {
           {upcomingFollowUps.length === 0 ? (
             <p className="text-muted-foreground">暂无计划中的跟进。</p>
           ) : (
-            <FollowUpTable items={upcomingFollowUps} listPath={listPath} />
+            <FollowUpTable items={upcomingFollowUps} listPath={listPath} gradeLabels={gradeLabels} />
           )}
         </CardContent>
       </Card>
@@ -55,9 +57,10 @@ export default async function FollowUpsPage() {
 type FollowUpTableProps = {
   items: Awaited<ReturnType<typeof getPendingFollowUps>>;
   listPath: string;
+  gradeLabels: Record<string, string>;
 };
 
-function FollowUpTable({ items, listPath }: FollowUpTableProps) {
+function FollowUpTable({ items, listPath, gradeLabels }: FollowUpTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -90,7 +93,7 @@ function FollowUpTable({ items, listPath }: FollowUpTableProps) {
                 )}
               </td>
               <td className="py-3 pr-4">
-                <CustomerGradeIcon grade={f.customer.customerGrade} />
+                <CustomerGradeIcon grade={f.customer.customerGrade} labelMap={gradeLabels} />
               </td>
               <td className="py-3 pr-4">
                 {f.method ? FOLLOW_UP_METHOD_LABELS[f.method] : "—"}

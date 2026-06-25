@@ -123,6 +123,7 @@ export function CustomerFieldsSection({
       <CustomerGradeSelect
         value={values.customerGrade}
         onValueChange={(customerGrade) => onChange({ customerGrade })}
+        options={gradeOptions}
         required
       />
 

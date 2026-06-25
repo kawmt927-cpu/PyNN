@@ -86,6 +86,7 @@ export default async function CustomersPage({ searchParams }: Props) {
     : rawCustomers;
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
+  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const viewTitle =
     view === "pool" ? "公海池" : view === "all" ? "全部客户" : "我的客户";
@@ -165,7 +166,7 @@ export default async function CustomersPage({ searchParams }: Props) {
                       <td className="py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
                       <td className="py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>
                       <td className="py-3 pr-4">
-                        <CustomerGradeIcon grade={c.customerGrade} />
+                        <CustomerGradeIcon grade={c.customerGrade} labelMap={gradeLabels} />
                       </td>
                       <td className="py-3 pr-4">
                         <CustomerTagList

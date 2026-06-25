@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
+import { getCustomerGradeLabelMap } from "@/lib/config-options";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import {
   getRemainingTimeInfo,
@@ -24,9 +25,10 @@ type Props = {
 
 export async function TodayPendingActionsPanel({ role, userId, returnPath }: Props) {
   const now = new Date();
-  const [dueFollowUps, weeklyTasks] = await Promise.all([
+  const [dueFollowUps, weeklyTasks, gradeLabels] = await Promise.all([
     getPendingFollowUps(role, userId, "due", now, 15),
     listPendingWeeklyAssignmentsForUser(userId, 15),
+    getCustomerGradeLabelMap(),
   ]);
 
   return (
@@ -56,7 +58,11 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{item.customer.name}</span>
-                        <CustomerGradeIcon grade={item.customer.customerGrade} size="sm" />
+                        <CustomerGradeIcon
+                          grade={item.customer.customerGrade}
+                          size="sm"
+                          labelMap={gradeLabels}
+                        />
                         {item.opportunity ? (
                           <span className="text-xs text-muted-foreground">
                             商机：{item.opportunity.title}

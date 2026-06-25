@@ -1,4 +1,5 @@
 import { canManageCustomerOwner } from "@/lib/customers/access";
+import { dedupeCustomersByName } from "@/lib/customers/duplicate-name";
 import { buildCustomerListWhere, type CustomerListFilters } from "@/lib/customers/list-filters";
 import { buildBroadNameWhere, rankByNameMatch, scoreNameMatch } from "@/lib/search/fuzzy-text";
 import { opportunityListWhere } from "@/lib/opportunities/access";
@@ -37,11 +38,12 @@ export async function searchCustomersForUser(
 
   const rows = await prisma.customer.findMany({
     where,
-    select: { id: true, name: true, category: true },
+    select: { id: true, name: true, category: true, customerGrade: true },
     take: 60,
+    orderBy: { updatedAt: "desc" },
   });
 
-  return rankByNameMatch(trimmed, rows).slice(0, 20);
+  return dedupeCustomersByName(rankByNameMatch(trimmed, rows)).slice(0, 20);
 }
 
 export async function searchOpportunitiesForUser(

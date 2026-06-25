@@ -62,6 +62,11 @@ function withEmptyOption(options: ConfigOptionItem[], label = "请选择") {
   return [{ value: "", label }, ...options];
 }
 
+/** 两列网格内统一标签行高，使左右输入框对齐 */
+const FORM_GRID_CELL = "grid min-w-0 grid-rows-[2.75rem_auto] gap-2 space-y-0";
+const FORM_GRID_LABEL = "self-end leading-snug";
+const FORM_FULL_WIDTH = "space-y-2 md:col-span-2";
+
 export function QuickCustomerDialog({
   open,
   onOpenChange,
@@ -220,37 +225,39 @@ export function QuickCustomerDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[240px] flex-1 space-y-2">
-              <Label htmlFor="quickCustomerName">客户名称 *</Label>
-              <Input
-                id="quickCustomerName"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                autoFocus
-              />
+          <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
+            <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+              <div className="min-w-[240px] flex-1 space-y-2">
+                <Label htmlFor="quickCustomerName">客户名称 *</Label>
+                <Input
+                  id="quickCustomerName"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              {canEnrich ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={enriching || !name.trim()}
+                  onClick={handleKimiEnrich}
+                >
+                  {enriching ? "Kimi 检索中…" : "Kimi 智能填充"}
+                </Button>
+              ) : null}
             </div>
-            {canEnrich ? (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={enriching || !name.trim()}
-                onClick={handleKimiEnrich}
-              >
-                {enriching ? "Kimi 检索中…" : "Kimi 智能填充"}
-              </Button>
-            ) : null}
-          </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="quickCustomerCategory">客户类别 *</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="quickCustomerCategory" className={FORM_GRID_LABEL}>
+                客户类别 *
+              </Label>
               <select
                 id="quickCustomerCategory"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as CustomerCategory | "")}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 required
               >
                 {categoryOptions.map((opt) => (
@@ -269,11 +276,26 @@ export function QuickCustomerDialog({
               value={customerType}
               onValueChange={setCustomerType}
               required
+              className={FORM_GRID_CELL}
+              labelClassName={FORM_GRID_LABEL}
             />
 
-            <CustomerGradeSelect value={customerGrade} onValueChange={setCustomerGrade} required />
+            <CustomerGradeSelect
+              value={customerGrade}
+              onValueChange={setCustomerGrade}
+              options={gradeOptions}
+              required
+              className={FORM_GRID_CELL}
+              labelClassName={FORM_GRID_LABEL}
+            />
 
-            <CustomerTagSelect options={tagOptions} value={tagValues} onValueChange={setTagValues} />
+            <CustomerTagSelect
+              options={tagOptions}
+              value={tagValues}
+              onValueChange={setTagValues}
+              className={FORM_GRID_CELL}
+              labelClassName={FORM_GRID_LABEL}
+            />
 
             <SelectField
               id="quickCustomerSource"
@@ -282,6 +304,8 @@ export function QuickCustomerDialog({
               options={withEmptyOption(sourceOptions)}
               value={source}
               onValueChange={setSource}
+              className={FORM_GRID_CELL}
+              labelClassName={FORM_GRID_LABEL}
             />
 
             {category === "HOSPITAL" && (
@@ -293,9 +317,13 @@ export function QuickCustomerDialog({
                   options={hospitalLevelOptions}
                   value={hospitalLevel}
                   onValueChange={(v) => setHospitalLevel(v as HospitalLevel | "")}
+                  className={FORM_GRID_CELL}
+                  labelClassName={FORM_GRID_LABEL}
                 />
-                <div className="space-y-2">
-                  <Label htmlFor="quickBedCount">床位数</Label>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="quickBedCount" className={FORM_GRID_LABEL}>
+                    床位数
+                  </Label>
                   <Input
                     id="quickBedCount"
                     type="number"
@@ -307,20 +335,34 @@ export function QuickCustomerDialog({
               </>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="quickCustomerProvince">省</Label>
-              <Input id="quickCustomerProvince" value={province} onChange={(e) => setProvince(e.target.value)} />
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="quickCustomerProvince" className={FORM_GRID_LABEL}>
+                省
+              </Label>
+              <Input
+                id="quickCustomerProvince"
+                value={province}
+                onChange={(e) => setProvince(e.target.value)}
+              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="quickCustomerCity">市</Label>
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="quickCustomerCity" className={FORM_GRID_LABEL}>
+                市
+              </Label>
               <Input id="quickCustomerCity" value={city} onChange={(e) => setCity(e.target.value)} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="quickCustomerDistrict">区/县</Label>
-              <Input id="quickCustomerDistrict" value={district} onChange={(e) => setDistrict(e.target.value)} />
+            <div className={FORM_GRID_CELL}>
+              <Label htmlFor="quickCustomerDistrict" className={FORM_GRID_LABEL}>
+                区/县
+              </Label>
+              <Input
+                id="quickCustomerDistrict"
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+              />
             </div>
 
-            <div className="space-y-2 md:col-span-2">
+            <div className={FORM_FULL_WIDTH}>
               <Label htmlFor="quickExistingSystem">现有系统</Label>
               <Input
                 id="quickExistingSystem"
@@ -340,10 +382,12 @@ export function QuickCustomerDialog({
                 ]}
                 value={ownerId}
                 onValueChange={setOwnerId}
+                className={FORM_GRID_CELL}
+                labelClassName={FORM_GRID_LABEL}
               />
             )}
 
-            <div className="space-y-2 md:col-span-2">
+            <div className={FORM_FULL_WIDTH}>
               <Label htmlFor="quickCustomerNotes">备注</Label>
               <Textarea
                 id="quickCustomerNotes"

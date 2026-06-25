@@ -2,11 +2,14 @@ import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { contractListWhere } from "@/lib/opportunities/access";
+import { canEditContract } from "@/lib/contracts/access";
+import { getContractPaymentDueBadgeMap } from "@/lib/contracts/payment-due";
 import { CONTRACT_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { withReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ContractPaymentDueStatusBadge } from "@/components/contracts/contract-payment-due-badge";
 
 export default async function ContractsPage() {
   const session = await requireRole(["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"]);
@@ -25,16 +28,20 @@ export default async function ContractsPage() {
     take: 100,
   });
 
+  const dueBadgeMap = await getContractPaymentDueBadgeMap(contracts.map((c) => c.id));
   const listPath = "/contracts";
+  const showEdit = canEditContract(session.user.role);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">合同管理</h1>
         {session.user.role !== "PROJECT_MANAGER" && (
-          <Button asChild>
-            <Link href="/contracts/new">新建合同</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild>
+              <Link href="/contracts/new">新建合同</Link>
+            </Button>
+          </div>
         )}
       </div>
 
@@ -46,6 +53,9 @@ export default async function ContractsPage() {
               ({contracts.length})
             </span>
           </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            已签署合同若分期未结清且计划到期，将显示「回款逾期 / 待收」标记。
+          </p>
         </CardHeader>
         <CardContent>
           {contracts.length === 0 ? (
@@ -60,6 +70,7 @@ export default async function ContractsPage() {
                     <th className="pb-2 pr-4">终用户</th>
                     <th className="pb-2 pr-4">金额</th>
                     <th className="pb-2 pr-4">状态</th>
+                    <th className="pb-2 pr-4">回款</th>
                     <th className="pb-2 pr-4">负责销售</th>
                     <th className="pb-2 pr-4">关联商机</th>
                     <th className="pb-2">操作</th>
@@ -73,6 +84,12 @@ export default async function ContractsPage() {
                       <td className="py-3 pr-4">{c.endUserCustomer.name}</td>
                       <td className="py-3 pr-4">{formatAmount(c.totalAmount)}</td>
                       <td className="py-3 pr-4">{CONTRACT_STATUS_LABELS[c.status]}</td>
+                      <td className="py-3 pr-4">
+                        <ContractPaymentDueStatusBadge summary={dueBadgeMap.get(c.id)} />
+                        {!dueBadgeMap.get(c.id)?.hasOverdue && !dueBadgeMap.get(c.id)?.hasDueSoon
+                          ? "—"
+                          : null}
+                      </td>
                       <td className="py-3 pr-4">{c.owner.name}</td>
                       <td className="py-3 pr-4">
                         {c.opportunity ? (
@@ -87,12 +104,22 @@ export default async function ContractsPage() {
                         )}
                       </td>
                       <td className="py-3">
-                        <Link
-                          href={withReturnTo(`/contracts/${c.id}`, listPath)}
-                          className="text-primary hover:underline"
-                        >
-                          详情
-                        </Link>
+                        <div className="flex gap-3">
+                          <Link
+                            href={withReturnTo(`/contracts/${c.id}`, listPath)}
+                            className="text-primary hover:underline"
+                          >
+                            详情
+                          </Link>
+                          {showEdit && (
+                            <Link
+                              href={withReturnTo(`/contracts/${c.id}/edit`, listPath)}
+                              className="text-primary hover:underline"
+                            >
+                              编辑
+                            </Link>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

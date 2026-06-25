@@ -11,6 +11,7 @@ export type GradeExpiryPendingItem = {
   customerId: string;
   customerName: string;
   customerGrade: string | null;
+  owner: { id: string; name: string };
   dueAt: Date;
   lastInteractionAt: Date;
   overdue: boolean;
@@ -66,7 +67,13 @@ export async function getGradeExpiryPendingCustomers(
   const intervalMap = await getCustomerGradeIntervalMap();
   const customers = await prisma.customer.findMany({
     where: customerOwnerFilter(role, userId),
-    select: { id: true, name: true, customerGrade: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      customerGrade: true,
+      createdAt: true,
+      owner: { select: { id: true, name: true } },
+    },
     take: 500,
   });
 
@@ -86,6 +93,7 @@ export async function getGradeExpiryPendingCustomers(
       customerId: customer.id,
       customerName: customer.name,
       customerGrade: customer.customerGrade,
+      owner: customer.owner ?? { id: "", name: "未分配" },
       dueAt,
       lastInteractionAt,
       overdue: true,

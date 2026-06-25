@@ -4,15 +4,15 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { saveCustomerGradeOptions } from "@/app/(dashboard)/admin/settings/actions";
+import { CustomerGradeVisual } from "@/components/customers/customer-grade-icon";
 import {
   ConfigOptionSortableList,
   type ConfigOptionRow,
   type DraftConfigOption,
 } from "@/components/admin/config-option-sortable-list";
 
-type GradeDraft = DraftConfigOption & { followUpIntervalDays: number };
+type GradeDraft = DraftConfigOption & { followUpIntervalDays: number; value?: string };
 
 type Props = {
   options: ConfigOptionRow[];
@@ -24,6 +24,7 @@ function optionsToDraft(options: ConfigOptionRow[]): GradeDraft[] {
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((option, index) => ({
       id: option.id,
+      value: option.value,
       label: option.label,
       enabled: option.enabled,
       sortOrder: index + 1,
@@ -47,6 +48,10 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
   const [draft, setDraft] = useState(() => optionsToDraft(options));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savePending, startSaveTransition] = useTransition();
+  const valueById = useMemo(
+    () => new Map(draft.map((item) => [item.id, item.value])),
+    [draft]
+  );
 
   useEffect(() => {
     const next = optionsToDraft(options);
@@ -72,7 +77,7 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
 
     const emptyLabel = trimmedItems.find((item) => !item.label);
     if (emptyLabel) {
-      setSaveError("显示名称不能为空");
+      setSaveError("文字描述不能为空");
       return;
     }
 
@@ -105,17 +110,31 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        为每个客户等级设置「往来间隔天数」。超过该天数未往来时，客户将进入待跟进列表。
+        为每个星级设置文字描述与往来间隔天数。文字描述会显示在表单下拉选项的星级后面，并在各列表悬浮星级时提示；超过间隔天数未往来时，客户将进入待跟进列表。
       </p>
 
       <ConfigOptionSortableList
         items={draft}
+        labelColumnName="文字描述"
+        leadingColumnLabel="星级"
+        leadingColumnClassName="w-24"
+        renderLeading={(item) => {
+          const value = valueById.get(item.id);
+          return value ? (
+            <span className="inline-flex justify-center">
+              <CustomerGradeVisual grade={value} size="sm" />
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          );
+        }}
         onItemsChange={(items) =>
           setDraft((prev) =>
             items.map((item) => {
               const existing = prev.find((row) => row.id === item.id);
               return {
                 ...item,
+                value: existing?.value,
                 followUpIntervalDays: existing?.followUpIntervalDays ?? 30,
               };
             })

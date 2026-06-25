@@ -10,12 +10,44 @@ import {
   DailyReportSection,
 } from "@/components/today-work/sales-daily-section";
 import { TodayUpcomingList } from "@/components/today-work/today-upcoming-list";
+import { PaymentDueTeamPanel } from "@/components/contracts/payment-due-team-panel";
 import { TodayWorkRecordsPanel } from "@/components/today-work/today-work-records";
+import { TeamWorkActivityPanel } from "@/components/today-work/team-work-activity-panel";
 import { AiLogLink } from "@/components/sales-log/daily-work-forms";
+import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 
-export default async function TodayWorkPage() {
+type Props = {
+  searchParams: Promise<{ activityView?: string; salesUserId?: string }>;
+};
+
+export default async function TodayWorkPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const returnPath = "/today-work";
+  const query = await searchParams;
+  const isManagerView = canManageWeeklyAssignments(session.user.role);
+
+  if (isManagerView) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">今日工作</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            查看团队本周待办与各销售的打卡、往来、日报记录；销售管理无需本人打卡与写日报。
+          </p>
+        </div>
+
+        <TodayUpcomingList
+          role={session.user.role}
+          userId={session.user.id}
+          returnPath={returnPath}
+        />
+
+        <TeamWorkActivityPanel searchParams={query} />
+
+        <PaymentDueTeamPanel role={session.user.role} returnPath={returnPath} />
+      </div>
+    );
+  }
 
   const [checkIns, followUps, dailyLog, amap] = await Promise.all([
     listTodayCheckIns(session.user.role, session.user.id),

@@ -8,6 +8,7 @@ type Props = {
   rows: InstallmentWaterfallRow[];
   totalPaid: number;
   totalAmount: number;
+  now?: Date;
 };
 
 function barTone(percent: number) {
@@ -16,8 +17,10 @@ function barTone(percent: number) {
   return "bg-muted";
 }
 
-export function InstallmentProgressChart({ rows, totalPaid, totalAmount }: Props) {
+export function InstallmentProgressChart({ rows, totalPaid, totalAmount, now = new Date() }: Props) {
   const overallPercent = totalAmount > 0 ? Math.min(100, (totalPaid / totalAmount) * 100) : 0;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
 
   return (
     <div className="space-y-5">
@@ -42,8 +45,19 @@ export function InstallmentProgressChart({ rows, totalPaid, totalAmount }: Props
       </div>
 
       <div className="space-y-4">
-        {rows.map((row) => (
-          <div key={row.id} className="space-y-2">
+        {rows.map((row) => {
+          const dueDate = row.dueAt ? new Date(row.dueAt) : null;
+          const isOverdue =
+            dueDate &&
+            row.percentComplete < 100 &&
+            (() => {
+              const d = new Date(dueDate);
+              d.setHours(0, 0, 0, 0);
+              return d < today;
+            })();
+
+          return (
+          <div key={row.id} className={cn("space-y-2", isOverdue && "rounded-lg border border-red-200 bg-red-50/40 p-2 dark:border-red-900 dark:bg-red-950/20")}>
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <div className="font-medium">
                 第 {row.periodNumber} 期
@@ -58,12 +72,13 @@ export function InstallmentProgressChart({ rows, totalPaid, totalAmount }: Props
                 <span
                   className={cn(
                     "rounded-full px-2 py-0.5 text-xs font-medium",
-                    row.statusLabel === "已完成" && "bg-emerald-100 text-emerald-800",
-                    row.statusLabel === "进行中" && "bg-sky-100 text-sky-800",
-                    row.statusLabel === "未开始" && "bg-muted text-muted-foreground"
+                    isOverdue && "bg-red-100 text-red-800",
+                    !isOverdue && row.statusLabel === "已完成" && "bg-emerald-100 text-emerald-800",
+                    !isOverdue && row.statusLabel === "进行中" && "bg-sky-100 text-sky-800",
+                    !isOverdue && row.statusLabel === "未开始" && "bg-muted text-muted-foreground"
                   )}
                 >
-                  {row.statusLabel} · {row.percentComplete.toFixed(0)}%
+                  {isOverdue ? "已逾期" : row.statusLabel} · {row.percentComplete.toFixed(0)}%
                 </span>
               </div>
             </div>
@@ -77,12 +92,14 @@ export function InstallmentProgressChart({ rows, totalPaid, totalAmount }: Props
               </div>
             </div>
             {row.dueAt ? (
-              <p className="text-xs text-muted-foreground">
+              <p className={cn("text-xs", isOverdue ? "font-medium text-red-700" : "text-muted-foreground")}>
                 计划到期：{new Date(row.dueAt).toISOString().slice(0, 10)}
+                {isOverdue ? "（已逾期）" : ""}
               </p>
             ) : null}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

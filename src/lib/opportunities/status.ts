@@ -13,6 +13,18 @@ export const OPPORTUNITY_ABANDON_REASON_LABELS: Record<OpportunityAbandonReason,
   OTHER: "其他",
 };
 
+/** 已结束商机：不再出现在待跟进列表 */
+export const CLOSED_OPPORTUNITY_STATUSES: OpportunityStatus[] = ["SIGNED", "ABANDONED"];
+
+export function isClosedOpportunityStatus(status: OpportunityStatus) {
+  return CLOSED_OPPORTUNITY_STATUSES.includes(status);
+}
+
+/** Prisma 过滤：仅未签约商机可产生待跟进 */
+export const pendingFollowUpOpportunityWhere = {
+  status: { notIn: CLOSED_OPPORTUNITY_STATUSES },
+} as const;
+
 export function canSignOpportunity(status: OpportunityStatus) {
   return status === "NOT_SIGNED" || status === "SIGNED";
 }

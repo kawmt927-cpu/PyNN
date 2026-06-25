@@ -6,7 +6,9 @@ export type ContactOption = {
   id: string;
   name: string;
   title: string | null;
+  department: string | null;
   phone: string | null;
+  wechat: string | null;
   isPrimary: boolean;
 };
 

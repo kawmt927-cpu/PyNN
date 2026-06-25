@@ -217,17 +217,6 @@ export function CustomerForm({
           </div>
         )}
 
-        <SelectField
-          id="customerType"
-          label="关系类型 *"
-          name="customerType"
-          options={withEmptyOption(typeOptions)}
-          defaultValue={initial?.customerType ?? ""}
-          required
-          className={FORM_GRID_CELL}
-          labelClassName={FORM_GRID_LABEL}
-        />
-
         <div className={FORM_GRID_CELL}>
           <Label htmlFor="category" className={FORM_GRID_LABEL}>
             客户类别 *
@@ -248,8 +237,20 @@ export function CustomerForm({
           </select>
         </div>
 
+        <SelectField
+          id="customerType"
+          label="关系类型 *"
+          name="customerType"
+          options={withEmptyOption(typeOptions)}
+          defaultValue={initial?.customerType ?? ""}
+          required
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
+        />
+
         <CustomerGradeSelect
           defaultValue={initial?.customerGrade ?? ""}
+          options={gradeOptions}
           required
           className={FORM_GRID_CELL}
           labelClassName={FORM_GRID_LABEL}

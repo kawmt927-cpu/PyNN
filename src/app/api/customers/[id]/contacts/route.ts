@@ -27,7 +27,15 @@ export async function GET(
   const contacts = await prisma.contact.findMany({
     where: { customerId: id },
     orderBy: [{ isPrimary: "desc" }, { name: "asc" }],
-    select: { id: true, name: true, title: true, phone: true, isPrimary: true },
+    select: {
+      id: true,
+      name: true,
+      title: true,
+      department: true,
+      phone: true,
+      wechat: true,
+      isPrimary: true,
+    },
   });
 
   return Response.json({ items: contacts });
@@ -52,15 +60,23 @@ export async function POST(
     const body = await req.json();
     const parsed = quickContactSchema.parse(body);
 
+    const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+    const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
+    if (!role) {
+      return Response.json({ error: "请选择角色" }, { status: 400 });
+    }
+
     const contact = await prisma.contact.create({
       data: {
         customerId,
         name: parsed.name.trim(),
-        title: parsed.title?.trim() || null,
-        phone: parsed.phone?.trim() || null,
-        role: parsed.role,
+        title: parsed.title ?? null,
+        department: parsed.department ?? null,
+        phone: parsed.phone ?? null,
+        wechat: parsed.wechat ?? null,
+        role,
       },
-      select: { id: true, name: true, title: true, phone: true, isPrimary: true },
+      select: { id: true, name: true, title: true, phone: true, wechat: true, isPrimary: true },
     });
 
     revalidatePath(`/customers/${customerId}`);

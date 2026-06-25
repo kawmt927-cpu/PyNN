@@ -1,21 +1,33 @@
 import { Suspense } from "react";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { getTargetMetricsBundle } from "@/lib/plans-tasks/metrics";
+import {
+  getTargetMetricsBundle,
+  getTeamAnnualMetrics,
+  toAnnualMetricsBundle,
+} from "@/lib/plans-tasks/metrics";
 import { getMonthlyKpiBundle } from "@/lib/plans-tasks/monthly-kpi";
-import { getSalesKpiConfig } from "@/lib/plans-tasks/kpi-config";
-import { CONFIG_CATEGORY, getConfigOptions } from "@/lib/config-options";
 import { TargetMetricsDashboard } from "@/components/plans-tasks/target-metrics-dashboard";
 import { MonthlyKpiDashboard } from "@/components/plans-tasks/monthly-kpi-dashboard";
-import { TargetSettingsPanel } from "@/components/plans-tasks/target-settings-panel";
-import { MonthlyKpiSettingsPanel } from "@/components/plans-tasks/monthly-kpi-settings-panel";
+import { ManagerMetricsOverview } from "@/components/plans-tasks/manager-metrics-overview";
 import { AssignmentsTaskList } from "@/components/plans-tasks/assignments-task-list";
 import { PlansTasksTabs } from "@/components/plans-tasks/plans-tasks-tabs";
 import { parsePlansTasksTab } from "@/lib/plans-tasks/tabs";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
+import {
+  parseAnnualSubject,
+  parseMetricsPeriod,
+  resolveMonthlyUserId,
+} from "@/lib/plans-tasks/metrics-scope";
 
 type Props = {
-  searchParams: Promise<{ tab?: string; userId?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    period?: string;
+    subject?: string;
+    userId?: string;
+    monthlyUserId?: string;
+  }>;
 };
 
 export default async function PlansTasksPage({ searchParams }: Props) {
@@ -35,25 +47,90 @@ export default async function PlansTasksPage({ searchParams }: Props) {
       })
     : [];
 
-  const viewUserId =
-    canManage && query.userId && salesUsers.some((u) => u.id === query.userId)
-      ? query.userId
-      : session.user.id;
+  const salesUserIds = salesUsers.map((u) => u.id);
+  const period = parseMetricsPeriod(query, canManage);
+  const annualSubject = parseAnnualSubject(query, salesUserIds);
+  const monthlyUserId = canManage
+    ? resolveMonthlyUserId(query, salesUserIds, session.user.id)
+    : session.user.id;
 
-  const viewUser =
-    viewUserId === session.user.id
-      ? { id: session.user.id, name: session.user.name }
-      : salesUsers.find((u) => u.id === viewUserId) ?? { id: session.user.id, name: session.user.name };
+  const subjectName =
+    annualSubject === "team"
+      ? "团队汇总"
+      : salesUsers.find((u) => u.id === annualSubject)?.name ?? session.user.name;
+  const monthlyUserName =
+    salesUsers.find((u) => u.id === monthlyUserId)?.name ?? session.user.name;
 
-  const [metrics, monthlyKpi, kpiConfig, stageOptions] =
+  const dashboardData =
     tab === "dashboard"
-      ? await Promise.all([
-          getTargetMetricsBundle(viewUserId, year, month),
-          getMonthlyKpiBundle(viewUserId, year, month, now),
-          getSalesKpiConfig(),
-          getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
-        ])
-      : [null, null, null, []];
+      ? await (async () => {
+          if (canManage && salesUsers.length > 0) {
+            const viewPersonId =
+              annualSubject === "team" ? salesUserIds[0] : annualSubject;
+
+            const [
+              teamAnnual,
+              personMetrics,
+              monthlyKpi,
+              personBundles,
+              monthlyBundles,
+            ] = await Promise.all([
+              getTeamAnnualMetrics(salesUserIds, year),
+              getTargetMetricsBundle(viewPersonId, year, month),
+              getMonthlyKpiBundle(monthlyUserId, year, month, now),
+              Promise.all(
+                salesUsers.map(async (user) => ({
+                  userId: user.id,
+                  target: (await getTargetMetricsBundle(user.id, year, month)).annual.target,
+                }))
+              ),
+              Promise.all(
+                salesUsers.map(async (user) => ({
+                  userId: user.id,
+                  targets: (await getMonthlyKpiBundle(user.id, year, month, now)).targets,
+                }))
+              ),
+            ]);
+
+            const teamMetrics = toAnnualMetricsBundle(year, month, teamAnnual);
+            const displayPersonMetrics =
+              annualSubject === "team"
+                ? personMetrics
+                : await getTargetMetricsBundle(annualSubject, year, month);
+
+            const personTargetsByUserId = Object.fromEntries(
+              personBundles.map((row) => [row.userId, row.target])
+            ) as Record<string, (typeof personBundles)[0]["target"]>;
+            const monthlyTargetsByUserId = Object.fromEntries(
+              monthlyBundles.map((row) => [row.userId, row.targets])
+            ) as Record<string, (typeof monthlyBundles)[0]["targets"]>;
+
+            return {
+              manager: {
+                period,
+                teamSize: salesUsers.length,
+                annualSubject,
+                subjectName:
+                  annualSubject === "team" ? "团队汇总" : subjectName,
+                monthlyUserId,
+                monthlyUserName,
+                teamMetrics,
+                personMetrics: displayPersonMetrics,
+                personTargetsByUserId,
+                monthlyKpi,
+                monthlyTargetsByUserId,
+                salesUsers,
+              },
+            };
+          }
+
+          const [metrics, monthlyKpi] = await Promise.all([
+            getTargetMetricsBundle(session.user.id, year, month),
+            getMonthlyKpiBundle(session.user.id, year, month, now),
+          ]);
+          return { sales: { metrics, monthlyKpi } };
+        })()
+      : null;
 
   return (
     <div className="space-y-6">
@@ -68,28 +145,40 @@ export default async function PlansTasksPage({ searchParams }: Props) {
         <PlansTasksTabs active={tab} />
       </Suspense>
 
-      {tab === "dashboard" && metrics && monthlyKpi ? (
+      {tab === "dashboard" && dashboardData?.manager ? (
+        <ManagerMetricsOverview
+          period={dashboardData.manager.period}
+          year={year}
+          month={month}
+          teamSize={dashboardData.manager.teamSize}
+          annualSubject={dashboardData.manager.annualSubject}
+          subjectName={dashboardData.manager.subjectName}
+          monthlyUserId={dashboardData.manager.monthlyUserId}
+          monthlyUserName={dashboardData.manager.monthlyUserName}
+          teamMetrics={dashboardData.manager.teamMetrics}
+          personMetrics={dashboardData.manager.personMetrics}
+          personTargetsByUserId={dashboardData.manager.personTargetsByUserId}
+          monthlyKpi={dashboardData.manager.monthlyKpi}
+          monthlyTargetsByUserId={dashboardData.manager.monthlyTargetsByUserId}
+          salesUsers={dashboardData.manager.salesUsers}
+        />
+      ) : null}
+
+      {tab === "dashboard" && dashboardData?.sales ? (
         <div className="space-y-6">
-          {canManage && salesUsers.length > 0 ? (
-            <>
-              <TargetSettingsPanel
-                userId={viewUserId}
-                year={year}
-                metrics={metrics}
-                salesUsers={salesUsers}
-              />
-              <MonthlyKpiSettingsPanel
-                userId={viewUserId}
-                year={year}
-                month={month}
-                kpi={monthlyKpi}
-                stageOptions={stageOptions}
-                projectDevMinStageValue={kpiConfig?.projectDevMinStageValue ?? null}
-              />
-            </>
-          ) : null}
-          <MonthlyKpiDashboard kpi={monthlyKpi} />
-          <TargetMetricsDashboard metrics={metrics} subjectName={viewUser.name} />
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">
+                {year} 年 {month} 月 KPI
+              </h2>
+              <p className="text-sm text-muted-foreground">渠道/项目/回款催收/过程规范/维护赋能五项月度指标</p>
+            </div>
+            <MonthlyKpiDashboard kpi={dashboardData.sales.monthlyKpi} />
+          </section>
+          <TargetMetricsDashboard
+            metrics={dashboardData.sales.metrics}
+            subjectName={session.user.name}
+          />
         </div>
       ) : null}
 

@@ -12,6 +12,12 @@ import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-
 import { ContactSelectField } from "@/components/sales-log/contact-select-field";
 import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity-dialog";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
+import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
+import {
+  customerGradeFormValue,
+  customerGradeSubmitValue,
+} from "@/lib/customers/grade";
 import { createManualLogAction } from "@/app/(dashboard)/sales-log/actions";
 import type { ConfigOptionItem } from "@/lib/config-options";
 
@@ -22,6 +28,7 @@ function toLocalDatetimeValue(date = new Date()) {
 
 export type InteractionFormOptions = {
   stageOptions: ConfigOptionItem[];
+  gradeOptions: ConfigOptionItem[];
 };
 
 export function InteractionLogForm({ formOptions }: { formOptions: InteractionFormOptions }) {
@@ -30,6 +37,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   const [error, setError] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState("");
   const [customerLabel, setCustomerLabel] = useState("");
+  const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(null);
   const [contactId, setContactId] = useState("");
   const [opportunityId, setOpportunityId] = useState("");
   const [opportunityLabel, setOpportunityLabel] = useState("");
@@ -43,6 +51,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   function resetForm() {
     setCustomerId("");
     setCustomerLabel("");
+    setCurrentCustomerGrade(null);
     setContactId("");
     setOpportunityId("");
     setOpportunityLabel("");
@@ -56,12 +65,24 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+
+    const planError = validateNextFollowUpPlan(
+      suggestedGrade,
+      nextFollowUpAt,
+      nextFollowUpMethod,
+      currentCustomerGrade
+    );
+    if (planError) {
+      setError(planError);
+      return;
+    }
+
     const formData = new FormData(e.currentTarget);
     formData.set("customerId", customerId);
     formData.set("contactId", contactId);
     formData.set("method", method);
     formData.set("followUpAt", followUpAt);
-    formData.set("suggestedGrade", suggestedGrade);
+    formData.set("suggestedGrade", customerGradeSubmitValue(suggestedGrade, currentCustomerGrade) ?? "");
     formData.set("opportunityId", opportunityId);
     formData.set("nextFollowUpAt", nextFollowUpAt);
     formData.set("nextFollowUpMethod", nextFollowUpMethod);
@@ -91,6 +112,9 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
             onValueChange={(id, option) => {
               setCustomerId(id);
               setCustomerLabel(option?.label ?? "");
+              const grade = option?.customerGrade ?? null;
+              setCurrentCustomerGrade(grade);
+              setSuggestedGrade(customerGradeFormValue(grade));
               setContactId("");
               setOpportunityId("");
               setOpportunityLabel("");
@@ -171,6 +195,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
           label="客户等级（可选，选择后将更新客户等级）"
           value={suggestedGrade}
           onValueChange={setSuggestedGrade}
+          options={formOptions.gradeOptions}
         />
 
         <div className="space-y-2 md:col-span-2">
@@ -183,35 +208,18 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
           <Input id="interactionResult" name="result" placeholder="如意向等级、下一步计划" />
         </div>
 
-        <div className="space-y-4 rounded-md border bg-muted/20 p-4 md:col-span-2">
+        <div className="space-y-3 rounded-md border bg-muted/20 p-4 md:col-span-2">
           <p className="text-sm font-medium">下次往来计划</p>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="nextMethod">计划方式</Label>
-              <select
-                id="nextMethod"
-                value={nextFollowUpMethod}
-                onChange={(e) => setNextFollowUpMethod(e.target.value as SalesLogMethod | "")}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="">请选择</option>
-                {SALES_LOG_METHOD_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="nextAt">计划时间</Label>
-              <Input
-                id="nextAt"
-                type="datetime-local"
-                value={nextFollowUpAt}
-                onChange={(e) => setNextFollowUpAt(e.target.value)}
-              />
-            </div>
-          </div>
+          <NextFollowUpPlanFields
+            methodId="nextMethod"
+            methodValue={nextFollowUpMethod}
+            onMethodChange={setNextFollowUpMethod}
+            dateId="nextAt"
+            dateValue={nextFollowUpAt}
+            onDateChange={setNextFollowUpAt}
+            suggestedGrade={suggestedGrade}
+            currentCustomerGrade={currentCustomerGrade}
+          />
         </div>
 
         {method === "FACE_VISIT" && (

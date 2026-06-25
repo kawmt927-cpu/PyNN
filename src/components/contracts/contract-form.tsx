@@ -14,6 +14,7 @@ import {
   createContract,
   createContractFromOpportunity,
   resubmitContract,
+  updateContract,
 } from "@/app/(dashboard)/contracts/actions";
 import { SIGNING_TYPE_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
@@ -38,6 +39,7 @@ type Props = {
   opportunityTitle?: string;
   contractId?: string;
   isResubmit?: boolean;
+  isEdit?: boolean;
   currentUserId?: string;
   defaultValues?: {
     title?: string;
@@ -51,6 +53,8 @@ type Props = {
     ourRepresentativeId?: string;
     paymentMethod?: string;
     ownerId?: string;
+    opportunityId?: string;
+    opportunityTitle?: string;
     signedAt?: string;
     effectiveAt?: string;
     expiresAt?: string;
@@ -103,6 +107,7 @@ export function ContractForm({
   opportunityTitle,
   contractId,
   isResubmit,
+  isEdit,
   currentUserId,
   defaultValues,
   submitLabel = "提交销售合同",
@@ -112,8 +117,12 @@ export function ContractForm({
   const [pending, startTransition] = useTransition();
   const [templates, setTemplates] = useState<ProductTemplate[]>([]);
 
-  const [linkedOpportunityId, setLinkedOpportunityId] = useState(opportunityId ?? "");
-  const [linkedOpportunityLabel, setLinkedOpportunityLabel] = useState(opportunityTitle ?? "");
+  const [linkedOpportunityId, setLinkedOpportunityId] = useState(
+    opportunityId ?? defaultValues?.opportunityId ?? ""
+  );
+  const [linkedOpportunityLabel, setLinkedOpportunityLabel] = useState(
+    opportunityTitle ?? defaultValues?.opportunityTitle ?? ""
+  );
 
   const [signCustomerId, setSignCustomerId] = useState(defaultValues?.signCustomerId ?? "");
   const [signCustomerLabel, setSignCustomerLabel] = useState(defaultValues?.signCustomerName ?? "");
@@ -171,21 +180,6 @@ export function ContractForm({
   const contractAmountNum = Number(totalAmount) || 0;
   const grossProfit = contractAmountNum - productCostTotal;
 
-  function distributeInstallmentsEvenly() {
-    const amount = Number(totalAmount);
-    if (!amount || amount <= 0 || installments.length === 0) return;
-    const per = amount / installments.length;
-    setInstallments((rows) =>
-      rows.map((row, index) => ({
-        ...row,
-        amount:
-          index === rows.length - 1
-            ? (amount - per * (rows.length - 1)).toFixed(2)
-            : per.toFixed(2),
-      }))
-    );
-  }
-
   function handleSubmit(formData: FormData) {
     formData.set("signCustomerId", signCustomerId);
     formData.set("endUserCustomerId", endUserCustomerId);
@@ -217,7 +211,9 @@ export function ContractForm({
       setError(null);
       try {
         let result: ActionResult;
-        if (isResubmit && contractId) {
+        if (isEdit && contractId) {
+          result = await updateContract(contractId, formData);
+        } else if (isResubmit && contractId) {
           result = await resubmitContract(contractId, formData);
         } else if (resolvedOpportunityId) {
           result = await createContractFromOpportunity(resolvedOpportunityId, formData);
@@ -504,9 +500,6 @@ export function ContractForm({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">回款计划 *</h2>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={distributeInstallmentsEvenly}>
-              平均分配金额
-            </Button>
             <Button
               type="button"
               variant="outline"

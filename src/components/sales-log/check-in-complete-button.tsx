@@ -9,18 +9,22 @@ type Props = {
   checkInId: string;
   customerId: string;
   customerName: string;
+  currentCustomerGrade?: string | null;
   contactId?: string | null;
   locationLabel: string;
   stageOptions: ConfigOptionItem[];
+  gradeOptions: ConfigOptionItem[];
 };
 
 export function CheckInCompleteButton({
   checkInId,
   customerId,
   customerName,
+  currentCustomerGrade,
   contactId,
   locationLabel,
   stageOptions,
+  gradeOptions,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -35,9 +39,11 @@ export function CheckInCompleteButton({
         checkInId={checkInId}
         customerId={customerId}
         customerName={customerName}
+        currentCustomerGrade={currentCustomerGrade}
         defaultContactId={contactId ?? ""}
         defaultLocation={locationLabel}
         stageOptions={stageOptions}
+        gradeOptions={gradeOptions}
       />
     </>
   );

@@ -7,8 +7,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
-import { customerFormSchema, followUpFormSchema, contactFormSchema, customerRelationSchema } from "@/lib/validations/customer";
+import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "@/lib/validations/customer";
+import { contactFormSchema } from "@/lib/validations/contact";
 import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
+import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
+import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 
@@ -99,6 +103,8 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const data = parseCustomerForm(formData);
     const configFields = await validateCustomerConfigFields(data);
 
+    await assertCustomerNameAvailable(data.name);
+
     const customer = await prisma.customer.create({
       data: {
         name: data.name,
@@ -169,7 +175,8 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
   }
 }
 
-export async function createFollowUp(formData: FormData) {
+export async function createFollowUp(formData: FormData): Promise<ActionResult> {
+  try {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const parsed = followUpFormSchema.parse({
     customerId: formData.get("customerId"),
@@ -180,7 +187,7 @@ export async function createFollowUp(formData: FormData) {
     nextFollowUpAt: formData.get("nextFollowUpAt") || null,
     nextFollowUpMethod: formData.get("nextFollowUpMethod") || null,
     suggestedGrade: formData.get("suggestedGrade") || null,
-    contactId: formData.get("contactId"),
+    contactIds: formData.getAll("contactIds").filter((id): id is string => typeof id === "string" && id.trim().length > 0),
     opportunityId: formData.get("opportunityId") || null,
     location: formData.get("location") || undefined,
     department: formData.get("department") || undefined,
@@ -195,6 +202,14 @@ export async function createFollowUp(formData: FormData) {
   );
   if (!customer) throw new Error("无权访问该客户");
 
+  const planError = validateNextFollowUpPlan(
+    parsed.suggestedGrade,
+    parsed.nextFollowUpAt,
+    parsed.nextFollowUpMethod,
+    customer.customerGrade
+  );
+  if (planError) throw new Error(planError);
+
   const suggestedGrade = assertCustomerGrade(parsed.suggestedGrade);
   const applyGrade = Boolean(suggestedGrade);
 
@@ -205,26 +220,31 @@ export async function createFollowUp(formData: FormData) {
     if (!opp) throw new Error("商机不存在或不属于该客户");
   }
 
-  const contact = await prisma.contact.findFirst({
-    where: { id: parsed.contactId, customerId: parsed.customerId },
+  const contactIds = [...new Set(parsed.contactIds)];
+  const contacts = await prisma.contact.findMany({
+    where: { id: { in: contactIds }, customerId: parsed.customerId },
+    select: { id: true },
   });
-  if (!contact) throw new Error("联系人不属于该客户");
+  if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
 
   await prisma.$transaction(async (tx) => {
     const followUp = await tx.followUp.create({
       data: {
         customerId: parsed.customerId,
-        contactId: parsed.contactId,
+        contactId: contactIds[0],
         opportunityId: parsed.opportunityId || undefined,
         userId: session.user.id,
         method: parsed.method,
         content: parsed.content,
         result: parsed.result,
         followUpAt: new Date(parsed.followUpAt),
-        nextFollowUpAt: parsed.nextFollowUpAt ? new Date(parsed.nextFollowUpAt) : undefined,
+        nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
         nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: Boolean(applyGrade),
+        linkedContacts: {
+          create: contactIds.map((contactId) => ({ contactId })),
+        },
       },
     });
 
@@ -254,7 +274,10 @@ export async function createFollowUp(formData: FormData) {
   if (parsed.opportunityId) {
     revalidatePath(`/opportunities/${parsed.opportunityId}`);
   }
-  redirect(`/customers/${parsed.customerId}/follow-ups`);
+  return { redirectTo: `/customers/${parsed.customerId}/follow-ups` };
+  } catch (error) {
+    return formatActionError(error);
+  }
 }
 
 
@@ -304,7 +327,8 @@ export async function assignCustomerToSales(formData: FormData) {
   revalidatePath(`/customers/${customerId}`);
 }
 
-export async function createContact(formData: FormData) {
+export async function createContact(formData: FormData): Promise<ActionResult> {
+  try {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const parsed = contactFormSchema.parse({
     customerId: formData.get("customerId"),
@@ -312,10 +336,14 @@ export async function createContact(formData: FormData) {
     title: formData.get("title") || undefined,
     department: formData.get("department") || undefined,
     phone: formData.get("phone") || undefined,
-    email: formData.get("email") || undefined,
+    wechat: formData.get("wechat") || undefined,
     role: formData.get("role"),
     isPrimary: formData.get("isPrimary") || "false",
   });
+
+  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
+  if (!role) throw new Error("请选择角色");
 
   const customer = await getCustomerForUser(
     parsed.customerId,
@@ -340,17 +368,22 @@ export async function createContact(formData: FormData) {
         title: parsed.title,
         department: parsed.department,
         phone: parsed.phone,
-        email: parsed.email,
-        role: parsed.role,
+        wechat: parsed.wechat,
+        role,
         isPrimary,
       },
     });
   });
 
   revalidatePath(`/customers/${parsed.customerId}`);
+  return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
 }
 
-export async function updateContact(contactId: string, formData: FormData) {
+export async function updateContact(contactId: string, formData: FormData): Promise<ActionResult> {
+  try {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const parsed = contactFormSchema.parse({
     customerId: formData.get("customerId"),
@@ -358,10 +391,14 @@ export async function updateContact(contactId: string, formData: FormData) {
     title: formData.get("title") || undefined,
     department: formData.get("department") || undefined,
     phone: formData.get("phone") || undefined,
-    email: formData.get("email") || undefined,
+    wechat: formData.get("wechat") || undefined,
     role: formData.get("role"),
     isPrimary: formData.get("isPrimary") || "false",
   });
+
+  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+  const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
+  if (!role) throw new Error("请选择角色");
 
   const customer = await getCustomerForUser(
     parsed.customerId,
@@ -386,14 +423,18 @@ export async function updateContact(contactId: string, formData: FormData) {
         title: parsed.title,
         department: parsed.department,
         phone: parsed.phone,
-        email: parsed.email,
-        role: parsed.role,
+        wechat: parsed.wechat,
+        role,
         isPrimary,
       },
     });
   });
 
   revalidatePath(`/customers/${parsed.customerId}`);
+  return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
 }
 
 export async function deleteContact(formData: FormData) {

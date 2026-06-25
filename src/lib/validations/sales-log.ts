@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { SALES_LOG_METHODS } from "@/lib/sales-log/methods";
 
+export { quickContactSchema } from "@/lib/validations/contact";
+
 export const CHECK_IN_MODES = ["without_customer", "interaction"] as const;
 export type CheckInMode = (typeof CHECK_IN_MODES)[number];
 
@@ -37,7 +39,7 @@ export const checkInFormSchema = z
     contactId: z.string().optional().nullable(),
     latitude: z.coerce.number().optional().nullable(),
     longitude: z.coerce.number().optional().nullable(),
-    locationText: z.string().min(1, "请先获取定位并解析地址"),
+    locationText: z.string().optional().nullable(),
     addressProvince: z.string().optional().nullable(),
     addressCity: z.string().optional().nullable(),
     addressDistrict: z.string().optional().nullable(),
@@ -49,6 +51,13 @@ export const checkInFormSchema = z
   })
   .superRefine((data, ctx) => {
     const mode = normalizeCheckInMode(data.checkInMode);
+    if (mode === "without_customer" && !data.locationText?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "请先获取定位并解析地址",
+        path: ["locationText"],
+      });
+    }
     if (mode === "interaction" && !data.customerId?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请选择客户", path: ["customerId"] });
     }
@@ -103,13 +112,6 @@ export const manualLogFormSchema = z.object({
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
   location: z.string().optional().nullable(),
   detailedNotes: z.string().optional().nullable(),
-});
-
-export const quickContactSchema = z.object({
-  name: z.string().min(1, "请输入联系人姓名"),
-  title: z.string().optional(),
-  phone: z.string().optional(),
-  role: z.enum(["DECISION_MAKER", "TECHNICAL", "OTHER"]).default("OTHER"),
 });
 
 export const quickOpportunitySchema = z.object({

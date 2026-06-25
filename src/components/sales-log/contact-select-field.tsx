@@ -1,24 +1,85 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { QuickContactDialog } from "@/components/sales-log/quick-contact-dialog";
 import type { ContactOption } from "@/components/sales-log/contact-select";
+import { cn } from "@/lib/utils";
 
-export function ContactSelectField({
-  customerId,
-  value,
-  onChange,
-  required = false,
-  initialName = "",
-}: {
+type BaseProps = {
   customerId: string;
-  value: string;
-  onChange: (value: string) => void;
   required?: boolean;
   initialName?: string;
-}) {
+  id?: string;
+  className?: string;
+};
+
+type SingleProps = BaseProps & {
+  multiple?: false;
+  value: string;
+  onChange: (value: string) => void;
+};
+
+type MultipleProps = BaseProps & {
+  multiple: true;
+  value: string[];
+  onChange: (value: string[]) => void;
+};
+
+type Props = SingleProps | MultipleProps;
+
+function formatContactLabel(c: ContactOption) {
+  const parts = [c.name];
+  if (c.title) parts.push(c.title);
+  let label = parts.join(" · ");
+  if (c.isPrimary) label += "（主联系人）";
+  return label;
+}
+
+function contactDetailParts(c: ContactOption) {
+  const parts: string[] = [];
+  if (c.title) parts.push(c.title);
+  if (c.department) parts.push(c.department);
+  if (c.phone) parts.push(c.phone);
+  if (c.wechat) parts.push(c.wechat);
+  if (c.isPrimary) parts.push("主联系人");
+  return parts;
+}
+
+function ContactNameLabel({ contact }: { contact: ContactOption }) {
+  const parts = contactDetailParts(contact);
+
+  return (
+    <span className="group/contact relative inline-flex min-w-0">
+      <span>{contact.name}</span>
+      {parts.length > 0 ? (
+        <span
+          role="tooltip"
+          className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 hidden rounded-md border border-border bg-background px-2 py-1 text-xs font-normal text-foreground shadow-lg group-hover/contact:inline-flex group-hover/contact:items-center group-hover/contact:gap-1 group-hover/contact:whitespace-nowrap"
+        >
+          {parts.map((part, index) => (
+            <span key={`${part}-${index}`} className="inline-flex items-center gap-1">
+              {index > 0 ? <span className="text-muted-foreground">·</span> : null}
+              <span>{part}</span>
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+export function ContactSelectField(props: Props) {
+  const {
+    customerId,
+    required = false,
+    initialName = "",
+    id = "interactionContact",
+    className,
+  } = props;
+  const multiple = props.multiple === true;
+
   const [contacts, setContacts] = useState<ContactOption[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
@@ -37,24 +98,46 @@ export function ContactSelectField({
     }
   }, [customerId]);
 
+  const prevCustomerIdRef = useRef(customerId);
+  const onChangeRef = useRef(props.onChange);
+  onChangeRef.current = props.onChange;
+
   useEffect(() => {
     if (!customerId) {
       setContacts([]);
-      onChange("");
       return;
     }
-    onChange("");
     void loadContacts();
-  }, [customerId, loadContacts, onChange]);
+  }, [customerId, loadContacts]);
+
+  useEffect(() => {
+    if (prevCustomerIdRef.current === customerId) return;
+    prevCustomerIdRef.current = customerId;
+    if (multiple) {
+      (onChangeRef.current as MultipleProps["onChange"])([]);
+    } else {
+      (onChangeRef.current as SingleProps["onChange"])("");
+    }
+  }, [customerId, multiple]);
 
   function openCreateContact(name = "") {
     setNewContactName(name);
     setDialogOpen(true);
   }
 
+  function toggleContact(contactId: string) {
+    if (!multiple) return;
+    const current = props.value;
+    if (current.includes(contactId)) {
+      props.onChange(current.filter((id) => id !== contactId));
+    } else {
+      props.onChange([...current, contactId]);
+    }
+  }
+
   if (!customerId) {
     return (
-      <div className="space-y-2">
+      <div className={cn("space-y-2", className)}>
         <Label>联系人{required ? " *" : ""}</Label>
         <select disabled className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm">
           <option>请先选择客户</option>
@@ -63,35 +146,82 @@ export function ContactSelectField({
     );
   }
 
+  const multipleHint =
+    multiple && required
+      ? contacts.length === 0
+        ? "该客户暂无联系人，请点击「新增联系人」添加。"
+        : props.value.length === 0
+          ? "请至少选择一位联系人。"
+          : ""
+      : "";
+
   return (
     <>
-      <div className="space-y-2">
+      <div className={cn("space-y-2", className)}>
         <div className="flex items-center justify-between gap-2">
-          <Label htmlFor="interactionContact">联系人{required ? " *" : ""}</Label>
+          <Label htmlFor={multiple ? undefined : id}>
+            联系人{required ? " *" : ""}
+            {multiple ? <span className="ml-1 font-normal text-muted-foreground">（可多选）</span> : null}
+          </Label>
           <Button type="button" variant="outline" size="sm" onClick={() => openCreateContact()}>
             新增联系人
           </Button>
         </div>
-        <select
-          id="interactionContact"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          required={required}
-          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        >
-          <option value="">{required ? "请选择联系人" : "不指定联系人"}</option>
-          {contacts.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.title ? ` · ${c.title}` : ""}
-              {c.phone ? ` · ${c.phone}` : ""}
-              {c.isPrimary ? "（主联系人）" : ""}
-            </option>
-          ))}
-        </select>
-        {required && contacts.length === 0 ? (
-          <p className="text-xs text-orange-600">
-            该客户暂无联系人，请点击「新增联系人」添加。
+
+        {multiple ? (
+          contacts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无联系人</p>
+          ) : (
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {contacts.map((c) => {
+                const checked = props.value.includes(c.id);
+                return (
+                  <label
+                    key={c.id}
+                    className="inline-flex cursor-pointer items-center gap-2 text-sm leading-none"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 rounded border-input"
+                      checked={checked}
+                      onChange={() => toggleContact(c.id)}
+                    />
+                    <ContactNameLabel contact={c} />
+                  </label>
+                );
+              })}
+            </div>
+          )
+        ) : (
+          <select
+            id={id}
+            value={props.value}
+            onChange={(e) => props.onChange(e.target.value)}
+            required={required}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="">{required ? "请选择联系人" : "不指定联系人"}</option>
+            {contacts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {formatContactLabel(c)}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {multiple && required ? (
+          <p
+            className={cn(
+              "min-h-5 text-xs leading-5",
+              multipleHint
+                ? contacts.length === 0
+                  ? "text-orange-600"
+                  : "text-muted-foreground"
+                : "text-transparent"
+            )}
+            aria-live="polite"
+          >
+            {multipleHint || "占位"}
           </p>
         ) : null}
       </div>
@@ -102,7 +232,16 @@ export function ContactSelectField({
         customerId={customerId}
         initialName={newContactName || initialName}
         onCreated={(contact) => {
-          void loadContacts().then(() => onChange(contact.id));
+          void loadContacts().then(() => {
+            if (multiple) {
+              const current = props.value;
+              if (!current.includes(contact.id)) {
+                props.onChange([...current, contact.id]);
+              }
+            } else {
+              props.onChange(contact.id);
+            }
+          });
         }}
       />
     </>

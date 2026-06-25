@@ -46,12 +46,6 @@ enum HospitalLevel {
   OTHER
 }
 
-enum ContactRole {
-  DECISION_MAKER
-  TECHNICAL
-  OTHER
-}
-
 enum FollowUpMethod {
   PHONE
   WECHAT
@@ -335,14 +329,16 @@ model Contact {
   title       String?
   department  String?
   phone       String?
+  wechat      String?
   email       String?
-  role        ContactRole @default(OTHER)
+  role        String      @default("OTHER")
   isPrimary   Boolean     @default(false)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   followUps        FollowUp[]
+  followUpLinks    FollowUpContact[]
   checkIns         SalesCheckIn[]
   contractsAsSign  Contract[] @relation("ContractSignContact")
 }
@@ -368,6 +364,7 @@ model FollowUp {
 
   customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact        Contact?         @relation(fields: [contactId], references: [id])
+  linkedContacts FollowUpContact[]
   user           User             @relation(fields: [userId], references: [id])
   opportunity    Opportunity?     @relation(fields: [opportunityId], references: [id])
   faceVisit      FaceVisitDetail?
@@ -376,6 +373,16 @@ model FollowUp {
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
   salesDailyLogId String?
   weeklyAssignment SalesWeeklyAssignment?
+}
+
+model FollowUpContact {
+  followUpId String
+  contactId  String
+
+  followUp FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([followUpId, contactId])
 }
 
 model FaceVisitDetail {
@@ -839,8 +846,8 @@ model SalesDailyLog {
 
 model SalesKpiConfig {
   id                      String   @id @default("default")
-  projectDevMinStageValue   String?
-  updatedAt                 DateTime @updatedAt
+  projectDevMinStageValue String?
+  updatedAt               DateTime @updatedAt
 }
 
 model SalesCost {

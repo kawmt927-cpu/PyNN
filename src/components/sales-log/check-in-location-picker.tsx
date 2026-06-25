@@ -20,6 +20,7 @@ type Props = {
   mapKey: string | null;
   geocodeReady?: boolean;
   disabled?: boolean;
+  optional?: boolean;
 };
 
 function loadAmapScript(key: string) {
@@ -85,6 +86,7 @@ export function CheckInLocationPicker({
   mapKey,
   geocodeReady = true,
   disabled,
+  optional = false,
 }: Props) {
   const inWeCom = isWeComClient();
   const wecom = useWeComSdk(inWeCom);
@@ -201,7 +203,7 @@ export function CheckInLocationPicker({
   return (
     <div className="space-y-3 md:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Label>定位与地图</Label>
+        <Label>{optional ? "定位与地图（可选）" : "定位与地图"}</Label>
         <Button
           type="button"
           variant="outline"
@@ -263,7 +265,9 @@ export function CheckInLocationPicker({
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          点击按钮后系统将获取 GPS，并解析为完整地点（省市区街道门牌）。
+          {optional
+            ? "可选。未定位时提交将提示确认；获取后将记录省市区街道门牌。"
+            : "点击按钮后系统将获取 GPS，并解析为完整地点（省市区街道门牌）。"}
         </p>
       )}
 

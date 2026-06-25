@@ -155,11 +155,68 @@ export async function getTargetMetricsBundle(
   };
 }
 
-export function formatMetricAmount(value: number): string {
-  if (Math.abs(value) >= 10_000) {
-    return `${(value / 10_000).toFixed(value >= 100_000 ? 0 : 1)} 万`;
+export function sumSalesMetrics(rows: SalesMetrics[]): SalesMetrics {
+  return rows.reduce(
+    (acc, row) => ({
+      sales: acc.sales + row.sales,
+      cost: acc.cost + row.cost,
+      profit: acc.profit + row.profit,
+      payment: acc.payment + row.payment,
+    }),
+    { sales: 0, cost: 0, profit: 0, payment: 0 }
+  );
+}
+
+/** 销售管理：汇总全员年度实际与考核目标（个人目标累加） */
+export async function getTeamAnnualMetrics(
+  userIds: string[],
+  year: number
+): Promise<{ target: SalesMetrics | null; actual: SalesMetrics }> {
+  if (userIds.length === 0) {
+    return {
+      target: null,
+      actual: { sales: 0, cost: 0, profit: 0, payment: 0 },
+    };
   }
-  return value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+
+  const bundles = await Promise.all(
+    userIds.map(async (userId) => {
+      const [targetRow, actual] = await Promise.all([
+        prisma.salesTarget.findUnique({ where: { userId_year: { userId, year } } }),
+        computeActuals(userId, year),
+      ]);
+      return {
+        target: targetRow ? toSalesMetrics(targetRow) : null,
+        actual,
+      };
+    })
+  );
+
+  const actual = sumSalesMetrics(bundles.map((item) => item.actual));
+  const definedTargets = bundles.map((item) => item.target).filter(Boolean) as SalesMetrics[];
+  const target = definedTargets.length > 0 ? sumSalesMetrics(definedTargets) : null;
+
+  return { target, actual };
+}
+
+export function toAnnualMetricsBundle(
+  year: number,
+  month: number,
+  annual: { target: SalesMetrics | null; actual: SalesMetrics }
+): TargetMetricsBundle {
+  return {
+    year,
+    month,
+    annual,
+    monthly: {
+      target: null,
+      actual: { sales: 0, cost: 0, profit: 0, payment: 0 },
+    },
+  };
+}
+
+export function formatMetricAmount(value: number): string {
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 }
 
 export function metricProgress(actual: number, target: number | null | undefined): number | null {
@@ -169,12 +226,27 @@ export function metricProgress(actual: number, target: number | null | undefined
 
 export type MetricKey = keyof SalesMetrics;
 
-export const METRIC_DEFINITIONS: { key: MetricKey; label: string; lowerIsBetter?: boolean }[] = [
-  { key: "sales", label: "销售额" },
-  { key: "cost", label: "成本", lowerIsBetter: true },
-  { key: "profit", label: "毛利" },
-  { key: "payment", label: "回款" },
+export const METRIC_DEFINITIONS: {
+  key: MetricKey;
+  label: string;
+  lowerIsBetter?: boolean;
+  /** 是否纳入考核目标（否则仅在看板展示实际 KPI） */
+  assessment?: boolean;
+}[] = [
+  { key: "sales", label: "销售额", assessment: true },
+  { key: "cost", label: "成本", lowerIsBetter: true, assessment: false },
+  { key: "profit", label: "毛利", assessment: true },
+  { key: "payment", label: "回款", assessment: true },
 ];
+
+export function metricAssessmentTarget(
+  key: MetricKey,
+  target: SalesMetrics | null
+): number | null {
+  const definition = METRIC_DEFINITIONS.find((item) => item.key === key);
+  if (definition?.assessment === false) return null;
+  return target?.[key] ?? null;
+}
 
 export function metricProgressTone(
   progress: number,

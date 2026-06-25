@@ -39,7 +39,7 @@ async function fetchCustomers(
   if (!res.ok) return [];
 
   const data = (await res.json()) as {
-    items: Array<{ id: string; name: string; category?: string }>;
+    items: Array<{ id: string; name: string; category?: string; customerGrade?: string | null }>;
   };
 
   return (data.items ?? []).map((item) => ({
@@ -48,6 +48,7 @@ async function fetchCustomers(
     description: item.category
       ? CUSTOMER_CATEGORY_LABELS[item.category as CustomerCategory]
       : undefined,
+    customerGrade: item.customerGrade ?? null,
   }));
 }
 

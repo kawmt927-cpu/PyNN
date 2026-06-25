@@ -19,7 +19,7 @@ export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInS
     },
     orderBy: { checkedInAt: "desc" },
     include: {
-      customer: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true, customerGrade: true } },
       contact: { select: { id: true, name: true, title: true } },
       user: { select: { id: true, name: true } },
       followUp: { select: { id: true, method: true, content: true } },

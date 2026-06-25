@@ -8,6 +8,7 @@ import {
   requireAiAgentSettingsAccess,
   requireAmapSettingsAccess,
   requireWeComSettingsAccess,
+  requireKpiSettingsAccess,
 } from "@/lib/config-settings-access";
 import { configOptionSchema, saveConfigCategoryOptionsSchema, saveCustomerGradeOptionsSchema, saveCustomerTagOptionsSchema } from "@/lib/validations/customer";
 import { generateConfigOptionValue, CONFIG_CATEGORY } from "@/lib/config-options";
@@ -23,6 +24,8 @@ import { getAmapConfigRow } from "@/lib/amap/config";
 import { resolveCheckInLocation } from "@/lib/amap/reverse-geocode";
 import { amapConfigSchema } from "@/lib/validations/amap";
 import { isKimiThinkingModel } from "@/lib/agent/moonshot-fetch";
+import { kpiConfigFormSchema } from "@/lib/validations/monthly-kpi";
+import { saveProjectDevMinStage } from "@/lib/plans-tasks/kpi-config";
 
 function formCheckbox(formData: FormData, name: string): boolean {
   return formData.get(name) === "on";
@@ -507,7 +510,7 @@ export async function saveCustomerGradeOptions(
 
   const labels = parsed.items.map((item) => item.label.trim());
   if (new Set(labels).size !== labels.length) {
-    throw new Error("显示名称不能重复");
+    throw new Error("文字描述不能重复");
   }
 
   const existing = await prisma.configOption.findMany({ where: { category } });
@@ -581,4 +584,14 @@ export async function toggleConfigOption(formData: FormData) {
 
   revalidatePath("/admin/settings");
   revalidatePath("/customers");
+}
+
+export async function saveKpiConfig(formData: FormData) {
+  await requireKpiSettingsAccess();
+  const parsed = kpiConfigFormSchema.parse({
+    projectDevMinStageValue: formData.get("projectDevMinStageValue")?.toString() || null,
+  });
+  await saveProjectDevMinStage(parsed.projectDevMinStageValue || null);
+  revalidatePath("/admin/settings");
+  revalidatePath("/plans-tasks");
 }

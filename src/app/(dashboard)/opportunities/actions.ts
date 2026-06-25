@@ -31,6 +31,8 @@ import {
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/opportunities/status";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
+import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 
@@ -126,6 +128,8 @@ async function resolveCustomerId(
   const data = parseCustomerForm(formData);
   const configFields = await validateCustomerConfigFields(data);
   const ownerId = resolveOwnerId(role, userId, data.ownerId);
+
+  await assertCustomerNameAvailable(data.name);
 
   const customer = await prisma.customer.create({
     data: {
@@ -462,7 +466,7 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
           method: parsed.method,
           content: parsed.content,
           followUpAt: new Date(parsed.followUpAt),
-          nextFollowUpAt: parsed.nextFollowUpAt ? new Date(parsed.nextFollowUpAt) : undefined,
+          nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
           changeSummary,
         },
       });
@@ -522,7 +526,7 @@ export async function updateOpportunityFollowUp(formData: FormData): Promise<Act
           method: parsed.method,
           content: parsed.content,
           followUpAt: new Date(parsed.followUpAt),
-          nextFollowUpAt: parsed.nextFollowUpAt ? new Date(parsed.nextFollowUpAt) : null,
+          nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt) ?? null,
           changeSummary: changeSummary ?? followUp.changeSummary,
         },
       });

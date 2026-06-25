@@ -1,7 +1,8 @@
-import type { FollowUpMethod } from "@prisma/client";
+import type { FollowUpMethod, Prisma } from "@prisma/client";
 import { getPrismaClient } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
 import { getGradeExpiryPendingCustomers } from "@/lib/customers/grade-expiry";
+import { pendingFollowUpOpportunityWhere } from "@/lib/opportunities/status";
 
 export type UnifiedFollowUpHistoryItem = {
   id: string;
@@ -13,7 +14,7 @@ export type UnifiedFollowUpHistoryItem = {
   nextFollowUpAt: Date | null;
   nextFollowUpMethod?: FollowUpMethod | null;
   user: { name: string };
-  contact: { name: string } | null;
+  contacts: { id: string; name: string }[];
   faceVisit: {
     location: string;
     department: string | null;
@@ -30,12 +31,43 @@ export type UnifiedPendingFollowUp = {
   content: string;
   nextFollowUpAt: Date;
   customer: { id: string; name: string; customerGrade: string | null };
+  owner: { id: string; name: string };
   user: { name: string } | null;
   opportunity: { id: string; title: string } | null;
 };
 
 function customerOwnerFilter(role: UserRole, userId: string) {
   return role === "SALES" ? { ownerId: userId } : {};
+}
+
+function nextFollowUpTimeFilter(mode: "due" | "upcoming", now: Date) {
+  return mode === "due" ? { lte: now } : { gt: now };
+}
+
+function buildCustomerPendingFollowUpWhere(
+  mode: "due" | "upcoming",
+  now: Date,
+  customerFilter: Prisma.CustomerWhereInput
+): Prisma.FollowUpWhereInput {
+  return {
+    nextFollowUpAt: nextFollowUpTimeFilter(mode, now),
+    customer: customerFilter,
+    OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
+  };
+}
+
+function buildOpportunityPendingFollowUpWhere(
+  mode: "due" | "upcoming",
+  now: Date,
+  customerFilter: Prisma.CustomerWhereInput
+): Prisma.OpportunityFollowUpWhereInput {
+  return {
+    nextFollowUpAt: nextFollowUpTimeFilter(mode, now),
+    opportunity: {
+      ...pendingFollowUpOpportunityWhere,
+      customer: customerFilter,
+    },
+  };
 }
 
 export async function getCustomerFollowUpHistory(
@@ -49,7 +81,10 @@ export async function getCustomerFollowUpHistory(
       where: { customerId },
       include: {
         user: { select: { name: true } },
-        contact: { select: { name: true } },
+        contact: { select: { id: true, name: true } },
+        linkedContacts: {
+          include: { contact: { select: { id: true, name: true } } },
+        },
         faceVisit: true,
         opportunity: { select: { id: true, title: true } },
       },
@@ -64,21 +99,29 @@ export async function getCustomerFollowUpHistory(
   ]);
 
   const unified: UnifiedFollowUpHistoryItem[] = [
-    ...customerFollowUps.map((item) => ({
-      id: item.id,
-      source: "customer" as const,
-      method: item.method,
-      content: item.content,
-      result: item.result,
-      followUpAt: item.followUpAt,
-      nextFollowUpAt: item.nextFollowUpAt,
-      nextFollowUpMethod: item.nextFollowUpMethod,
-      user: item.user,
-      contact: item.contact,
-      faceVisit: item.faceVisit,
-      opportunity: item.opportunity,
-      changeSummary: null,
-    })),
+    ...customerFollowUps.map((item) => {
+      const contacts =
+        item.linkedContacts.length > 0
+          ? item.linkedContacts.map((link) => link.contact)
+          : item.contact
+            ? [item.contact]
+            : [];
+      return {
+        id: item.id,
+        source: "customer" as const,
+        method: item.method,
+        content: item.content,
+        result: item.result,
+        followUpAt: item.followUpAt,
+        nextFollowUpAt: item.nextFollowUpAt,
+        nextFollowUpMethod: item.nextFollowUpMethod,
+        user: item.user,
+        contacts,
+        faceVisit: item.faceVisit,
+        opportunity: item.opportunity,
+        changeSummary: null,
+      };
+    }),
     ...opportunityFollowUps.map((item) => ({
       id: item.id,
       source: "opportunity" as const,
@@ -88,7 +131,7 @@ export async function getCustomerFollowUpHistory(
       followUpAt: item.followUpAt,
       nextFollowUpAt: item.nextFollowUpAt,
       user: item.user,
-      contact: null,
+      contacts: [],
       faceVisit: null,
       opportunity: item.opportunity,
       changeSummary: item.changeSummary,
@@ -121,32 +164,39 @@ export async function getPendingFollowUps(
   const db = getPrismaClient();
   const customerFilter = customerOwnerFilter(role, userId);
 
-  const nextFilter = mode === "due" ? { lte: now } : { gt: now };
-
   const [customerItems, opportunityItems] = await Promise.all([
     db.followUp.findMany({
-      where: {
-        nextFollowUpAt: nextFilter,
-        customer: customerFilter,
-      },
+      where: buildCustomerPendingFollowUpWhere(mode, now, customerFilter),
       include: {
-        customer: { select: { id: true, name: true, customerGrade: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            customerGrade: true,
+            owner: { select: { id: true, name: true } },
+          },
+        },
         user: { select: { name: true } },
+        opportunity: { select: { id: true, title: true } },
       },
       take: take * 2,
     }),
     db.opportunityFollowUp.findMany({
-      where: {
-        nextFollowUpAt: nextFilter,
-        opportunity: { customer: customerFilter },
-      },
+      where: buildOpportunityPendingFollowUpWhere(mode, now, customerFilter),
       include: {
         user: { select: { name: true } },
         opportunity: {
           select: {
             id: true,
             title: true,
-            customer: { select: { id: true, name: true, customerGrade: true } },
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                customerGrade: true,
+                owner: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -166,8 +216,11 @@ export async function getPendingFollowUps(
         content: item.content,
         nextFollowUpAt: item.nextFollowUpAt,
         customer: item.customer,
+        owner: item.customer.owner ?? { id: "", name: "未分配" },
         user: item.user,
-        opportunity: null,
+        opportunity: item.opportunity
+          ? { id: item.opportunity.id, title: item.opportunity.title }
+          : null,
       })),
     ...opportunityItems
       .filter((item): item is typeof item & { nextFollowUpAt: Date } =>
@@ -180,6 +233,7 @@ export async function getPendingFollowUps(
         content: item.content,
         nextFollowUpAt: item.nextFollowUpAt,
         customer: item.opportunity.customer,
+        owner: item.opportunity.customer.owner ?? { id: "", name: "未分配" },
         user: item.user,
         opportunity: { id: item.opportunity.id, title: item.opportunity.title },
       })),
@@ -201,6 +255,7 @@ export async function getPendingFollowUps(
           name: item.customerName,
           customerGrade: item.customerGrade,
         },
+        owner: item.owner,
         user: null,
         opportunity: null,
       });
@@ -215,22 +270,13 @@ export async function getPendingFollowUps(
 export async function countDueFollowUps(role: UserRole, userId: string, now: Date) {
   const db = getPrismaClient();
   const customerFilter = customerOwnerFilter(role, userId);
-  const nextDue = { lte: now };
 
   const [customerCount, opportunityCount] = await Promise.all([
     db.followUp.count({
-      where: {
-        nextFollowUpAt: nextDue,
-        customer: customerFilter,
-        ...(role === "SALES" ? { userId } : {}),
-      },
+      where: buildCustomerPendingFollowUpWhere("due", now, customerFilter),
     }),
     db.opportunityFollowUp.count({
-      where: {
-        nextFollowUpAt: nextDue,
-        opportunity: { customer: customerFilter },
-        ...(role === "SALES" ? { userId } : {}),
-      },
+      where: buildOpportunityPendingFollowUpWhere("due", now, customerFilter),
     }),
   ]);
 

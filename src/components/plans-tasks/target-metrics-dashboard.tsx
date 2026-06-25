@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import {
   formatMetricAmount,
+  metricAssessmentTarget,
   metricProgress,
   metricProgressTone,
   METRIC_DEFINITIONS,
@@ -25,12 +26,27 @@ function MetricCard({
   actual,
   target,
   lowerIsBetter,
+  assessment = true,
 }: {
   label: string;
   actual: number;
   target: number | null;
   lowerIsBetter?: boolean;
+  assessment?: boolean;
 }) {
+  if (!assessment) {
+    return (
+      <div className="rounded-lg border border-dashed bg-muted/30 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm text-muted-foreground">{label}</p>
+          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">KPI</span>
+        </div>
+        <p className="mt-1 text-2xl font-bold tabular-nums">{formatMetricAmount(actual)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">实际汇总 · 无考核目标</p>
+      </div>
+    );
+  }
+
   const progress = metricProgress(actual, target);
   const tone = progress != null ? metricProgressTone(progress, lowerIsBetter) : null;
   const barWidth = progress != null ? Math.min(100, progress) : 0;
@@ -69,22 +85,25 @@ function MetricsSection({
   title,
   target,
   actual,
+  showTitle = true,
 }: {
   title: string;
   target: SalesMetrics | null;
   actual: SalesMetrics;
+  showTitle?: boolean;
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      {showTitle ? <h2 className="text-lg font-semibold">{title}</h2> : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {METRIC_DEFINITIONS.map(({ key, label, lowerIsBetter }) => (
+        {METRIC_DEFINITIONS.map(({ key, label, lowerIsBetter, assessment }) => (
           <MetricCard
             key={key}
             label={label}
             actual={actual[key]}
-            target={target?.[key] ?? null}
+            target={metricAssessmentTarget(key, target)}
             lowerIsBetter={lowerIsBetter}
+            assessment={assessment !== false}
           />
         ))}
       </div>
@@ -95,16 +114,31 @@ function MetricsSection({
 export function TargetMetricsDashboard({
   metrics,
   subjectName,
+  variant = "standalone",
 }: {
   metrics: TargetMetricsBundle;
   subjectName: string;
+  variant?: "standalone" | "embedded";
 }) {
+  const content = (
+    <MetricsSection
+      title={`${metrics.year} 年度指标`}
+      target={metrics.annual.target}
+      actual={metrics.annual.actual}
+      showTitle={variant !== "embedded"}
+    />
+  );
+
+  if (variant === "embedded") {
+    return content;
+  }
+
   return (
     <div className="space-y-8">
       <p className="text-sm text-muted-foreground">
-        {subjectName} · {metrics.year} 年度指标完成度（实际数据来自已签署合同、成本与回款）
+        {subjectName} · {metrics.year} 年度指标完成度（考核：销售额、毛利、回款；成本等为 KPI 看板）
       </p>
-      <MetricsSection title={`${metrics.year} 年度指标`} target={metrics.annual.target} actual={metrics.annual.actual} />
+      {content}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DEMO_ACCOUNTS, isDemoLoginEnabled } from "@/lib/demo-accounts";
+import { DEMO_ACCOUNTS, isDemoLoginEnabled, SALES_QUICK_LOGIN } from "@/lib/demo-accounts";
 import type { UserRole } from "@prisma/client";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [selectedSalesEmail, setSelectedSalesEmail] = useState<string | null>(null);
   const demoEnabled = isDemoLoginEnabled();
 
   async function doLogin(loginEmail: string, loginPassword: string) {
@@ -43,9 +44,18 @@ export default function LoginPage() {
     await doLogin(email, password);
   }
 
+  async function handleSalesQuickLogin(salesEmail: string, salesPassword: string) {
+    setSelectedRole(null);
+    setSelectedSalesEmail(salesEmail);
+    setEmail(salesEmail);
+    setPassword(salesPassword);
+    await doLogin(salesEmail, salesPassword);
+  }
+
   async function handleDemoLogin(role: UserRole) {
     const account = DEMO_ACCOUNTS.find((a) => a.role === role);
     if (!account) return;
+    setSelectedSalesEmail(null);
     setSelectedRole(role);
     setEmail(account.email);
     setPassword(account.password);
@@ -70,6 +80,7 @@ export default function LoginPage() {
                 onChange={(e) => {
                   setEmail(e.target.value);
                   setSelectedRole(null);
+                  setSelectedSalesEmail(null);
                 }}
                 placeholder="admin@example.com"
                 required
@@ -84,6 +95,7 @@ export default function LoginPage() {
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setSelectedRole(null);
+                  setSelectedSalesEmail(null);
                 }}
                 required
               />
@@ -95,40 +107,63 @@ export default function LoginPage() {
           </form>
 
           {demoEnabled && (
-            <div className="space-y-3 border-t pt-4">
-              <p className="text-sm font-medium text-muted-foreground">测试快捷登录</p>
-              <div className="space-y-2">
-                {DEMO_ACCOUNTS.map((account) => (
-                  <label
-                    key={account.role}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors",
-                      selectedRole === account.role
-                        ? "border-primary bg-primary/5"
-                        : "hover:bg-muted/50",
-                      loading && "pointer-events-none opacity-60"
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="demo-role"
-                      value={account.role}
-                      checked={selectedRole === account.role}
-                      onChange={() => handleDemoLogin(account.role)}
-                      className="h-4 w-4 accent-primary"
+            <>
+              <div className="space-y-3 border-t pt-4">
+                <p className="text-sm font-medium text-muted-foreground">销售快捷登录（演示）</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {SALES_QUICK_LOGIN.map((account) => (
+                    <Button
+                      key={account.email}
+                      type="button"
+                      variant={selectedSalesEmail === account.email ? "default" : "outline"}
+                      className="h-auto flex-col gap-0.5 py-3 text-sm"
                       disabled={loading}
-                    />
-                    <span className="flex-1 text-sm">
+                      onClick={() => handleSalesQuickLogin(account.email, account.password)}
+                    >
                       <span className="font-medium">{account.label}</span>
-                      <span className="ml-2 text-muted-foreground">{account.email}</span>
-                    </span>
-                  </label>
-                ))}
+                      <span className="text-xs font-normal opacity-80">sales123</span>
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  演示客户 / 商机 / 合同已分别归属三位销售；请用上方按钮登录，勿使用旧账号
+                  sales@example.com。
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                勾选角色后将自动登录（仅开发环境显示）
-              </p>
-            </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <p className="text-sm font-medium text-muted-foreground">其他测试角色</p>
+                <div className="space-y-2">
+                  {DEMO_ACCOUNTS.map((account) => (
+                    <label
+                      key={account.role}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors",
+                        selectedRole === account.role
+                          ? "border-primary bg-primary/5"
+                          : "hover:bg-muted/50",
+                        loading && "pointer-events-none opacity-60"
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="demo-role"
+                        value={account.role}
+                        checked={selectedRole === account.role}
+                        onChange={() => handleDemoLogin(account.role)}
+                        className="h-4 w-4 accent-primary"
+                        disabled={loading}
+                      />
+                      <span className="flex-1 text-sm">
+                        <span className="font-medium">{account.label}</span>
+                        <span className="ml-2 text-muted-foreground">{account.email}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">勾选角色后将自动登录（仅开发环境显示）</p>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

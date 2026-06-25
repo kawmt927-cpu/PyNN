@@ -1,7 +1,17 @@
 import { endOfWeek, startOfWeek } from "date-fns";
 import type { UserRole } from "@prisma/client";
+import { listPaymentDueItems } from "@/lib/contracts/payment-due";
+import { formatAmount } from "@/lib/opportunities/funnel";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
-import { listPendingWeeklyAssignmentsForUser } from "@/lib/today-work/weekly-assignments";
+import {
+  listPendingWeeklyAssignmentsForManager,
+  listPendingWeeklyAssignmentsForUser,
+} from "@/lib/today-work/weekly-assignments";
+
+export type UpcomingActionOwner = {
+  id: string;
+  name: string;
+};
 
 export type UpcomingActionItem =
   | {
@@ -16,6 +26,7 @@ export type UpcomingActionItem =
       customerGrade: string | null;
       opportunityId: string | null;
       opportunityTitle: string | null;
+      owner: UpcomingActionOwner;
       overdue: boolean;
     }
   | {
@@ -28,6 +39,21 @@ export type UpcomingActionItem =
       customerName: string | null;
       opportunityId: string | null;
       opportunityTitle: string | null;
+      owner: UpcomingActionOwner;
+      overdue: boolean;
+    }
+  | {
+      kind: "payment_collection";
+      id: string;
+      contractId: string;
+      title: string;
+      subtitle: string;
+      dueAt: Date;
+      customerId: string;
+      customerName: string;
+      periodNumber: number;
+      remainingAmount: number;
+      owner: UpcomingActionOwner;
       overdue: boolean;
     };
 
@@ -48,6 +74,10 @@ function isDueThisWeek(dueAt: Date, weekStart: Date, weekEnd: Date) {
   return dueAt >= weekStart && dueAt <= weekEnd;
 }
 
+function isManagerRole(role: UserRole) {
+  return role === "SALES_MANAGER" || role === "ADMIN";
+}
+
 export async function listUpcomingActionsThisWeek(
   role: UserRole,
   userId: string,
@@ -55,11 +85,17 @@ export async function listUpcomingActionsThisWeek(
 ): Promise<{ items: UpcomingActionItem[]; week: CalendarWeekRange }> {
   const now = new Date();
   const week = getCalendarWeekRange(now);
+  const managerView = isManagerRole(role);
 
-  const [dueFollowUps, upcomingFollowUps, assignments] = await Promise.all([
+  const [dueFollowUps, upcomingFollowUps, assignments, paymentDueItems] = await Promise.all([
     getPendingFollowUps(role, userId, "due", now, take),
     getPendingFollowUps(role, userId, "upcoming", now, take * 2),
-    listPendingWeeklyAssignmentsForUser(userId, take * 2),
+    managerView
+      ? listPendingWeeklyAssignmentsForManager(take * 2)
+      : listPendingWeeklyAssignmentsForUser(userId, take * 2),
+    managerView
+      ? listPaymentDueItems({ now, week, take: take * 2 })
+      : listPaymentDueItems({ ownerId: userId, now, week, take: take * 2 }),
   ]);
 
   const followUpsThisWeek = [...dueFollowUps, ...upcomingFollowUps].filter(
@@ -75,16 +111,17 @@ export async function listUpcomingActionsThisWeek(
         kind: "follow_up" as const,
         id: item.id,
         source: item.source as "customer" | "opportunity",
-      title: item.customer.name,
-      subtitle: item.content,
-      dueAt: item.nextFollowUpAt,
-      customerId: item.customer.id,
-      customerName: item.customer.name,
-      customerGrade: item.customer.customerGrade,
-      opportunityId: item.opportunity?.id ?? null,
-      opportunityTitle: item.opportunity?.title ?? null,
-      overdue: item.nextFollowUpAt <= now,
-    })),
+        title: item.customer.name,
+        subtitle: item.content,
+        dueAt: item.nextFollowUpAt,
+        customerId: item.customer.id,
+        customerName: item.customer.name,
+        customerGrade: item.customer.customerGrade,
+        opportunityId: item.opportunity?.id ?? null,
+        opportunityTitle: item.opportunity?.title ?? null,
+        owner: item.owner,
+        overdue: item.nextFollowUpAt <= now,
+      })),
     ...assignments
       .filter((task) => isDueThisWeek(task.dueAt, week.weekStart, week.weekEnd))
       .map((task) => ({
@@ -97,8 +134,23 @@ export async function listUpcomingActionsThisWeek(
         customerName: task.customer?.name ?? null,
         opportunityId: task.opportunity?.id ?? null,
         opportunityTitle: task.opportunity?.title ?? null,
+        owner: { id: task.assignee.id, name: task.assignee.name },
         overdue: task.dueAt <= now,
       })),
+    ...paymentDueItems.map((row) => ({
+      kind: "payment_collection" as const,
+      id: row.installmentId,
+      contractId: row.contractId,
+      title: row.contractTitle,
+      subtitle: `第 ${row.periodNumber} 期 · 待收 ${formatAmount(row.remainingAmount)} · ${row.customerName}`,
+      dueAt: row.dueAt,
+      customerId: row.customerId,
+      customerName: row.customerName,
+      periodNumber: row.periodNumber,
+      remainingAmount: row.remainingAmount,
+      owner: { id: row.ownerId, name: row.ownerName },
+      overdue: row.overdue,
+    })),
   ];
 
   return {

@@ -17,6 +17,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
+import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
+import {
+  customerGradeFormValue,
+  customerGradeSubmitValue,
+} from "@/lib/customers/grade";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import type { ConfigOptionItem } from "@/lib/config-options";
 
@@ -26,9 +32,11 @@ type Props = {
   checkInId: string;
   customerId: string;
   customerName: string;
+  currentCustomerGrade?: string | null;
   defaultContactId?: string;
   defaultLocation?: string;
   stageOptions: ConfigOptionItem[];
+  gradeOptions: ConfigOptionItem[];
 };
 
 export function CheckInCompleteDialog({
@@ -37,9 +45,11 @@ export function CheckInCompleteDialog({
   checkInId,
   customerId,
   customerName,
+  currentCustomerGrade,
   defaultContactId = "",
   defaultLocation = "",
   stageOptions,
+  gradeOptions,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -64,16 +74,28 @@ export function CheckInCompleteDialog({
     setMethod("FACE_VISIT");
     setContent("");
     setResult("");
-    setSuggestedGrade("");
+    setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
     setDetailedNotes("");
     setError(null);
-  }, [open, checkInId, defaultContactId]);
+  }, [open, checkInId, defaultContactId, currentCustomerGrade]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    const planError = validateNextFollowUpPlan(
+      suggestedGrade,
+      nextFollowUpAt,
+      nextFollowUpMethod,
+      currentCustomerGrade
+    );
+    if (planError) {
+      setError(planError);
+      return;
+    }
+
     startTransition(async () => {
       try {
         const res = await fetch(`/api/sales-log/check-ins/${encodeURIComponent(checkInId)}`, {
@@ -85,7 +107,7 @@ export function CheckInCompleteDialog({
             method,
             content: content.trim(),
             result: result.trim() || null,
-            suggestedGrade: suggestedGrade || null,
+            suggestedGrade: customerGradeSubmitValue(suggestedGrade, currentCustomerGrade),
             opportunityId: opportunityId || null,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
@@ -169,6 +191,7 @@ export function CheckInCompleteDialog({
               label="客户等级（可选，选择后将更新客户等级）"
               value={suggestedGrade}
               onValueChange={setSuggestedGrade}
+              options={gradeOptions}
             />
 
             <div className="space-y-2 md:col-span-2">
@@ -188,35 +211,18 @@ export function CheckInCompleteDialog({
               <Input id="completeResult" value={result} onChange={(e) => setResult(e.target.value)} />
             </div>
 
-            <div className="space-y-4 rounded-md border bg-muted/20 p-4 md:col-span-2">
+            <div className="space-y-3 rounded-md border bg-muted/20 p-4 md:col-span-2">
               <p className="text-sm font-medium">下次往来计划</p>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="completeNextMethod">计划方式</Label>
-                  <select
-                    id="completeNextMethod"
-                    value={nextFollowUpMethod}
-                    onChange={(e) => setNextFollowUpMethod(e.target.value as SalesLogMethod | "")}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">请选择</option>
-                    {SALES_LOG_METHOD_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="completeNextAt">计划时间</Label>
-                  <Input
-                    id="completeNextAt"
-                    type="datetime-local"
-                    value={nextFollowUpAt}
-                    onChange={(e) => setNextFollowUpAt(e.target.value)}
-                  />
-                </div>
-              </div>
+              <NextFollowUpPlanFields
+                methodId="completeNextMethod"
+                methodValue={nextFollowUpMethod}
+                onMethodChange={setNextFollowUpMethod}
+                dateId="completeNextAt"
+                dateValue={nextFollowUpAt}
+                onDateChange={setNextFollowUpAt}
+                suggestedGrade={suggestedGrade}
+                currentCustomerGrade={currentCustomerGrade}
+              />
             </div>
 
             {method === "FACE_VISIT" && (

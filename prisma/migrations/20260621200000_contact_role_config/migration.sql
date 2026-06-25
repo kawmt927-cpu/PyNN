@@ -1,0 +1,2 @@
+-- SQLite: Contact.role is already TEXT; schema change is enum removal in Prisma only.
+-- Seed contact_role config options via ensureDefaultConfigOptions on first access.

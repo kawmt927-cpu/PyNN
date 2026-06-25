@@ -287,9 +287,7 @@ export async function getMonthlyKpiBundle(
   return {
     year,
     month,
-    targets: targetRow
-      ? toMonthlyKpiTargets(targetRow)
-      : null,
+    targets: targetRow ? toMonthlyKpiTargets(targetRow) : null,
     actuals: {
       channelDev,
       projectDev,
@@ -310,10 +308,7 @@ export function formatKpiCount(value: number): string {
 }
 
 export function formatKpiAmount(value: number): string {
-  if (Math.abs(value) >= 10_000) {
-    return `${(value / 10_000).toFixed(value >= 100_000 ? 0 : 1)} 万`;
-  }
-  return value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 }
 
 /**

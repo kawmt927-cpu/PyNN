@@ -8,6 +8,7 @@ export type SettingsScope = "sales" | "project" | "system";
 export const SETTINGS_TAB = {
   FIELDS: "fields",
   PRODUCTS: "products",
+  KPI: "kpi",
   WECOM: "wecom",
   AI: "ai",
   AMAP: "amap",
@@ -33,6 +34,9 @@ export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
     return role === "ADMIN";
   }
   if (tab === SETTINGS_TAB.PRODUCTS) {
+    return role === "ADMIN" || role === "SALES_MANAGER";
+  }
+  if (tab === SETTINGS_TAB.KPI) {
     return role === "ADMIN" || role === "SALES_MANAGER";
   }
   if (tab === SETTINGS_TAB.FIELDS) {
@@ -72,6 +76,7 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
   }
   if (role === "ADMIN" || role === "SALES_MANAGER") {
     tabs.push({ id: SETTINGS_TAB.PRODUCTS, label: "产品服务" });
+    tabs.push({ id: SETTINGS_TAB.KPI, label: "KPI 设置" });
   }
   if (role === "ADMIN") {
     tabs.push({ id: SETTINGS_TAB.WECOM, label: "企业微信" });
@@ -117,6 +122,14 @@ export async function requireAiAgentSettingsAccess() {
   const session = await requireSession();
   if (session.user.role !== "ADMIN") {
     throw new Error("无权修改 AI 助手配置");
+  }
+  return session;
+}
+
+export async function requireKpiSettingsAccess() {
+  const session = await requireSession();
+  if (session.user.role !== "ADMIN" && session.user.role !== "SALES_MANAGER") {
+    throw new Error("无权修改 KPI 设置");
   }
   return session;
 }

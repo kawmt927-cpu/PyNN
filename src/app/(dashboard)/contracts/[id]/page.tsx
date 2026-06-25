@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getContractForUser } from "@/lib/opportunities/access";
 import {
   canManageContractApproval,
+  canEditContract,
   canRecordContractPayment,
   isSignedContractStatus,
 } from "@/lib/contracts/access";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { BackLink } from "@/components/navigation/back-link";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallmentProgressChart } from "@/components/contracts/installment-progress-chart";
 import { ContractPaymentPanel } from "@/components/contracts/contract-payment-panel";
@@ -87,6 +89,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
   const showResubmit = contract.status === "REJECTED" && query.edit === "1";
   const canApprove =
     canManageContractApproval(session.user.role) && contract.status === "PENDING_APPROVAL";
+  const canEdit = canEditContract(session.user.role);
 
   const [salesUsers, paymentMethods] = await Promise.all([
     prisma.user.findMany({
@@ -160,7 +163,14 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             <p className="text-sm text-muted-foreground">编号：{contract.contractNo}</p>
           )}
         </div>
-        <BackLink href={backHref} label={backLabel} />
+        <div className="flex flex-wrap items-center gap-2">
+          {canEdit && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={withReturnTo(`/contracts/${id}/edit`, selfPath)}>编辑合同</Link>
+            </Button>
+          )}
+          <BackLink href={backHref} label={backLabel} />
+        </div>
       </div>
 
       {contract.status === "REJECTED" && contract.rejectReason && (

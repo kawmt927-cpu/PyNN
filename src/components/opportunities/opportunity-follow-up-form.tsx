@@ -12,6 +12,8 @@ import {
   createOpportunityFollowUp,
   updateOpportunityFollowUp,
 } from "@/app/(dashboard)/opportunities/actions";
+import { PlannedFollowUpDateField } from "@/components/sales-log/planned-follow-up-date-field";
+import { toPlannedFollowUpInputValue } from "@/lib/dates/local-date";
 import { toExpectedCloseMonthInput } from "@/lib/opportunities/expected-close-date";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { FollowUpMethod } from "@prisma/client";
@@ -73,7 +75,7 @@ function buildFormState(
     content: initialFollowUp?.content ?? "",
     followUpAt: initialFollowUp ? toDatetimeLocal(initialFollowUp.followUpAt) : todayLocalDatetime(),
     nextFollowUpAt: initialFollowUp?.nextFollowUpAt
-      ? toDatetimeLocal(initialFollowUp.nextFollowUpAt)
+      ? toPlannedFollowUpInputValue(initialFollowUp.nextFollowUpAt)
       : "",
     expectedAmount: String(opportunity.expectedAmount),
     expectedCloseDate: toExpectedCloseMonthInput(opportunity.expectedCloseDate),
@@ -184,15 +186,12 @@ export function OpportunityFollowUpForm({
               required
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor={`nextFollowUpAt-${mode}`}>下次跟进</Label>
-            <Input
-              id={`nextFollowUpAt-${mode}`}
-              type="datetime-local"
-              value={form.nextFollowUpAt}
-              onChange={(e) => patchForm({ nextFollowUpAt: e.target.value })}
-            />
-          </div>
+          <PlannedFollowUpDateField
+            id={`nextFollowUpAt-${mode}`}
+            label="下次跟进"
+            value={form.nextFollowUpAt}
+            onChange={(nextFollowUpAt) => patchForm({ nextFollowUpAt })}
+          />
         </div>
       </div>
 

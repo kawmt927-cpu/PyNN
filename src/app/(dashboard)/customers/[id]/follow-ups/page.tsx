@@ -48,6 +48,7 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   ]);
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
+  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const selfPath = selfReturnPath(`/customers/${id}/follow-ups`, query);
   const detailHref = selfReturnPath(`/customers/${id}`, query);
@@ -63,7 +64,12 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
             {customer.customerGrade ? (
               <>
                 {" · "}
-                <CustomerGradeIcon grade={customer.customerGrade} showLabel className="inline-flex" />
+                <CustomerGradeIcon
+                  grade={customer.customerGrade}
+                  showLabel
+                  labelMap={gradeLabels}
+                  className="inline-flex"
+                />
               </>
             ) : null}
           </p>
@@ -85,7 +91,9 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
             <FollowUpForm
               customerId={customer.id}
               customerName={customer.name}
+              currentCustomerGrade={customer.customerGrade}
               stageOptions={formOptions.stageOptions}
+              gradeOptions={formOptions.gradeOptions}
             />
           </CardContent>
         </Card>

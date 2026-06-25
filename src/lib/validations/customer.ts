@@ -24,6 +24,8 @@ export const customerFormSchema = z.object({
 
 export type CustomerFormInput = z.infer<typeof customerFormSchema>;
 
+export { contactFormSchema, quickContactSchema } from "@/lib/validations/contact";
+
 export const followUpFormSchema = z.object({
   customerId: z.string().min(1),
   method: z.enum(SALES_LOG_METHODS),
@@ -37,23 +39,12 @@ export const followUpFormSchema = z.object({
     .nullable()
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
   suggestedGrade: z.string().optional().nullable(),
-  contactId: z.string().min(1, "请选择联系人"),
+  contactIds: z.array(z.string().min(1)).min(1, "请选择联系人"),
   opportunityId: z.string().optional().nullable(),
   location: z.string().optional(),
   department: z.string().optional(),
   companions: z.string().optional(),
   detailedNotes: z.string().optional(),
-});
-
-export const contactFormSchema = z.object({
-  customerId: z.string().min(1),
-  name: z.string().min(1, "请输入联系人姓名"),
-  title: z.string().optional(),
-  department: z.string().optional(),
-  phone: z.string().optional(),
-  email: z.string().optional(),
-  role: z.enum(["DECISION_MAKER", "TECHNICAL", "OTHER"]),
-  isPrimary: z.enum(["true", "false"]).optional(),
 });
 
 export const customerRelationSchema = z.object({
@@ -85,7 +76,7 @@ export const saveCustomerGradeOptionsSchema = z.object({
   items: z.array(
     z.object({
       id: z.string().nullable(),
-      label: z.string().min(1, "显示名称不能为空"),
+      label: z.string().min(1, "文字描述不能为空"),
       enabled: z.boolean(),
       followUpIntervalDays: z.coerce.number().int().min(1, "往来间隔至少 1 天"),
     })

@@ -8,8 +8,7 @@ import {
   salesAnnualTargetFormSchema,
   salesMonthlyTargetFormSchema,
 } from "@/lib/validations/sales-target";
-import { kpiConfigFormSchema, monthlyKpiTargetFormSchema } from "@/lib/validations/monthly-kpi";
-import { saveProjectDevMinStage } from "@/lib/plans-tasks/kpi-config";
+import { monthlyKpiTargetFormSchema } from "@/lib/validations/monthly-kpi";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 
 function revalidatePlansTasks() {
@@ -18,36 +17,41 @@ function revalidatePlansTasks() {
   revalidatePath("/weekly-tasks");
 }
 
-export async function saveAnnualTarget(formData: FormData) {
+export async function saveAnnualTarget(
+  formData: FormData
+): Promise<{ ok: true } | { ok: false; error: string }> {
   await requireRole(["SALES_MANAGER", "ADMIN"]);
-  const parsed = salesAnnualTargetFormSchema.parse({
+  const parsed = salesAnnualTargetFormSchema.safeParse({
     userId: formData.get("userId"),
     year: formData.get("year"),
     salesTarget: formData.get("salesTarget"),
-    costTarget: formData.get("costTarget"),
     profitTarget: formData.get("profitTarget"),
     paymentTarget: formData.get("paymentTarget"),
   });
 
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "数据无效" };
+  }
+
   await prisma.salesTarget.upsert({
-    where: { userId_year: { userId: parsed.userId, year: parsed.year } },
+    where: { userId_year: { userId: parsed.data.userId, year: parsed.data.year } },
     create: {
-      userId: parsed.userId,
-      year: parsed.year,
-      salesTarget: parsed.salesTarget,
-      costTarget: parsed.costTarget,
-      profitTarget: parsed.profitTarget,
-      paymentTarget: parsed.paymentTarget,
+      userId: parsed.data.userId,
+      year: parsed.data.year,
+      salesTarget: parsed.data.salesTarget,
+      costTarget: 0,
+      profitTarget: parsed.data.profitTarget,
+      paymentTarget: parsed.data.paymentTarget,
     },
     update: {
-      salesTarget: parsed.salesTarget,
-      costTarget: parsed.costTarget,
-      profitTarget: parsed.profitTarget,
-      paymentTarget: parsed.paymentTarget,
+      salesTarget: parsed.data.salesTarget,
+      profitTarget: parsed.data.profitTarget,
+      paymentTarget: parsed.data.paymentTarget,
     },
   });
 
   revalidatePlansTasks();
+  return { ok: true };
 }
 
 export async function saveMonthlyTarget(formData: FormData) {
@@ -90,9 +94,11 @@ export async function saveMonthlyTarget(formData: FormData) {
   revalidatePlansTasks();
 }
 
-export async function saveMonthlyKpiTargets(formData: FormData) {
+export async function saveMonthlyKpiTargets(
+  formData: FormData
+): Promise<{ ok: true } | { ok: false; error: string }> {
   await requireRole(["SALES_MANAGER", "ADMIN"]);
-  const parsed = monthlyKpiTargetFormSchema.parse({
+  const parsed = monthlyKpiTargetFormSchema.safeParse({
     userId: formData.get("userId"),
     year: formData.get("year"),
     month: formData.get("month"),
@@ -102,22 +108,26 @@ export async function saveMonthlyKpiTargets(formData: FormData) {
     maintenanceTarget: formData.get("maintenanceTarget") || null,
   });
 
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "数据无效" };
+  }
+
+  const kpiData = {
+    channelDevTarget: parsed.data.channelDevTarget ?? null,
+    projectDevTarget: parsed.data.projectDevTarget ?? null,
+    paymentCollectionTarget: parsed.data.paymentCollectionTarget ?? null,
+    maintenanceTarget: parsed.data.maintenanceTarget ?? null,
+  };
+
   const existing = await prisma.salesMonthlyTarget.findUnique({
     where: {
       userId_year_month: {
-        userId: parsed.userId,
-        year: parsed.year,
-        month: parsed.month,
+        userId: parsed.data.userId,
+        year: parsed.data.year,
+        month: parsed.data.month,
       },
     },
   });
-
-  const kpiData = {
-    channelDevTarget: parsed.channelDevTarget ?? null,
-    projectDevTarget: parsed.projectDevTarget ?? null,
-    paymentCollectionTarget: parsed.paymentCollectionTarget ?? null,
-    maintenanceTarget: parsed.maintenanceTarget ?? null,
-  };
 
   if (existing) {
     await prisma.salesMonthlyTarget.update({
@@ -127,9 +137,9 @@ export async function saveMonthlyKpiTargets(formData: FormData) {
   } else {
     await prisma.salesMonthlyTarget.create({
       data: {
-        userId: parsed.userId,
-        year: parsed.year,
-        month: parsed.month,
+        userId: parsed.data.userId,
+        year: parsed.data.year,
+        month: parsed.data.month,
         salesTarget: 0,
         costTarget: 0,
         profitTarget: 0,
@@ -140,15 +150,7 @@ export async function saveMonthlyKpiTargets(formData: FormData) {
   }
 
   revalidatePlansTasks();
-}
-
-export async function saveKpiConfig(formData: FormData) {
-  await requireRole(["SALES_MANAGER", "ADMIN"]);
-  const parsed = kpiConfigFormSchema.parse({
-    projectDevMinStageValue: formData.get("projectDevMinStageValue")?.toString() || null,
-  });
-  await saveProjectDevMinStage(parsed.projectDevMinStageValue || null);
-  revalidatePlansTasks();
+  return { ok: true };
 }
 
 export async function createWeeklyAssignment(formData: FormData) {

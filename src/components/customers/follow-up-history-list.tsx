@@ -25,7 +25,7 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
         <li key={`${f.source}-${f.id}`} className="rounded-md border p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">
-              {f.contact ? `${f.contact.name} · ` : ""}
+              {f.contacts.length > 0 ? `${f.contacts.map((c) => c.name).join("、")} · ` : ""}
               {FOLLOW_UP_METHOD_LABELS[f.method]} · {f.user.name}
               {f.opportunity && (
                 <>

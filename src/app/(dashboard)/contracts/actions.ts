@@ -8,9 +8,11 @@ import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import {
   canManageContractApproval,
+  canEditContract,
   canRecordContractPayment,
   isSignedContractStatus,
 } from "@/lib/contracts/access";
+import { sumPaymentRecords } from "@/lib/contracts/payment-waterfall";
 import { finalizeSignedContract } from "@/lib/contracts/finalize";
 import {
   contractFormSchema,
@@ -213,6 +215,115 @@ export async function resubmitContract(contractId: string, formData: FormData): 
 
     const parsed = parseContractForm(formData);
     return await createContractCore(session, parsed, contractId);
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function updateContract(contractId: string, formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    if (!canEditContract(session.user.role)) {
+      return { error: "无权编辑合同" };
+    }
+
+    const existing = await prisma.contract.findUnique({
+      where: { id: contractId },
+      include: {
+        paymentRecords: { select: { amount: true } },
+        project: { select: { id: true } },
+      },
+    });
+    if (!existing) return { error: "合同不存在" };
+
+    const parsed = parseContractForm(formData);
+    await validateSignContact(parsed.signCustomerId, parsed.signContactId);
+
+    if (parsed.opportunityId) {
+      const opportunity = await getOpportunityForUser(
+        parsed.opportunityId,
+        session.user.role,
+        session.user.id
+      );
+      if (!opportunity) return { error: "关联商机不存在或无权访问" };
+    }
+
+    const ownerId =
+      canManageOpportunityOwner(session.user.role) && parsed.ownerId
+        ? parsed.ownerId
+        : existing.ownerId;
+
+    const signedAt = new Date(parsed.signedAt);
+    if (isSignedContractStatus(existing.status)) {
+      const totalPaid = sumPaymentRecords(existing.paymentRecords);
+      if (parsed.totalAmount + 0.01 < totalPaid) {
+        return { error: `合同金额不能低于已回款 ${totalPaid.toFixed(2)} 元` };
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.contract.update({
+        where: { id: contractId },
+        data: {
+          title: parsed.title.trim(),
+          totalAmount: parsed.totalAmount,
+          signingType: parsed.signingType,
+          signCustomerId: parsed.signCustomerId,
+          endUserCustomerId: parsed.endUserCustomerId,
+          signContactId: parsed.signContactId,
+          ourRepresentativeId: parsed.ourRepresentativeId,
+          paymentMethod: parsed.paymentMethod?.trim() || null,
+          ownerId,
+          opportunityId: parsed.opportunityId ?? null,
+          signedAt,
+          effectiveAt: parsed.effectiveAt ? new Date(parsed.effectiveAt) : null,
+          expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : null,
+          notes: parsed.notes?.trim() || null,
+        },
+      });
+
+      await tx.contractProduct.deleteMany({ where: { contractId } });
+      await tx.paymentInstallment.deleteMany({ where: { contractId } });
+
+      await tx.contractProduct.createMany({
+        data: parsed.products.map((row) => ({
+          contractId,
+          productServiceId: row.productServiceId || undefined,
+          productName: row.productName.trim(),
+          costAmount: row.costAmount,
+          actualCostPrice: row.costAmount,
+          baselineCostPrice: row.costAmount,
+          salesAmount: 0,
+        })),
+      });
+
+      await tx.paymentInstallment.createMany({
+        data: parsed.installments.map((row) => ({
+          contractId,
+          periodNumber: row.periodNumber,
+          amount: row.amount,
+          condition: row.condition?.trim() || undefined,
+          dueAt: row.dueAt ? new Date(row.dueAt) : undefined,
+        })),
+      });
+
+      if (existing.project) {
+        await tx.project.update({
+          where: { id: existing.project.id },
+          data: {
+            name: parsed.title.trim(),
+            customerId: parsed.endUserCustomerId,
+          },
+        });
+      }
+    });
+
+    revalidatePath("/contracts");
+    revalidatePath(`/contracts/${contractId}`);
+    revalidatePath("/plans-tasks");
+    revalidatePath("/today-work");
+
+    return { redirectTo: `/contracts/${contractId}` };
   } catch (error) {
     return formatActionError(error);
   }

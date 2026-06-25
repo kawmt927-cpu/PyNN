@@ -2,18 +2,34 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { labelForConfig } from "@/lib/config-options";
 import { CONTACT_ROLE_LABELS } from "@/lib/permissions";
 import { ContactForm } from "./contact-form";
 import { deleteContact } from "@/app/(dashboard)/customers/actions";
+import type { ConfigOptionItem } from "@/lib/config-options";
 import type { Contact } from "@prisma/client";
 
 type Props = {
   customerId: string;
   contacts: Contact[];
   readOnly?: boolean;
+  titleOptions: ConfigOptionItem[];
+  departmentOptions: ConfigOptionItem[];
+  roleOptions: ConfigOptionItem[];
 };
 
-export function ContactList({ customerId, contacts, readOnly }: Props) {
+export function ContactList({
+  customerId,
+  contacts,
+  readOnly,
+  titleOptions,
+  departmentOptions,
+  roleOptions,
+}: Props) {
+  const roleLabelMap = Object.fromEntries(roleOptions.map((opt) => [opt.value, opt.label]));
+  for (const [value, label] of Object.entries(CONTACT_ROLE_LABELS)) {
+    if (!roleLabelMap[value]) roleLabelMap[value] = label;
+  }
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
@@ -29,6 +45,9 @@ export function ContactList({ customerId, contacts, readOnly }: Props) {
                   customerId={customerId}
                   contact={c}
                   onCancel={() => setEditingId(null)}
+                  titleOptions={titleOptions}
+                  departmentOptions={departmentOptions}
+                  roleOptions={roleOptions}
                 />
               </li>
             ) : (
@@ -42,11 +61,13 @@ export function ContactList({ customerId, contacts, readOnly }: Props) {
                       )}
                     </p>
                     <p className="text-muted-foreground">
-                      {CONTACT_ROLE_LABELS[c.role]}
+                      {labelForConfig(roleLabelMap, c.role)}
                       {[c.title, c.department].filter(Boolean).length > 0 &&
                         ` · ${[c.title, c.department].filter(Boolean).join(" · ")}`}
                     </p>
-                    <p>{[c.phone, c.email].filter(Boolean).join(" · ") || "—"}</p>
+                    <p>
+                      {[c.phone, c.wechat].filter(Boolean).join(" · ") || "—"}
+                    </p>
                   </div>
                   <div className="flex shrink-0 gap-1">
                     {!readOnly && (
@@ -76,7 +97,14 @@ export function ContactList({ customerId, contacts, readOnly }: Props) {
         </ul>
       )}
 
-      {!readOnly && !editingId && <ContactForm customerId={customerId} />}
+      {!readOnly && !editingId && (
+        <ContactForm
+          customerId={customerId}
+          titleOptions={titleOptions}
+          departmentOptions={departmentOptions}
+          roleOptions={roleOptions}
+        />
+      )}
     </div>
   );
 }
