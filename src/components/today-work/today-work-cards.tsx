@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronRight, ClipboardList, MapPinned } from "lucide-react";
 import {
   Dialog,
@@ -9,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CheckInDialogProvider } from "@/components/today-work/check-in-dialog-context";
 import { cn } from "@/lib/utils";
 import type { SalesDailyLogStatus } from "@prisma/client";
 
@@ -78,8 +80,6 @@ type Props = {
   todayFollowUpCount: number;
   dailyLogStatus: SalesDailyLogStatus | null;
   checkInContent: ReactNode;
-  dailyReportContent: ReactNode;
-  dailyReportActions?: ReactNode;
 };
 
 export function TodayWorkCards({
@@ -88,11 +88,9 @@ export function TodayWorkCards({
   todayFollowUpCount,
   dailyLogStatus,
   checkInContent,
-  dailyReportContent,
-  dailyReportActions,
 }: Props) {
+  const router = useRouter();
   const [checkInOpen, setCheckInOpen] = useState(false);
-  const [dailyReportOpen, setDailyReportOpen] = useState(false);
   const logLabel = dailyLogStatus ? dailyLogStatusLabel[dailyLogStatus] : "未开始";
 
   return (
@@ -126,10 +124,10 @@ export function TodayWorkCards({
 
           <TodayWorkActionCard
             title="今日日报"
-            hint="点击进入 · 录入往来与提交日报"
+            hint="点击进入 · 与 AI 助理整理并提交日报"
             accentClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
             icon={<ClipboardList className="h-6 w-6" aria-hidden />}
-            onClick={() => setDailyReportOpen(true)}
+            onClick={() => router.push("/mobile/log")}
           >
             <p
               className={cn(
@@ -149,29 +147,22 @@ export function TodayWorkCards({
       </div>
 
       <Dialog open={checkInOpen} onOpenChange={setCheckInOpen}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>往来打卡</DialogTitle>
-            <DialogDescription>
-              无客户打卡仅记录定位；往来打卡可仅打卡后由 AI 补全，也可当场录入往来。
-            </DialogDescription>
-          </DialogHeader>
-          {checkInContent}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={dailyReportOpen} onOpenChange={setDailyReportOpen}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <DialogHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
-            <div className="space-y-1.5">
-              <DialogTitle>今日日报</DialogTitle>
+        <DialogContent
+          className="max-w-4xl"
+          showCloseButton
+          scrollable
+          closeOnOutsideClick={false}
+          closeOnEscape={false}
+        >
+          <CheckInDialogProvider onClose={() => setCheckInOpen(false)}>
+            <DialogHeader>
+              <DialogTitle>往来打卡</DialogTitle>
               <DialogDescription>
-                汇总今日往来，收工后通过 AI 助理整理并提交日报。
+                无客户打卡仅记录定位；往来打卡可仅打卡后由 AI 补全，也可当场录入往来。
               </DialogDescription>
-            </div>
-            {dailyReportActions}
-          </DialogHeader>
-          {dailyReportContent}
+            </DialogHeader>
+            {checkInContent}
+          </CheckInDialogProvider>
         </DialogContent>
       </Dialog>
     </>

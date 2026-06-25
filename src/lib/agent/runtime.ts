@@ -11,9 +11,14 @@ export async function isAiAgentAvailable() {
   return config.enabled && Boolean(config.apiKey);
 }
 
+export type SalesLogAgentOptions = {
+  todayWorkContext?: string;
+};
+
 export async function createSalesLogAgentStream(
   messages: Parameters<typeof streamText>[0]["messages"],
-  session: AgentSession
+  session: AgentSession,
+  options: SalesLogAgentOptions = {}
 ) {
   const config = await getEffectiveAiAgentConfig();
 
@@ -22,6 +27,11 @@ export async function createSalesLogAgentStream(
   }
   if (!config.apiKey) {
     throw new Error("未配置 Kimi API Key，请在系统配置 → AI 助手中设置");
+  }
+
+  const systemParts = [config.salesLogSystemPrompt];
+  if (options.todayWorkContext?.trim()) {
+    systemParts.push(options.todayWorkContext.trim());
   }
 
   const provider = createOpenAI({
@@ -38,7 +48,7 @@ export async function createSalesLogAgentStream(
 
   return streamText({
     model: provider(config.model),
-    system: config.salesLogSystemPrompt,
+    system: systemParts.join("\n\n"),
     messages,
     tools,
     maxSteps: Math.max(config.maxSteps, 10),

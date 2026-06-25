@@ -5,15 +5,11 @@ import { listTodayCheckIns, checkInRequiresFollowUp } from "@/lib/sales-log/chec
 import { listTodayFollowUps } from "@/lib/sales-log/today-follow-ups";
 import { getTodayDailyLogForUser } from "@/lib/sales-log/daily-log";
 import { TodayWorkCards } from "@/components/today-work/today-work-cards";
-import {
-  CheckInSection,
-  DailyReportSection,
-} from "@/components/today-work/sales-daily-section";
+import { CheckInSection } from "@/components/today-work/sales-daily-section";
 import { TodayUpcomingList } from "@/components/today-work/today-upcoming-list";
 import { PaymentDueTeamPanel } from "@/components/contracts/payment-due-team-panel";
 import { TodayWorkRecordsPanel } from "@/components/today-work/today-work-records";
 import { TeamWorkActivityPanel } from "@/components/today-work/team-work-activity-panel";
-import { AiLogLink } from "@/components/sales-log/daily-work-forms";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 
 type Props = {
@@ -90,21 +86,12 @@ export default async function TodayWorkPage({ searchParams }: Props) {
         checkInCount={checkIns.length}
         todayFollowUpCount={followUps.length}
         dailyLogStatus={dailyLog?.status ?? null}
-        dailyReportActions={<AiLogLink />}
         checkInContent={
           <CheckInSection
             role={session.user.role}
             userId={session.user.id}
             mapKey={mapKey}
             geocodeReady={amapConfigured}
-          />
-        }
-        dailyReportContent={
-          <DailyReportSection
-            role={session.user.role}
-            userId={session.user.id}
-            dailyLogStatus={dailyLog?.status ?? null}
-            pendingCheckIns={pendingCheckIns}
           />
         }
       />

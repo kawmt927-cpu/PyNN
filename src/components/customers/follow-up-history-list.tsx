@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { format } from "date-fns";
+import type { FollowUpMethod } from "@prisma/client";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
+import { formatPendingFollowUpRelativeLabel } from "@/lib/follow-ups/remaining-days";
+import { salesLogMethodLabel } from "@/lib/sales-log/methods";
 import { ChangeSummaryList } from "@/components/opportunities/change-summary-list";
 import type { UnifiedFollowUpHistoryItem } from "@/lib/follow-ups/unified";
 import { withReturnTo } from "@/lib/navigation/return-to";
@@ -9,6 +12,12 @@ type Props = {
   followUps: UnifiedFollowUpHistoryItem[];
   linkReturnTo?: string;
 };
+
+function followUpMethodLabel(method: FollowUpMethod) {
+  const salesLabel = salesLogMethodLabel(method);
+  if (salesLabel !== method) return salesLabel;
+  return FOLLOW_UP_METHOD_LABELS[method];
+}
 
 export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
   const opportunityHref = (opportunityId: string) =>
@@ -21,12 +30,17 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
 
   return (
     <ul className="space-y-4">
-      {followUps.map((f) => (
+      {followUps.map((f) => {
+        const nextRelative = f.nextFollowUpAt
+          ? formatPendingFollowUpRelativeLabel(f.nextFollowUpAt)
+          : null;
+
+        return (
         <li key={`${f.source}-${f.id}`} className="rounded-md border p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">
               {f.contacts.length > 0 ? `${f.contacts.map((c) => c.name).join("、")} · ` : ""}
-              {FOLLOW_UP_METHOD_LABELS[f.method]} · {f.user.name}
+              {followUpMethodLabel(f.method)} · {f.user.name}
               {f.opportunity && (
                 <>
                   {" · "}
@@ -49,17 +63,24 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
           <p className="mt-2">{f.content}</p>
           {f.changeSummary && <ChangeSummaryList summary={f.changeSummary} />}
           {f.result && <p className="mt-1 text-muted-foreground">结果：{f.result}</p>}
-          {f.nextFollowUpAt && (
-            <p className="mt-1 text-orange-600">
-              下次跟进：
-              {f.nextFollowUpMethod
-                ? `${FOLLOW_UP_METHOD_LABELS[f.nextFollowUpMethod as keyof typeof FOLLOW_UP_METHOD_LABELS]} · `
-                : ""}
-              {format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
-            </p>
-          )}
+          {f.nextFollowUpAt && nextRelative ? (
+            <div className="mt-1 text-orange-600">
+              <p>
+                {[
+                  "下次跟进",
+                  nextRelative.label,
+                  ...(f.nextFollowUpMethod ? [followUpMethodLabel(f.nextFollowUpMethod)] : []),
+                  format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm"),
+                ].join(" · ")}
+              </p>
+              {f.nextFollowUpContent ? (
+                <p className="mt-0.5 text-sm text-orange-600/90">{f.nextFollowUpContent}</p>
+              ) : null}
+            </div>
+          ) : null}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }

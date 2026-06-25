@@ -52,20 +52,7 @@ async function main() {
     },
   });
 
-  // 兼容旧文档中的 sales@example.com
-  await prisma.user.upsert({
-    where: { email: "sales@example.com" },
-    update: {},
-    create: {
-      email: "sales@example.com",
-      name: "张销售",
-      passwordHash: await bcrypt.hash("sales123", 10),
-      role: UserRole.SALES,
-      personnelProfile: {
-        create: { staffCategory: StaffCategory.SALES, enabled: true },
-      },
-    },
-  });
+  // 张销售主账号见 sales1@example.com；不再单独创建 sales@ 重复账号
 
   await prisma.user.upsert({
     where: { email: "sales2@example.com" },
@@ -237,7 +224,6 @@ async function main() {
   console.log("  Sales: sales1@example.com / sales123 (张销售)");
   console.log("         sales2@example.com / sales123 (李销售)");
   console.log("         sales3@example.com / sales123 (王销售)");
-  console.log("         sales@example.com  / sales123 (旧账号，可选)");
   console.log("  Demo data: npm run db:seed:demo");
   console.log("  Project Admin: projadmin@example.com / proj123");
   console.log("  Project Manager: pm@example.com / proj123");

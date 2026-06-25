@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
-import { getCustomerForUser } from "@/lib/customers/access";
+import { getCustomerForUser, assertCustomerContentWriteAccess, canEditCustomerContent } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import { quickContactSchema } from "@/lib/validations/sales-log";
 import type { UserRole } from "@prisma/client";
@@ -21,8 +21,10 @@ export async function GET(
   const { id } = await params;
   const customer = await getCustomerForUser(id, session.user.role, session.user.id);
   if (!customer) {
-    return Response.json({ items: [] });
+    return Response.json({ items: [], canWriteContent: false });
   }
+
+  const canWriteContent = canEditCustomerContent(session.user.role, session.user.id, customer);
 
   const contacts = await prisma.contact.findMany({
     where: { customerId: id },
@@ -38,7 +40,7 @@ export async function GET(
     },
   });
 
-  return Response.json({ items: contacts });
+  return Response.json({ items: contacts, canWriteContent });
 }
 
 export async function POST(
@@ -57,6 +59,7 @@ export async function POST(
   }
 
   try {
+    await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
     const body = await req.json();
     const parsed = quickContactSchema.parse(body);
 

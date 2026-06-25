@@ -5,6 +5,7 @@ import { getPrismaClient } from "@/lib/prisma";
 import {
   getCustomerForUser,
   canManageCustomerOwner,
+  canEditCustomerContent,
 } from "@/lib/customers/access";
 import {
   CUSTOMER_CATEGORY_LABELS,
@@ -16,15 +17,18 @@ import {
   loadCustomerFieldLabelMaps,
   loadContactFormOptions,
 } from "@/lib/config-options";
-import { countCustomerFollowUps } from "@/lib/follow-ups/unified";
+import { countCustomerFollowUps, getCustomerFollowUpHistory } from "@/lib/follow-ups/unified";
+import { getCustomerGradeFollowUpSchedule } from "@/lib/customers/grade-expiry";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContactList } from "@/components/customers/contact-list";
+import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
 import { CustomerRelationsPanel } from "@/components/customers/customer-relations-panel";
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
 import { BackLink } from "@/components/navigation/back-link";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { CustomerGradeFollowUpRemaining } from "@/components/customers/customer-grade-follow-up-remaining";
 import { CustomerTagList } from "@/components/customers/customer-tag-badge";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import {
@@ -51,7 +55,9 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount] =
+  const followUpPreviewLimit = 10;
+
+  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, followUps, gradeFollowUpSchedule] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -78,6 +84,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           })
         : Promise.resolve(0),
       countCustomerFollowUps(customer.id),
+      getCustomerFollowUpHistory(customer.id, followUpPreviewLimit),
+      getCustomerGradeFollowUpSchedule({
+        customerId: customer.id,
+        customerGrade: customer.customerGrade,
+        customerCreatedAt: customer.createdAt,
+      }),
     ]);
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
@@ -107,7 +119,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
     .filter(Boolean)
     .join(" ");
 
-  const canEdit = customer.ownerId === session.user.id || canManage;
+  const canEdit = canEditCustomerContent(session.user.role, session.user.id, customer);
 
   const customerTagValues = customer.tags.map((item) => item.tagValue);
 
@@ -131,6 +143,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
                   labelMap={gradeLabels}
                   className="inline-flex"
                 />
+              </>
+            ) : null}
+            {gradeFollowUpSchedule ? (
+              <>
+                {" · "}
+                <CustomerGradeFollowUpRemaining schedule={gradeFollowUpSchedule} compact />
               </>
             ) : null}
           </p>
@@ -161,6 +179,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         customerId={customer.id}
         ownerId={customer.ownerId}
         ownerName={customer.owner?.name ?? null}
+        assistantNames={customer.assistantOwners.map((row) => row.user.name)}
         role={session.user.role}
         salesUsers={salesUsers}
       />
@@ -216,6 +235,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
                 />
               }
             />
+            {gradeFollowUpSchedule ? (
+              <Row
+                label="拜访剩余"
+                value={<CustomerGradeFollowUpRemaining schedule={gradeFollowUpSchedule} />}
+              />
+            ) : null}
             <Row label="客户来源" value={labelForConfig(sourceLabels, customer.source)} />
             <Row label="备注" value={customer.notes ?? "—"} />
           </CardContent>
@@ -262,12 +287,32 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
               ({followUpCount})
             </span>
           </CardTitle>
-          <Button asChild variant="outline" size="sm">
-            <Link href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}>
-              {canEdit ? "前往跟进" : "查看全部"}
-            </Link>
-          </Button>
+          {followUpCount > followUpPreviewLimit || canEdit ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}>
+                {followUpCount > followUpPreviewLimit
+                  ? "查看全部"
+                  : canEdit
+                    ? "前往跟进"
+                    : "查看全部"}
+              </Link>
+            </Button>
+          ) : null}
         </CardHeader>
+        <CardContent>
+          <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
+          {followUpCount > followUps.length ? (
+            <p className="mt-4 text-center text-sm text-muted-foreground">
+              仅展示最近 {followUps.length} 条，
+              <Link
+                href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}
+                className="text-primary hover:underline"
+              >
+                查看全部 {followUpCount} 条
+              </Link>
+            </p>
+          ) : null}
+        </CardContent>
       </Card>
     </div>
   );

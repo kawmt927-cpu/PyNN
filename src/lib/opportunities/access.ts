@@ -1,5 +1,11 @@
 import { OpportunityStatus, UserRole } from "@prisma/client";
+import { hasPendingWeeklyAssignmentForOpportunity } from "@/lib/today-work/weekly-assignments";
 import { prisma } from "@/lib/prisma";
+
+export type OpportunityAccessOptions = {
+  /** 销售被指派该商机的待完成周任务时，允许访问与录入跟进 */
+  allowAssignedWeeklyTask?: boolean;
+};
 
 export function canViewAllOpportunities(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
@@ -95,7 +101,12 @@ export function opportunityListViewLabel(view: OpportunityListView) {
   return OPPORTUNITY_LIST_VIEW_LABELS[view];
 }
 
-export async function getOpportunityForUser(id: string, role: UserRole, userId: string) {
+export async function getOpportunityForUser(
+  id: string,
+  role: UserRole,
+  userId: string,
+  options?: OpportunityAccessOptions
+) {
   const opportunity = await prisma.opportunity.findUnique({
     where: { id },
     include: {
@@ -104,8 +115,26 @@ export async function getOpportunityForUser(id: string, role: UserRole, userId: 
     },
   });
   if (!opportunity) return null;
-  if (!canViewAllOpportunities(role) && opportunity.ownerId !== userId) return null;
+  if (!canViewAllOpportunities(role) && opportunity.ownerId !== userId) {
+    if (
+      options?.allowAssignedWeeklyTask &&
+      (await hasPendingWeeklyAssignmentForOpportunity(userId, id))
+    ) {
+      return opportunity;
+    }
+    return null;
+  }
   return opportunity;
+}
+
+export async function canFollowUpOpportunityForUser(
+  role: UserRole,
+  userId: string,
+  opportunity: { id: string; ownerId: string; status: OpportunityStatus }
+) {
+  if (canFollowUpOpportunity(role, userId, opportunity)) return true;
+  if (role !== "SALES" || opportunity.status !== "NOT_SIGNED") return false;
+  return hasPendingWeeklyAssignmentForOpportunity(userId, opportunity.id);
 }
 
 export function canViewAllContracts(role: UserRole) {

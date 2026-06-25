@@ -26,7 +26,11 @@ export async function POST(req: Request) {
 
     revalidatePath("/customers");
     revalidatePath("/today-work");
-    return Response.json({ id: customer.id, name: customer.name });
+    return Response.json({
+      id: customer.id,
+      name: customer.name,
+      customerGrade: customer.customerGrade,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json(

@@ -16,13 +16,17 @@ export default async function CustomersNewPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const showOwnerSelect = canManageCustomerOwner(session.user.role);
 
-  const salesUsers = showOwnerSelect
-    ? await prisma.user.findMany({
-        where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      })
-    : [];
+  const salesUsers =
+    showOwnerSelect || session.user.role === "SALES"
+      ? await prisma.user.findMany({
+          where: {
+            role: { in: ["SALES", "SALES_MANAGER"] },
+            personnelProfile: { enabled: true },
+          },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        })
+      : [];
 
   const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
 
@@ -36,6 +40,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
         mode="create"
         submitLabel="创建客户"
         showOwnerSelect={showOwnerSelect}
+        showAssistantOwnersSelect={showOwnerSelect || session.user.role === "SALES"}
         salesUsers={salesUsers}
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}

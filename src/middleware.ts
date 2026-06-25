@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
-import { isWeComConfigured } from "@/lib/wecom/config";
+import { isWeComConfigured, isWeComUserAgent } from "@/lib/wecom/config";
 
 const PROTECTED_PREFIXES = [
   "/dashboard",
@@ -15,9 +15,15 @@ const PROTECTED_PREFIXES = [
   "/personnel",
   "/sales-personnel",
   "/sales-costs",
+  "/sales-log",
+  "/daily-reports",
+  "/today-work",
+  "/plans-tasks",
   "/mobile",
   "/admin",
 ];
+
+const WECOM_OAUTH_SKIP_PREFIXES = ["/mobile/wecom/unbound"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -29,21 +35,23 @@ export async function middleware(req: NextRequest) {
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   const ua = req.headers.get("user-agent") ?? "";
-  const inWeCom = /wxwork/i.test(ua);
+  const inWeCom = isWeComUserAgent(ua);
 
-  if (!token && pathname.startsWith("/mobile/wecom/unbound")) {
+  if (!token && WECOM_OAUTH_SKIP_PREFIXES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  if (!token && pathname.startsWith("/mobile") && inWeCom && isWeComConfigured()) {
-    const returnTo = encodeURIComponent(pathname);
+  if (!token && inWeCom && isWeComConfigured()) {
+    const returnTo = encodeURIComponent(`${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(
       new URL(`/api/auth/wecom?returnTo=${returnTo}`, req.url)
     );
   }
 
   if (!token) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("returnTo", `${pathname}${req.nextUrl.search}`);
+    return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
@@ -62,6 +70,14 @@ export const config = {
     "/personnel/:path*",
     "/sales-personnel/:path*",
     "/sales-costs/:path*",
+    "/sales-log",
+    "/sales-log/:path*",
+    "/daily-reports",
+    "/daily-reports/:path*",
+    "/today-work",
+    "/today-work/:path*",
+    "/plans-tasks",
+    "/plans-tasks/:path*",
     "/mobile/:path*",
     "/admin/:path*",
   ],

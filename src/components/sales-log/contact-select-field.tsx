@@ -81,20 +81,24 @@ export function ContactSelectField(props: Props) {
   const multiple = props.multiple === true;
 
   const [contacts, setContacts] = useState<ContactOption[]>([]);
+  const [canWriteContent, setCanWriteContent] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
 
   const loadContacts = useCallback(async () => {
     if (!customerId) {
       setContacts([]);
+      setCanWriteContent(false);
       return;
     }
     try {
       const res = await fetch(`/api/customers/${customerId}/contacts`, { credentials: "include" });
-      const data = (await res.json()) as { items: ContactOption[] };
+      const data = (await res.json()) as { items: ContactOption[]; canWriteContent?: boolean };
       setContacts(data.items ?? []);
+      setCanWriteContent(Boolean(data.canWriteContent));
     } catch {
       setContacts([]);
+      setCanWriteContent(false);
     }
   }, [customerId]);
 
@@ -148,7 +152,9 @@ export function ContactSelectField(props: Props) {
 
   const multipleHint =
     multiple && required
-      ? contacts.length === 0
+      ? !canWriteContent
+        ? "您无权为该客户新增联系人，请从已有联系人中选择或联系销售管理。"
+        : contacts.length === 0
         ? "该客户暂无联系人，请点击「新增联系人」添加。"
         : props.value.length === 0
           ? "请至少选择一位联系人。"
@@ -163,10 +169,16 @@ export function ContactSelectField(props: Props) {
             联系人{required ? " *" : ""}
             {multiple ? <span className="ml-1 font-normal text-muted-foreground">（可多选）</span> : null}
           </Label>
-          <Button type="button" variant="outline" size="sm" onClick={() => openCreateContact()}>
-            新增联系人
-          </Button>
+          {canWriteContent ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => openCreateContact()}>
+              新增联系人
+            </Button>
+          ) : null}
         </div>
+
+        {!canWriteContent ? (
+          <p className="text-xs text-muted-foreground">您无权为该客户新增联系人。</p>
+        ) : null}
 
         {multiple ? (
           contacts.length === 0 ? (
@@ -226,24 +238,26 @@ export function ContactSelectField(props: Props) {
         ) : null}
       </div>
 
-      <QuickContactDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        customerId={customerId}
-        initialName={newContactName || initialName}
-        onCreated={(contact) => {
-          void loadContacts().then(() => {
-            if (multiple) {
-              const current = props.value;
-              if (!current.includes(contact.id)) {
-                props.onChange([...current, contact.id]);
+      {canWriteContent ? (
+        <QuickContactDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          customerId={customerId}
+          initialName={newContactName || initialName}
+          onCreated={(contact) => {
+            void loadContacts().then(() => {
+              if (multiple) {
+                const current = props.value;
+                if (!current.includes(contact.id)) {
+                  props.onChange([...current, contact.id]);
+                }
+              } else {
+                props.onChange(contact.id);
               }
-            } else {
-              props.onChange(contact.id);
-            }
-          });
-        }}
-      />
+            });
+          }}
+        />
+      ) : null}
     </>
   );
 }

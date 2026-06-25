@@ -8,7 +8,6 @@ export const aiAgentConfigSchema = z.object({
   model: z.string().min(1),
   maxSteps: z.number().int().min(1).max(20),
   thinkingEnabled: z.boolean(),
-  salesLogSystemPrompt: z.string().optional(),
   toolSearchCustomers: z.boolean(),
   toolSearchOpportunities: z.boolean(),
   toolGetCustomer: z.boolean(),
@@ -16,3 +15,7 @@ export const aiAgentConfigSchema = z.object({
 });
 
 export type AiAgentConfigInput = z.infer<typeof aiAgentConfigSchema>;
+
+export const salesLogPromptSchema = z.object({
+  salesLogSystemPrompt: z.string().max(50000).optional(),
+});

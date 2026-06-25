@@ -1,6 +1,7 @@
 "use client";
 
 import { format } from "date-fns";
+import { formatPendingFollowUpRelativeLabel } from "@/lib/follow-ups/remaining-days";
 import { cn } from "@/lib/utils";
 import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
 import type { FollowUpMethod } from "@prisma/client";
@@ -27,16 +28,23 @@ type Props = {
 
 export function PendingFollowPlanItem({ item, selected, selectable, multiple, onSelect }: Props) {
   const plannedMethod = item.nextFollowUpMethod ?? item.method;
+  const dueAt = new Date(item.nextFollowUpAt);
+  const relative = formatPendingFollowUpRelativeLabel(dueAt);
 
   const body = (
     <>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium">{format(new Date(item.nextFollowUpAt), "yyyy-MM-dd HH:mm")}</span>
-        {item.isOverdue ? (
-          <span className="rounded bg-orange-100 px-1.5 py-0.5 text-xs text-orange-700">已到期</span>
-        ) : (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">计划中</span>
-        )}
+        <span className="font-medium">{format(dueAt, "yyyy-MM-dd HH:mm")}</span>
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-xs",
+            relative.overdue
+              ? "bg-orange-100 text-orange-700"
+              : "bg-muted text-muted-foreground"
+          )}
+        >
+          {relative.label}
+        </span>
         <span className="text-xs text-muted-foreground">{sourceLabel(item.source)}</span>
         {plannedMethod ? (
           <span className="text-xs text-muted-foreground">· {methodLabel(plannedMethod)}</span>

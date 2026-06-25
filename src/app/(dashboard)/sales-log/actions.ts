@@ -23,6 +23,7 @@ export async function createManualLogAction(formData: FormData) {
       opportunityId: formData.get("opportunityId") || null,
       nextFollowUpAt: formData.get("nextFollowUpAt") || null,
       nextFollowUpMethod: formData.get("nextFollowUpMethod") || null,
+      nextFollowUpContent: formData.get("nextFollowUpContent") || null,
     });
 
     const dailyLog = await ensureTodayDailyLog(session.user.id);
@@ -43,6 +44,7 @@ export async function createManualLogAction(formData: FormData) {
         followUpAt: parsed.followUpAt,
         nextFollowUpAt: parsed.nextFollowUpAt ?? undefined,
         nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
+        nextFollowUpContent: parsed.nextFollowUpContent ?? undefined,
         suggestedGrade: parsed.suggestedGrade,
       }
     );

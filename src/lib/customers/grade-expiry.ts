@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
 import {
+  addDays,
   computeGradeFollowUpDueAt,
   getCustomerGradeIntervalMap,
   resolveGradeIntervalDays,
@@ -17,8 +18,38 @@ export type GradeExpiryPendingItem = {
   overdue: boolean;
 };
 
+export type CustomerGradeFollowUpSchedule = {
+  intervalDays: number;
+  lastInteractionAt: Date;
+  dueAt: Date;
+};
+
+export async function getCustomerGradeFollowUpSchedule(input: {
+  customerId: string;
+  customerGrade: string | null;
+  customerCreatedAt: Date;
+}): Promise<CustomerGradeFollowUpSchedule | null> {
+  const intervalMap = await getCustomerGradeIntervalMap();
+  const intervalDays = resolveGradeIntervalDays(input.customerGrade, intervalMap);
+  if (!intervalDays) return null;
+
+  const lastInteractionMap = await getLastInteractionMap([input.customerId]);
+  const lastInteractionAt =
+    lastInteractionMap.get(input.customerId) ?? input.customerCreatedAt;
+  const dueAt = computeGradeFollowUpDueAt(lastInteractionAt, intervalDays);
+
+  return { intervalDays, lastInteractionAt, dueAt };
+}
+
 function customerOwnerFilter(role: UserRole, userId: string) {
-  return role === "SALES" ? { ownerId: userId } : {};
+  return role === "SALES"
+    ? {
+        OR: [
+          { ownerId: userId },
+          { assistantOwners: { some: { userId } } },
+        ],
+      }
+    : {};
 }
 
 async function getLastInteractionMap(customerIds: string[]): Promise<Map<string, Date>> {
@@ -58,11 +89,10 @@ async function getLastInteractionMap(customerIds: string[]): Promise<Map<string,
   return map;
 }
 
-export async function getGradeExpiryPendingCustomers(
+async function listGradeFollowUpScheduleItems(
   role: UserRole,
   userId: string,
-  now: Date,
-  take = 50
+  now: Date
 ): Promise<GradeExpiryPendingItem[]> {
   const intervalMap = await getCustomerGradeIntervalMap();
   const customers = await prisma.customer.findMany({
@@ -74,7 +104,7 @@ export async function getGradeExpiryPendingCustomers(
       createdAt: true,
       owner: { select: { id: true, name: true } },
     },
-    take: 500,
+    orderBy: { name: "asc" },
   });
 
   const lastInteractionMap = await getLastInteractionMap(customers.map((c) => c.id));
@@ -86,7 +116,6 @@ export async function getGradeExpiryPendingCustomers(
 
     const lastInteractionAt = lastInteractionMap.get(customer.id) ?? customer.createdAt;
     const dueAt = computeGradeFollowUpDueAt(lastInteractionAt, intervalDays);
-    if (dueAt > now) continue;
 
     items.push({
       kind: "grade_expiry",
@@ -96,11 +125,40 @@ export async function getGradeExpiryPendingCustomers(
       owner: customer.owner ?? { id: "", name: "未分配" },
       dueAt,
       lastInteractionAt,
-      overdue: true,
+      overdue: dueAt.getTime() <= now.getTime(),
     });
   }
 
-  return items.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime()).slice(0, take);
+  return items;
+}
+
+export async function getGradeExpiryPendingCustomers(
+  role: UserRole,
+  userId: string,
+  now: Date,
+  take = 50
+): Promise<GradeExpiryPendingItem[]> {
+  return (await listGradeFollowUpScheduleItems(role, userId, now))
+    .filter((item) => item.overdue)
+    .sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime())
+    .slice(0, take);
+}
+
+export async function getGradeFollowUpUpcomingCustomers(
+  role: UserRole,
+  userId: string,
+  now: Date,
+  withinDays: number | null
+): Promise<GradeExpiryPendingItem[]> {
+  const maxDueAt = withinDays == null ? null : addDays(now, withinDays);
+
+  return (await listGradeFollowUpScheduleItems(role, userId, now))
+    .filter((item) => {
+      if (item.overdue) return false;
+      if (!maxDueAt) return true;
+      return item.dueAt.getTime() <= maxDueAt.getTime();
+    })
+    .sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());
 }
 
 export async function getCustomerGradeExpiryPending(
@@ -119,14 +177,12 @@ export async function getCustomerGradeExpiryPending(
   });
   if (!customer) return null;
 
-  const intervalMap = await getCustomerGradeIntervalMap();
-  const intervalDays = resolveGradeIntervalDays(customer.customerGrade, intervalMap);
-  if (!intervalDays) return null;
-
-  const lastInteractionMap = await getLastInteractionMap([customerId]);
-  const lastInteractionAt = lastInteractionMap.get(customerId) ?? customer.createdAt;
-  const dueAt = computeGradeFollowUpDueAt(lastInteractionAt, intervalDays);
-  if (dueAt > now) return null;
+  const schedule = await getCustomerGradeFollowUpSchedule({
+    customerId: customer.id,
+    customerGrade: customer.customerGrade,
+    customerCreatedAt: customer.createdAt,
+  });
+  if (!schedule || schedule.dueAt > now) return null;
 
   return {
     kind: "grade_expiry",
@@ -134,8 +190,8 @@ export async function getCustomerGradeExpiryPending(
     customerName: customer.name,
     customerGrade: customer.customerGrade,
     owner: customer.owner ?? { id: "", name: "未分配" },
-    dueAt,
-    lastInteractionAt,
+    dueAt: schedule.dueAt,
+    lastInteractionAt: schedule.lastInteractionAt,
     overdue: true,
   };
 }

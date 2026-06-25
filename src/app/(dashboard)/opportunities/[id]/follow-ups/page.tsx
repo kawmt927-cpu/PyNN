@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
-  canFollowUpOpportunity,
+  canFollowUpOpportunityForUser,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
 import {
@@ -30,10 +30,16 @@ export default async function OpportunityFollowUpsPage({ params, searchParams }:
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
 
-  const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
+  const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id, {
+    allowAssignedWeeklyTask: true,
+  });
   if (!opportunity) notFound();
 
-  const canFollowUp = canFollowUpOpportunity(session.user.role, session.user.id, opportunity);
+  const canFollowUp = await canFollowUpOpportunityForUser(
+    session.user.role,
+    session.user.id,
+    opportunity
+  );
 
   const [full, activity, labelMaps, stageOptions] = await Promise.all([
     prisma.opportunity.findUnique({ where: { id } }),

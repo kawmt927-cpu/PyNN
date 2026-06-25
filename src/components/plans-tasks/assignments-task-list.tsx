@@ -10,8 +10,8 @@ import {
 } from "@/lib/today-work/weekly-assignments";
 import { getRemainingTimeInfo, remainingTimeClassName } from "@/lib/today-work/remaining-time";
 import { CancelWeeklyAssignmentButton } from "@/components/today-work/cancel-weekly-assignment-button";
-import { prisma } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
+import { FOLLOW_UP_METHOD_LABELS } from "@/lib/permissions";
 
 type Props = {
   role: UserRole;
@@ -19,41 +19,78 @@ type Props = {
   returnPath: string;
 };
 
+function taskEntityLabel(task: {
+  customer: { name: string } | null;
+  opportunity: { title: string } | null;
+}) {
+  return task.customer?.name ?? task.opportunity?.title ?? "—";
+}
+
+function taskSecondaryMeta(task: {
+  dueAt: Date;
+  followUp?: {
+    nextFollowUpMethod: string | null;
+    contact: { name: string } | null;
+  } | null;
+}) {
+  const parts = taskMetaParts(task);
+  parts.push(`截止 ${format(task.dueAt, "yyyy-MM-dd HH:mm")}`);
+  return parts.join(" · ");
+}
+function taskMetaParts(row: {
+  followUp?: {
+    nextFollowUpMethod: string | null;
+    contact: { name: string } | null;
+  } | null;
+}) {
+  const parts: string[] = [];
+  if (row.followUp?.contact?.name) parts.push(row.followUp.contact.name);
+  if (row.followUp?.nextFollowUpMethod) {
+    parts.push(
+      FOLLOW_UP_METHOD_LABELS[
+        row.followUp.nextFollowUpMethod as keyof typeof FOLLOW_UP_METHOD_LABELS
+      ] ?? row.followUp.nextFollowUpMethod
+    );
+  }
+  return parts;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "待完成",
   COMPLETED: "已完成",
   CANCELLED: "已取消",
 };
 
+function assignmentProgressTitle(label: string, items: Array<{ status: string }>) {
+  const total = items.length;
+  const completed = items.filter((item) => item.status === "COMPLETED").length;
+  return `${label}（${completed}/${total}）`;
+}
+
 export async function AssignmentsTaskList({ role, userId, returnPath }: Props) {
   const canManage = canManageWeeklyAssignments(role);
   const now = new Date();
 
   if (canManage) {
-    const [assignments, salesUsers] = await Promise.all([
-      listAllAssignmentsForManager(),
-      prisma.user.findMany({
-        where: { role: { in: ["SALES", "SALES_MANAGER"] }, personnelProfile: { enabled: true } },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      }),
-    ]);
+    const assignments = await listAllAssignmentsForManager();
 
     return (
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>新建指派任务</CardTitle>
-            <p className="text-sm text-muted-foreground">为销售指派需在截止前完成的跟进任务。</p>
+            <p className="text-sm text-muted-foreground">
+              为销售指派跟进任务，创建后同步生成客户计划跟进，并显示在任务列表中。
+            </p>
           </CardHeader>
           <CardContent>
-            <WeeklyAssignmentForm salesUsers={salesUsers} />
+            <WeeklyAssignmentForm />
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>全部任务（{assignments.length}）</CardTitle>
+            <CardTitle>{assignmentProgressTitle("全部任务", assignments)}</CardTitle>
           </CardHeader>
           <CardContent>
             {assignments.length === 0 ? (
@@ -80,17 +117,24 @@ export async function AssignmentsTaskList({ role, userId, returnPath }: Props) {
                         <tr key={row.id} className="border-b">
                           <td className="py-3 pr-4 font-medium">{row.title}</td>
                           <td className="py-3 pr-4">
-                            {row.opportunity ? (
-                              <Link href={`/opportunities/${row.opportunity.id}`} className="text-primary hover:underline">
-                                {row.opportunity.title}
-                              </Link>
-                            ) : row.customer ? (
-                              <Link href={`/customers/${row.customer.id}`} className="text-primary hover:underline">
-                                {row.customer.name}
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
+                            <div>
+                              {row.opportunity ? (
+                                <Link href={`/opportunities/${row.opportunity.id}`} className="text-primary hover:underline">
+                                  {row.opportunity.title}
+                                </Link>
+                              ) : row.customer ? (
+                                <Link href={`/customers/${row.customer.id}`} className="text-primary hover:underline">
+                                  {row.customer.name}
+                                </Link>
+                              ) : (
+                                "—"
+                              )}
+                            </div>
+                            {taskMetaParts(row).length > 0 ? (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {taskMetaParts(row).join(" · ")}
+                              </p>
+                            ) : null}
                           </td>
                           <td className="py-3 pr-4">{row.assignee.name}</td>
                           <td className="whitespace-nowrap py-3 pr-4">{format(row.dueAt, "yyyy-MM-dd HH:mm")}</td>
@@ -123,7 +167,7 @@ export async function AssignmentsTaskList({ role, userId, returnPath }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>我的任务（{tasks.length}）</CardTitle>
+        <CardTitle>{assignmentProgressTitle("我的任务", tasks)}</CardTitle>
         <p className="text-sm text-muted-foreground">管理员指派的全部任务，按截止时间倒序。</p>
       </CardHeader>
       <CardContent>
@@ -137,16 +181,15 @@ export async function AssignmentsTaskList({ role, userId, returnPath }: Props) {
               return (
                 <li key={task.id} className="flex flex-wrap items-start justify-between gap-2 rounded-md border p-3">
                   <div className="min-w-0 space-y-1">
+                    <p className="font-medium">{taskEntityLabel(task)}</p>
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{task.title}</p>
+                      <p className="text-sm text-muted-foreground">{task.title}</p>
                       <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{STATUS_LABEL[task.status]}</span>
                     </div>
                     {task.description ? (
                       <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
                     ) : null}
-                    <p className="text-xs text-muted-foreground">
-                      {task.customer?.name ?? task.opportunity?.title ?? "—"} · 截止 {format(task.dueAt, "yyyy-MM-dd HH:mm")}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{taskSecondaryMeta(task)}</p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
                     {remaining ? (

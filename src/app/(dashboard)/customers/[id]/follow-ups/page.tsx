@@ -4,6 +4,8 @@ import { requireRole } from "@/lib/session";
 import {
   getCustomerForUser,
   canManageCustomerOwner,
+  canEditCustomerContent,
+  canEditCustomerFollowUp,
 } from "@/lib/customers/access";
 import {
   CONFIG_CATEGORY,
@@ -38,11 +40,13 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
 
-  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
+  const customer = await getCustomerForUser(id, session.user.role, session.user.id, {
+    allowAssignedWeeklyTask: true,
+  });
   if (!customer) notFound();
 
   const canManage = canManageCustomerOwner(session.user.role);
-  const canEdit = customer.ownerId === session.user.id || canManage;
+  const canEdit = canEditCustomerFollowUp(session.user.role, session.user.id, customer);
 
   const now = new Date();
   const opportunityId = query.opportunityId?.trim() || undefined;

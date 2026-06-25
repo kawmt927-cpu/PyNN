@@ -46,6 +46,7 @@ export async function getTodayDailyLogForUser(userId: string) {
       status: true,
       dailyReport: true,
       structuredOutput: true,
+      conversation: true,
       updatedAt: true,
     },
   });

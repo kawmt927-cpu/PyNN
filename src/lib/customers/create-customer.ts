@@ -54,7 +54,7 @@ export async function createCustomerRecord(
       notes: data.notes?.trim() || undefined,
       ownerId: resolveOwnerId(role, userId, data.ownerId),
     },
-    select: { id: true, name: true },
+    select: { id: true, name: true, customerGrade: true },
   });
 
   await replaceCustomerTags(customer.id, data.tagValues ?? []);

@@ -17,6 +17,7 @@ import {
   canManageOpportunityOwner,
   canEditOpportunityContent,
   canFollowUpOpportunity,
+  canFollowUpOpportunityForUser,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
 import { buildOpportunityEditChanges } from "@/lib/opportunities/edit-log";
@@ -431,7 +432,7 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
       include: { owner: { select: { name: true } } },
     });
     if (!existing) return { error: "商机不存在或无权访问" };
-    if (!canFollowUpOpportunity(session.user.role, session.user.id, existing)) {
+    if (!(await canFollowUpOpportunityForUser(session.user.role, session.user.id, existing))) {
       return { error: "无权跟进该商机" };
     }
 
@@ -492,7 +493,13 @@ export async function updateOpportunityFollowUp(formData: FormData): Promise<Act
     if (!followUp || followUp.opportunityId !== parsed.opportunityId) {
       return { error: "跟进记录不存在" };
     }
-    if (!canFollowUpOpportunity(session.user.role, session.user.id, followUp.opportunity)) {
+    if (
+      !(await canFollowUpOpportunityForUser(
+        session.user.role,
+        session.user.id,
+        followUp.opportunity
+      ))
+    ) {
       return { error: "无权修改该跟进记录" };
     }
 

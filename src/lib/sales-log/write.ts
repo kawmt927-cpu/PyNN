@@ -5,7 +5,7 @@ import {
   SalesDailyLogStatus,
   UserRole,
 } from "@prisma/client";
-import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
+import { canManageCustomerOwner, getCustomerForUser, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
 import { findDuplicateCustomerByName } from "@/lib/customers/duplicate-name";
 import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
@@ -58,6 +58,7 @@ async function resolveCustomerId(
   if (customerId) {
     const customer = await getCustomerForUser(customerId, ctx.role, ctx.userId);
     if (!customer) throw new Error("客户不存在或无权访问");
+    await assertCustomerFollowUpWriteAccess(ctx.role, ctx.userId, customer);
     return customerId;
   }
 
@@ -174,6 +175,7 @@ export async function createFollowUpFromAgent(
     followUpAt: string;
     nextFollowUpAt?: string;
     nextFollowUpMethod?: FollowUpMethod;
+    nextFollowUpContent?: string;
     suggestedGrade?: string | null;
   }
 ) {
@@ -191,7 +193,8 @@ export async function createFollowUpFromAgent(
     input.suggestedGrade,
     input.nextFollowUpAt,
     input.nextFollowUpMethod,
-    customer?.customerGrade
+    customer?.customerGrade,
+    input.nextFollowUpContent
   );
   if (planError) throw new Error(planError);
 
@@ -235,6 +238,7 @@ export async function createFollowUpFromAgent(
         followUpAt,
         nextFollowUpAt: parsePlannedFollowUpDateInput(input.nextFollowUpAt),
         nextFollowUpMethod: input.nextFollowUpMethod || undefined,
+        nextFollowUpContent: input.nextFollowUpContent?.trim() || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: applyGrade,
         salesDailyLogId: ctx.dailyLogId,

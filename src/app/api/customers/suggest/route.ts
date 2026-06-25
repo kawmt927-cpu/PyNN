@@ -27,10 +27,12 @@ export async function GET(req: Request) {
     const excludeIds = params.excludeIds
       ? params.excludeIds.split(",").filter(Boolean)
       : undefined;
+    const markWritable = params.scope === "writable";
 
     const items = await searchCustomersForUser(session.user.role, session.user.id, q, {
       excludeId: params.excludeId,
       excludeIds,
+      markWritable,
     });
 
     return Response.json({ items });

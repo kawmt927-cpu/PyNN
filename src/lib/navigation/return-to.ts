@@ -7,6 +7,9 @@ const ALLOWED_PREFIXES = [
   "/follow-ups",
   "/today-work",
   "/plans-tasks",
+  "/daily-reports",
+  "/sales-log",
+  "/mobile",
   "/projects",
   "/approvals",
   "/admin",
@@ -34,6 +37,8 @@ export function sanitizeReturnTo(value: string | null | undefined): string | nul
   }
 
   const pathOnly = decoded.split("?")[0];
+  if (pathOnly === "/") return decoded;
+
   const allowed = ALLOWED_PREFIXES.some(
     (prefix) => pathOnly === prefix || pathOnly.startsWith(`${prefix}/`)
   );

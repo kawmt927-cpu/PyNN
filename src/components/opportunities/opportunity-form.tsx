@@ -18,6 +18,7 @@ import { toExpectedCloseMonthInput } from "@/lib/opportunities/expected-close-da
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { ActionResult } from "@/lib/action-result";
 import type { OpportunityStatus } from "@prisma/client";
+import { cn } from "@/lib/utils";
 
 type SalesOption = { id: string; name: string };
 
@@ -57,6 +58,9 @@ type Props = {
 function withEmptyOption(options: ConfigOptionItem[] | undefined, label = "请选择") {
   return [{ value: "", label }, ...(options ?? [])];
 }
+
+const FORM_GRID_CELL = "grid min-w-0 grid-rows-[2.75rem_auto] gap-2 space-y-0";
+const FORM_GRID_LABEL = "self-end leading-snug";
 
 function buildInitialState(
   currentUserId: string,
@@ -222,7 +226,7 @@ export function OpportunityForm({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
         <div className="space-y-2 md:col-span-2">
           <Label htmlFor="title">商机名称 *</Label>
           <Input
@@ -255,8 +259,10 @@ export function OpportunityForm({
           </div>
         )}
 
-        <div className="space-y-2">
-          <Label htmlFor="expectedAmount">预计金额 *</Label>
+        <div className={cn(FORM_GRID_CELL, amountLocked && "grid-rows-[2.75rem_auto_auto]")}>
+          <Label htmlFor="expectedAmount" className={FORM_GRID_LABEL}>
+            预计金额 *
+          </Label>
           <Input
             id="expectedAmount"
             name="expectedAmount"
@@ -274,8 +280,10 @@ export function OpportunityForm({
           )}
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="expectedCloseDate">预计签约月份 *</Label>
+        <div className={FORM_GRID_CELL}>
+          <Label htmlFor="expectedCloseDate" className={FORM_GRID_LABEL}>
+            预计签约月份 *
+          </Label>
           <Input
             id="expectedCloseDate"
             name="expectedCloseDate"
@@ -293,10 +301,14 @@ export function OpportunityForm({
           options={withEmptyOption(stageOptions)}
           value={form.stage}
           onValueChange={(stage) => patchForm({ stage })}
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
         />
 
-        <div className="space-y-2">
-          <Label htmlFor="winProbability">赢单概率 (%)</Label>
+        <div className={FORM_GRID_CELL}>
+          <Label htmlFor="winProbability" className={FORM_GRID_LABEL}>
+            赢单概率 (%)
+          </Label>
           <Input
             id="winProbability"
             name="winProbability"

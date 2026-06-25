@@ -224,6 +224,7 @@ model User {
   weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
   weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
   salesPlanBoards          SalesPlanBoard[]
+  assistedCustomers        CustomerAssistant[]      @relation("CustomerAssistant")
 }
 
 model PersonnelProfile {
@@ -278,6 +279,19 @@ model Customer {
   tags          CustomerTag[]
   weeklyAssignments SalesWeeklyAssignment[]
   planItems         SalesPlanItem[]
+  assistantOwners   CustomerAssistant[]
+}
+
+model CustomerAssistant {
+  customerId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user     User     @relation("CustomerAssistant", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, userId])
+  @@index([userId])
 }
 
 model CustomerTag {
@@ -356,6 +370,7 @@ model FollowUp {
   followUpAt            DateTime
   nextFollowUpAt        DateTime?
   nextFollowUpMethod    FollowUpMethod?
+  nextFollowUpContent   String?
   suggestedGrade        String?
   gradeApplied          Boolean        @default(false)
   opportunityId         String?
@@ -443,6 +458,7 @@ model OpportunityFollowUp {
   content        String
   followUpAt     DateTime
   nextFollowUpAt DateTime?
+  nextFollowUpContent String?
   changeSummary  String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt

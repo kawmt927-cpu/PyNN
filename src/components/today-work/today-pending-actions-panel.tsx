@@ -113,13 +113,15 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                     className="flex flex-wrap items-start justify-between gap-2 rounded-md border p-3"
                   >
                     <div className="min-w-0 space-y-1">
-                      <p className="font-medium">{task.title}</p>
+                      <p className="font-medium">
+                        {task.customer?.name ?? task.opportunity?.title ?? "—"}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{task.title}</p>
                       {task.description ? (
                         <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
                       ) : null}
                       <p className="text-xs text-muted-foreground">
-                        {task.customer?.name ?? task.opportunity?.title ?? "—"} · 截止{" "}
-                        {format(task.dueAt, "MM-dd HH:mm")}
+                        截止 {format(task.dueAt, "MM-dd HH:mm")}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">

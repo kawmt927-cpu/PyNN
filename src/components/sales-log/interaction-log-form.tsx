@@ -47,6 +47,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   const [suggestedGrade, setSuggestedGrade] = useState("");
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
+  const [nextFollowUpContent, setNextFollowUpContent] = useState("");
 
   function resetForm() {
     setCustomerId("");
@@ -60,6 +61,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
     setSuggestedGrade("");
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
+    setNextFollowUpContent("");
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -70,7 +72,8 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
       suggestedGrade,
       nextFollowUpAt,
       nextFollowUpMethod,
-      currentCustomerGrade
+      currentCustomerGrade,
+      nextFollowUpContent
     );
     if (planError) {
       setError(planError);
@@ -86,6 +89,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
     formData.set("opportunityId", opportunityId);
     formData.set("nextFollowUpAt", nextFollowUpAt);
     formData.set("nextFollowUpMethod", nextFollowUpMethod);
+    formData.set("nextFollowUpContent", nextFollowUpContent);
 
     startTransition(async () => {
       const result = await createManualLogAction(formData);
@@ -107,6 +111,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
             name="customerId"
             label="客户 *"
             required
+            writableOnly
             value={customerId}
             selectedLabel={customerLabel}
             onValueChange={(id, option) => {
@@ -217,8 +222,12 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
             dateId="nextAt"
             dateValue={nextFollowUpAt}
             onDateChange={setNextFollowUpAt}
+            contentId="nextContent"
+            contentValue={nextFollowUpContent}
+            onContentChange={setNextFollowUpContent}
             suggestedGrade={suggestedGrade}
             currentCustomerGrade={currentCustomerGrade}
+            gradeOptions={formOptions.gradeOptions}
           />
         </div>
 

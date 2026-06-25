@@ -1,5 +1,5 @@
 import { SalesCheckInStatus, UserRole, type FollowUpMethod } from "@prisma/client";
-import { getCustomerForUser } from "@/lib/customers/access";
+import { getCustomerForUser, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import { getTodayRange, salesCheckInListWhere } from "@/lib/sales-log/access";
 import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
@@ -9,7 +9,7 @@ import {
   normalizeCheckInMode,
   normalizeContactIds,
 } from "@/lib/validations/sales-log";
-import { formatCheckInLocation } from "@/lib/sales-log/format-location";
+import { formatCheckInLocation, hasCheckInLocation } from "@/lib/sales-log/format-location";
 import type { AgentWriteContext } from "@/lib/sales-log/write";
 import { createFollowUpFromAgent } from "@/lib/sales-log/write";
 import {
@@ -33,24 +33,6 @@ export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInS
       contact: { select: { id: true, name: true, title: true } },
       user: { select: { id: true, name: true } },
       followUp: { select: { id: true, method: true, content: true } },
-    },
-  });
-}
-
-export async function listTodayCustomerCheckInsForUser(userId: string, customerId: string) {
-  const { start, end } = getTodayRange();
-  return prisma.salesCheckIn.findMany({
-    where: {
-      userId,
-      customerId,
-      checkedInAt: { gte: start, lt: end },
-    },
-    orderBy: { checkedInAt: "desc" },
-    select: {
-      id: true,
-      checkedInAt: true,
-      status: true,
-      customer: { select: { name: true } },
     },
   });
 }
@@ -81,6 +63,56 @@ async function assertCheckInWriteAccess(checkIn: { userId: string }, role: UserR
   }
 }
 
+async function createInteractionFollowUpFromCheckIn(
+  ctx: AgentWriteContext,
+  input: CheckInWriteInput,
+  customerId: string,
+  contactIds: string[],
+  followUpAt: Date
+) {
+  if (!input.followUp) throw new Error("请填写往来内容");
+
+  const followUpResult = await createFollowUpFromAgent(ctx, {
+    customerId,
+    contactIds,
+    method: input.followUp.method,
+    content: input.followUp.content,
+    result: input.followUp.result ?? undefined,
+    followUpAt: followUpAt.toISOString(),
+    nextFollowUpAt: input.followUp.nextFollowUpAt ?? undefined,
+    nextFollowUpMethod: (input.followUp.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
+    nextFollowUpContent: input.followUp.nextFollowUpContent ?? undefined,
+    suggestedGrade: input.followUp.suggestedGrade ?? undefined,
+    opportunityId: input.followUp.opportunityId ?? undefined,
+  });
+
+  if (input.completedPendingKeys?.length) {
+    await finalizeCompletedPendingPlans(
+      customerId,
+      input.role,
+      input.userId,
+      input.completedPendingKeys
+    );
+  }
+
+  return followUpResult;
+}
+
+export function isEffectiveCheckInRecord(row: {
+  status: SalesCheckInStatus;
+  customerId: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationText?: string | null;
+  addressProvince?: string | null;
+  addressCity?: string | null;
+  addressDistrict?: string | null;
+  addressStreet?: string | null;
+}): boolean {
+  if (hasCheckInLocation(row)) return true;
+  return row.status === SalesCheckInStatus.PENDING && Boolean(row.customerId);
+}
+
 async function finalizeCompletedPendingPlans(
   customerId: string,
   role: UserRole,
@@ -92,6 +124,7 @@ async function finalizeCompletedPendingPlans(
 
   const customer = await getCustomerForUser(customerId, role, userId);
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerFollowUpWriteAccess(role, userId, customer);
 
   const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date());
   const pendingKeySet = new Set(
@@ -191,34 +224,24 @@ export async function updateSalesCheckIn(
     input.followUp &&
     existing.status === SalesCheckInStatus.PENDING
   ) {
-    const followUpResult = await createFollowUpFromAgent(ctx, {
-      customerId: customerId!,
+    const followUpResult = await createInteractionFollowUpFromCheckIn(
+      ctx,
+      input,
+      customerId!,
       contactIds,
-      method: input.followUp.method,
-      content: input.followUp.content,
-      result: input.followUp.result ?? undefined,
-      followUpAt: checkIn.checkedInAt.toISOString(),
-      nextFollowUpAt: input.followUp.nextFollowUpAt ?? undefined,
-      nextFollowUpMethod: (input.followUp.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
-      suggestedGrade: input.followUp.suggestedGrade ?? undefined,
-      opportunityId: input.followUp.opportunityId ?? undefined,
-    });
+      checkIn.checkedInAt
+    );
 
-    await prisma.salesCheckIn.update({
-      where: { id: checkIn.id },
-      data: {
-        status: SalesCheckInStatus.COMPLETED,
-        followUpId: followUpResult.followUpId,
-      },
-    });
-
-    if (input.completedPendingKeys?.length) {
-      await finalizeCompletedPendingPlans(
-        customerId!,
-        input.role,
-        input.userId,
-        input.completedPendingKeys
-      );
+    if (hasCheckInLocation(checkIn)) {
+      await prisma.salesCheckIn.update({
+        where: { id: checkIn.id },
+        data: {
+          status: SalesCheckInStatus.COMPLETED,
+          followUpId: followUpResult.followUpId,
+        },
+      });
+    } else {
+      await prisma.salesCheckIn.delete({ where: { id: checkIn.id } });
     }
   }
 
@@ -238,11 +261,27 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
 
     const customer = await getCustomerForUser(customerId, input.role, input.userId);
     if (!customer) throw new Error("客户不存在或无权访问");
+    await assertCustomerFollowUpWriteAccess(input.role, input.userId, customer);
 
     if (input.completeInteractionNow) {
       const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date());
       if (pendingPlans.length > 0 && (!input.completedPendingKeys || input.completedPendingKeys.length === 0)) {
         throw new Error("请至少选择一条要完成的待跟进计划");
+      }
+
+      const { start, end } = getTodayRange();
+      const existingPending = await prisma.salesCheckIn.findFirst({
+        where: {
+          userId: input.userId,
+          customerId,
+          status: SalesCheckInStatus.PENDING,
+          checkedInAt: { gte: start, lt: end },
+        },
+        orderBy: { checkedInAt: "desc" },
+        select: { id: true },
+      });
+      if (existingPending) {
+        return updateSalesCheckIn(existingPending.id, input);
       }
     }
 
@@ -261,6 +300,22 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
     role: input.role,
     dailyLogId: dailyLog.id,
   };
+
+  if (
+    isInteraction &&
+    input.completeInteractionNow &&
+    input.followUp &&
+    !hasCheckInLocation(input)
+  ) {
+    await createInteractionFollowUpFromCheckIn(
+      ctx,
+      input,
+      customerId!,
+      contactIds,
+      new Date()
+    );
+    return null;
+  }
 
   const checkIn = await prisma.salesCheckIn.create({
     data: {
@@ -285,18 +340,13 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
   });
 
   if (isInteraction && input.completeInteractionNow && input.followUp) {
-    const followUpResult = await createFollowUpFromAgent(ctx, {
-      customerId: customerId!,
+    const followUpResult = await createInteractionFollowUpFromCheckIn(
+      ctx,
+      input,
+      customerId!,
       contactIds,
-      method: input.followUp.method,
-      content: input.followUp.content,
-      result: input.followUp.result ?? undefined,
-      followUpAt: checkIn.checkedInAt.toISOString(),
-      nextFollowUpAt: input.followUp.nextFollowUpAt ?? undefined,
-      nextFollowUpMethod: (input.followUp.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
-      suggestedGrade: input.followUp.suggestedGrade ?? undefined,
-      opportunityId: input.followUp.opportunityId ?? undefined,
-    });
+      checkIn.checkedInAt
+    );
 
     await prisma.salesCheckIn.update({
       where: { id: checkIn.id },
@@ -305,15 +355,6 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
         followUpId: followUpResult.followUpId,
       },
     });
-
-    if (input.completedPendingKeys?.length) {
-      await finalizeCompletedPendingPlans(
-        customerId!,
-        input.role,
-        input.userId,
-        input.completedPendingKeys
-      );
-    }
   }
 
   return checkIn;
@@ -360,6 +401,7 @@ export async function completeSalesCheckInManually(input: {
   opportunityId?: string | null;
   nextFollowUpAt?: string | null;
   nextFollowUpMethod?: Parameters<typeof createFollowUpFromAgent>[1]["method"];
+  nextFollowUpContent?: string | null;
 }) {
   const dailyLog = await ensureTodayDailyLog(input.userId);
 
@@ -393,6 +435,7 @@ export async function completeSalesCheckInManually(input: {
       opportunityId: input.opportunityId ?? undefined,
       nextFollowUpAt: input.nextFollowUpAt ?? undefined,
       nextFollowUpMethod: input.nextFollowUpMethod,
+      nextFollowUpContent: input.nextFollowUpContent ?? undefined,
     }
   );
 }
@@ -439,6 +482,7 @@ export async function completeCheckInFromAgent(
     followUpAt?: string;
     nextFollowUpAt?: string;
     nextFollowUpMethod?: Parameters<typeof createFollowUpFromAgent>[1]["method"];
+    nextFollowUpContent?: string;
     suggestedGrade?: string | null;
   }
 ) {
@@ -478,16 +522,21 @@ export async function completeCheckInFromAgent(
     followUpAt: input.followUpAt ?? checkIn.checkedInAt.toISOString(),
     nextFollowUpAt: input.nextFollowUpAt,
     nextFollowUpMethod: input.nextFollowUpMethod,
+    nextFollowUpContent: input.nextFollowUpContent,
     suggestedGrade: input.suggestedGrade,
   });
 
-  await prisma.salesCheckIn.update({
-    where: { id: checkIn.id },
-    data: {
-      status: SalesCheckInStatus.COMPLETED,
-      followUpId: followUpResult.followUpId,
-    },
-  });
+  if (hasCheckInLocation(checkIn)) {
+    await prisma.salesCheckIn.update({
+      where: { id: checkIn.id },
+      data: {
+        status: SalesCheckInStatus.COMPLETED,
+        followUpId: followUpResult.followUpId,
+      },
+    });
+  } else {
+    await prisma.salesCheckIn.delete({ where: { id: checkIn.id } });
+  }
 
   return {
     success: true as const,

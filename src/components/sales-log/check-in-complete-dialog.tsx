@@ -62,6 +62,7 @@ export function CheckInCompleteDialog({
   const [suggestedGrade, setSuggestedGrade] = useState("");
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
+  const [nextFollowUpContent, setNextFollowUpContent] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -74,6 +75,7 @@ export function CheckInCompleteDialog({
     setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
+    setNextFollowUpContent("");
     setError(null);
   }, [open, checkInId, defaultContactIds, currentCustomerGrade]);
 
@@ -85,7 +87,8 @@ export function CheckInCompleteDialog({
       suggestedGrade,
       nextFollowUpAt,
       nextFollowUpMethod,
-      currentCustomerGrade
+      currentCustomerGrade,
+      nextFollowUpContent
     );
     if (planError) {
       setError(planError);
@@ -107,6 +110,7 @@ export function CheckInCompleteDialog({
             opportunityId: opportunityId || null,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
+            nextFollowUpContent: nextFollowUpContent.trim() || null,
           }),
         });
         const data = (await res.json()) as { ok?: boolean; error?: string };
@@ -215,8 +219,12 @@ export function CheckInCompleteDialog({
                 dateId="completeNextAt"
                 dateValue={nextFollowUpAt}
                 onDateChange={setNextFollowUpAt}
+                contentId="completeNextContent"
+                contentValue={nextFollowUpContent}
+                onContentChange={setNextFollowUpContent}
                 suggestedGrade={suggestedGrade}
                 currentCustomerGrade={currentCustomerGrade}
+                gradeOptions={gradeOptions}
               />
             </div>
 

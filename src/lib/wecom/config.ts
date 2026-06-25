@@ -26,3 +26,5 @@ export const WECOM_OAUTH_SCOPE = "snsapi_base";
 
 export const WECOM_JS_SDK_URL =
   "https://res.wx.qq.com/open/js/jweixin-1.2.0.js";
+
+export { WECOM_WWLOGIN_SCRIPT_URL } from "./oauth-flow";

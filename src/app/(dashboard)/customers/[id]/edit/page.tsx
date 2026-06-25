@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { getCustomerForUser, canManageCustomerOwner } from "@/lib/customers/access";
+import { getCustomerForUser, canManageCustomerOwner, canEditCustomerContent } from "@/lib/customers/access";
 import { loadCustomerFormOptions } from "@/lib/config-options";
 import { CustomerForm } from "@/components/customers/customer-form";
 import { BackLink } from "@/components/navigation/back-link";
@@ -19,15 +19,22 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
   const customer = await getCustomerForUser(id, session.user.role, session.user.id);
 
   if (!customer) notFound();
+  if (!canEditCustomerContent(session.user.role, session.user.id, customer)) notFound();
 
   const showOwnerSelect = canManageCustomerOwner(session.user.role);
-  const salesUsers = showOwnerSelect
-    ? await prisma.user.findMany({
-        where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      })
-    : [];
+  const showAssistantOwnersSelect =
+    showOwnerSelect || customer.ownerId === session.user.id;
+  const salesUsers =
+    showOwnerSelect || showAssistantOwnersSelect
+      ? await prisma.user.findMany({
+          where: {
+            role: { in: ["SALES", "SALES_MANAGER"] },
+            personnelProfile: { enabled: true },
+          },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        })
+      : [];
 
   const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
   const initialTagValues = customer.tags.map((item) => item.tagValue);
@@ -45,6 +52,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
         customerId={id}
         submitLabel="保存修改"
         showOwnerSelect={showOwnerSelect}
+        showAssistantOwnersSelect={showAssistantOwnersSelect}
         salesUsers={salesUsers}
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}
@@ -65,6 +73,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
           customerGrade: customer.customerGrade,
           notes: customer.notes,
           ownerId: customer.ownerId,
+          assistantOwnerIds: customer.assistantOwners.map((row) => row.userId),
         }}
       />
     </div>

@@ -9,6 +9,7 @@ export const SETTINGS_TAB = {
   FIELDS: "fields",
   PRODUCTS: "products",
   KPI: "kpi",
+  SALES_LOG: "sales-log",
   WECOM: "wecom",
   AI: "ai",
   AMAP: "amap",
@@ -30,6 +31,9 @@ export function canAccessSettings(role: UserRole): boolean {
 }
 
 export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
+  if (tab === SETTINGS_TAB.SALES_LOG) {
+    return role === "ADMIN" || role === "SALES_MANAGER";
+  }
   if (tab === SETTINGS_TAB.WECOM || tab === SETTINGS_TAB.AI || tab === SETTINGS_TAB.AMAP) {
     return role === "ADMIN";
   }
@@ -77,6 +81,7 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
   if (role === "ADMIN" || role === "SALES_MANAGER") {
     tabs.push({ id: SETTINGS_TAB.PRODUCTS, label: "产品服务" });
     tabs.push({ id: SETTINGS_TAB.KPI, label: "KPI 设置" });
+    tabs.push({ id: SETTINGS_TAB.SALES_LOG, label: "日志助手" });
   }
   if (role === "ADMIN") {
     tabs.push({ id: SETTINGS_TAB.WECOM, label: "企业微信" });
@@ -120,6 +125,14 @@ export async function requireWeComSettingsAccess() {
   const session = await requireSession();
   if (session.user.role !== "ADMIN") {
     throw new Error("无权修改企业微信配置");
+  }
+  return session;
+}
+
+export async function requireSalesLogPromptSettingsAccess() {
+  const session = await requireSession();
+  if (session.user.role !== "ADMIN" && session.user.role !== "SALES_MANAGER") {
+    throw new Error("无权修改日志助手提示词");
   }
   return session;
 }

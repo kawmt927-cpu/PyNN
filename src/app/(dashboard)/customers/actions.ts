@@ -9,7 +9,8 @@ import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "@/lib/validations/customer";
 import { contactFormSchema } from "@/lib/validations/contact";
-import { canManageCustomerOwner, getCustomerForUser } from "@/lib/customers/access";
+import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
+import { replaceCustomerAssistants } from "@/lib/customers/assistants";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
@@ -45,6 +46,17 @@ function parseOptionalField(raw: FormDataEntryValue | null): string | null {
   return value || null;
 }
 
+function parseAssistantOwnerIds(formData: FormData): string[] {
+  return [
+    ...new Set(
+      formData
+        .getAll("assistantOwnerIds")
+        .map((value) => value.toString().trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
 function parseCustomerForm(formData: FormData) {
   const category = formData.get("category") as string;
   const hospitalLevelRaw = formData.get("hospitalLevel");
@@ -67,6 +79,7 @@ function parseCustomerForm(formData: FormData) {
     customerGrade: parseOptionalField(formData.get("customerGrade")),
     notes: formData.get("notes") || undefined,
     ownerId: parseOwnerField(formData.get("ownerId")),
+    assistantOwnerIds: parseAssistantOwnerIds(formData),
   });
 }
 
@@ -111,6 +124,10 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
 
     await assertCustomerNameAvailable(data.name);
 
+    const ownerId = resolveOwnerId(session.user.role, session.user.id, data.ownerId);
+    const canSetAssistants =
+      canManageCustomerOwner(session.user.role) || session.user.role === "SALES";
+
     const customer = await prisma.customer.create({
       data: {
         name: data.name,
@@ -125,9 +142,13 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
         customerType: configFields.customerType,
         customerGrade: configFields.customerGrade,
         notes: data.notes,
-        ownerId: resolveOwnerId(session.user.role, session.user.id, data.ownerId),
+        ownerId,
       },
     });
+
+    if (canSetAssistants && data.assistantOwnerIds.length > 0) {
+      await replaceCustomerAssistants(customer.id, data.assistantOwnerIds, ownerId);
+    }
 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(customer.id, parseTagValues(formData));
@@ -144,12 +165,15 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
     const existing = await getCustomerForUser(id, session.user.role, session.user.id);
     if (!existing) return { error: "无权访问该客户" };
+    await assertCustomerContentWriteAccess(session.user.role, session.user.id, existing);
 
     const data = parseCustomerForm(formData);
     const configFields = await validateCustomerConfigFields(data);
     const ownerId = canManageCustomerOwner(session.user.role)
       ? resolveOwnerId(session.user.role, session.user.id, data.ownerId)
       : existing.ownerId;
+    const canSetAssistants =
+      canManageCustomerOwner(session.user.role) || existing.ownerId === session.user.id;
 
     await prisma.customer.update({
       where: { id },
@@ -169,6 +193,10 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
         ownerId,
       },
     });
+
+    if (canSetAssistants) {
+      await replaceCustomerAssistants(id, data.assistantOwnerIds, ownerId);
+    }
 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(id, parseTagValues(formData));
@@ -192,6 +220,7 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
     followUpAt: formData.get("followUpAt"),
     nextFollowUpAt: formData.get("nextFollowUpAt") || null,
     nextFollowUpMethod: formData.get("nextFollowUpMethod") || null,
+    nextFollowUpContent: formData.get("nextFollowUpContent") || null,
     suggestedGrade: formData.get("suggestedGrade") || null,
     contactIds: formData.getAll("contactIds").filter((id): id is string => typeof id === "string" && id.trim().length > 0),
     opportunityId: formData.get("opportunityId") || null,
@@ -206,12 +235,14 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
     session.user.id
   );
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerFollowUpWriteAccess(session.user.role, session.user.id, customer);
 
   const planError = validateNextFollowUpPlan(
     parsed.suggestedGrade,
     parsed.nextFollowUpAt,
     parsed.nextFollowUpMethod,
-    customer.customerGrade
+    customer.customerGrade,
+    parsed.nextFollowUpContent
   );
   if (planError) throw new Error(planError);
 
@@ -262,6 +293,7 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
         followUpAt: new Date(parsed.followUpAt),
         nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
         nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
+        nextFollowUpContent: parsed.nextFollowUpContent?.trim() || undefined,
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: Boolean(applyGrade),
         linkedContacts: {
@@ -385,6 +417,7 @@ export async function createContact(formData: FormData): Promise<ActionResult> {
     session.user.id
   );
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
   const isPrimary = parsed.isPrimary === "true";
 
@@ -440,6 +473,7 @@ export async function updateContact(contactId: string, formData: FormData): Prom
     session.user.id
   );
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
   const isPrimary = parsed.isPrimary === "true";
 
@@ -479,6 +513,7 @@ export async function deleteContact(formData: FormData) {
 
   const customer = await getCustomerForUser(customerId, session.user.role, session.user.id);
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
   await prisma.contact.delete({ where: { id: contactId } });
   revalidatePath(`/customers/${customerId}`);
@@ -502,6 +537,7 @@ export async function addCustomerRelation(formData: FormData) {
     session.user.id
   );
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
   await prisma.customerRelation.create({
     data: {
@@ -522,6 +558,7 @@ export async function removeCustomerRelation(formData: FormData) {
 
   const customer = await getCustomerForUser(customerId, session.user.role, session.user.id);
   if (!customer) throw new Error("无权访问该客户");
+  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
   await prisma.customerRelation.delete({ where: { id: relationId } });
   revalidatePath(`/customers/${customerId}`);

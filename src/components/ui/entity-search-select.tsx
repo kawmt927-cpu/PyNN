@@ -11,6 +11,7 @@ export type SearchSelectOption = {
   label: string;
   description?: string;
   customerGrade?: string | null;
+  disabled?: boolean;
 };
 
 export type EntitySearchSelectHandle = {
@@ -64,7 +65,11 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
   const inputValue = showSelected ? selectedLabel : query;
   const trimmedQuery = query.trim();
   const hasExactMatch = useMemo(
-    () => trimmedQuery.length > 0 && options.some((option) => isSameCustomerName(option.label, trimmedQuery)),
+    () =>
+      trimmedQuery.length > 0 &&
+      options.some(
+        (option) => !option.disabled && isSameCustomerName(option.label, trimmedQuery)
+      ),
     [options, trimmedQuery]
   );
   const showCreateNew = Boolean(onCreateNew && trimmedQuery && !hasExactMatch);
@@ -153,6 +158,7 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
 
   const handleSelect = useCallback(
     (option: SearchSelectOption) => {
+      if (option.disabled) return;
       onValueChange(option.id, option);
       setEditing(false);
       setQuery("");
@@ -202,11 +208,19 @@ export const EntitySearchSelect = forwardRef<EntitySearchSelectHandle, Props>(fu
                 <li key={option.id}>
                   <button
                     type="button"
-                    className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                    disabled={option.disabled}
+                    className={cn(
+                      "block w-full px-3 py-2 text-left text-sm",
+                      option.disabled
+                        ? "cursor-not-allowed text-muted-foreground opacity-60"
+                        : "hover:bg-muted"
+                    )}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleSelect(option)}
                   >
-                    <span className="font-medium">{option.label}</span>
+                    <span className={cn("font-medium", option.disabled && "font-normal")}>
+                      {option.label}
+                    </span>
                     {option.description && (
                       <span className="ml-2 text-muted-foreground">{option.description}</span>
                     )}

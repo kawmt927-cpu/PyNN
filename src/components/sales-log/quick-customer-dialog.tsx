@@ -42,7 +42,7 @@ type Props = {
   tagOptions: CustomerTagDefinition[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
-  onCreated: (customer: { id: string; name: string }) => void;
+  onCreated: (customer: { id: string; name: string; customerGrade?: string | null }) => void;
 };
 
 const categoryOptions = [
@@ -202,12 +202,21 @@ export function QuickCustomerDialog({
             notes: notes || undefined,
           }),
         });
-        const data = (await res.json()) as { id?: string; name?: string; error?: string };
+        const data = (await res.json()) as {
+          id?: string;
+          name?: string;
+          customerGrade?: string | null;
+          error?: string;
+        };
         if (!res.ok || !data.id || !data.name) {
           setError(data.error || "创建客户失败");
           return;
         }
-        onCreated({ id: data.id, name: data.name });
+        onCreated({
+          id: data.id,
+          name: data.name,
+          customerGrade: data.customerGrade ?? null,
+        });
         onOpenChange(false);
       } catch {
         setError("创建客户失败，请稍后重试");
@@ -217,7 +226,13 @@ export function QuickCustomerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent
+        className="max-w-2xl"
+        showCloseButton
+        scrollable
+        closeOnOutsideClick={false}
+        closeOnEscape={false}
+      >
         <DialogHeader>
           <DialogTitle>新增客户</DialogTitle>
           <DialogDescription>

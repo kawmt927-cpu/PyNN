@@ -1,4 +1,5 @@
 import type { UserRole } from "@prisma/client";
+import { withReturnTo } from "@/lib/navigation/return-to";
 import { prisma } from "@/lib/prisma";
 
 export type WeeklyAssignmentListItem = {
@@ -18,6 +19,12 @@ const listInclude = {
   opportunity: { select: { id: true, title: true } },
   assignee: { select: { id: true, name: true } },
   createdBy: { select: { name: true } },
+  followUp: {
+    select: {
+      nextFollowUpMethod: true,
+      contact: { select: { id: true, name: true } },
+    },
+  },
 } as const;
 
 export async function listAllAssignmentsForUser(userId: string, take = 100) {
@@ -59,15 +66,45 @@ export async function listWeeklyAssignmentsForManager(take = 100): Promise<Weekl
   });
 }
 
+export async function hasPendingWeeklyAssignmentForCustomer(
+  userId: string,
+  customerId: string
+) {
+  const row = await prisma.salesWeeklyAssignment.findFirst({
+    where: {
+      assigneeId: userId,
+      customerId,
+      status: "PENDING",
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
+}
+
+export async function hasPendingWeeklyAssignmentForOpportunity(
+  userId: string,
+  opportunityId: string
+) {
+  const row = await prisma.salesWeeklyAssignment.findFirst({
+    where: {
+      assigneeId: userId,
+      opportunityId,
+      status: "PENDING",
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
+}
+
 export function weeklyAssignmentFollowUpHref(
   item: Pick<WeeklyAssignmentListItem, "customer" | "opportunity">,
   returnTo: string
 ) {
   if (item.opportunity) {
-    return `/opportunities/${item.opportunity.id}/follow-ups?returnTo=${encodeURIComponent(returnTo)}`;
+    return withReturnTo(`/opportunities/${item.opportunity.id}/follow-ups`, returnTo);
   }
   if (item.customer) {
-    return `/customers/${item.customer.id}/follow-ups?returnTo=${encodeURIComponent(returnTo)}`;
+    return withReturnTo(`/customers/${item.customer.id}/follow-ups`, returnTo);
   }
   return null;
 }

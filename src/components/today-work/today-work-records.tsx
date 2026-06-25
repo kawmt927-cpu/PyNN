@@ -23,19 +23,34 @@ export async function TodayWorkRecordsPanel({ role, userId }: Props) {
           <p className="text-sm text-muted-foreground">今日暂无工作记录。</p>
         ) : (
           <ul className="space-y-3">
-            {records.map((row) => (
+            {records.map((row) => {
+              const isCheckIn = row.kind === "check_in";
+              const followUp = isCheckIn ? row.followUp : undefined;
+              const merged = Boolean(followUp);
+              return (
               <li key={`${row.kind}-${row.id}`} className="rounded-md border p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                        row.kind === "check_in"
-                          ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200"
-                          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                      }`}
-                    >
-                      {row.kind === "check_in" ? "打卡" : "往来"}
-                    </span>
+                    {merged ? (
+                      <>
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                          往来
+                        </span>
+                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+                          打卡
+                        </span>
+                      </>
+                    ) : (
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                          row.kind === "check_in"
+                            ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                            : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                        }`}
+                      >
+                        {row.kind === "check_in" ? "打卡" : "往来"}
+                      </span>
+                    )}
                     {row.contactName ? (
                       <span className="font-medium">{row.contactName}</span>
                     ) : null}
@@ -51,21 +66,43 @@ export async function TodayWorkRecordsPanel({ role, userId }: Props) {
                   </div>
                   <span className="text-xs text-muted-foreground">{format(row.at, "HH:mm")}</span>
                 </div>
-                <p className="mt-2 line-clamp-2">{row.summary}</p>
-                {row.kind === "check_in" ? (
-                  <p
-                    className={`mt-1 text-xs ${row.needsAction ? "text-orange-600" : "text-green-600"}`}
-                  >
-                    {row.statusLabel}
-                  </p>
+                {merged && followUp && isCheckIn ? (
+                  <>
+                    <p className="mt-2 line-clamp-2">{followUp.summary}</p>
+                    <p className="mt-2 line-clamp-2 text-muted-foreground">打卡地点：{row.summary}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <span className={row.needsAction ? "text-orange-600" : "text-green-600"}>
+                        {row.statusLabel}
+                      </span>
+                      {" · "}
+                      {followUp.methodLabel}
+                      {followUp.opportunityTitle ? ` · 商机：${followUp.opportunityTitle}` : ""}
+                    </p>
+                  </>
                 ) : (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {row.methodLabel}
-                    {row.opportunityTitle ? ` · 商机：${row.opportunityTitle}` : ""}
-                  </p>
+                  <>
+                    {row.kind === "check_in" ? (
+                      <p className="mt-2 line-clamp-2">{row.summary}</p>
+                    ) : (
+                      <p className="mt-2 line-clamp-2">{row.summary}</p>
+                    )}
+                    {row.kind === "check_in" ? (
+                      <p
+                        className={`mt-1 text-xs ${row.needsAction ? "text-orange-600" : "text-green-600"}`}
+                      >
+                        {row.statusLabel}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {row.methodLabel}
+                        {row.opportunityTitle ? ` · 商机：${row.opportunityTitle}` : ""}
+                      </p>
+                    )}
+                  </>
                 )}
               </li>
-            ))}
+            );
+            })}
           </ul>
         )}
       </CardContent>

@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { UserRole } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { createSalesLogAgentStream, isAiAgentAvailable } from "@/lib/agent/runtime";
+import { buildTodayWorkContextForAgent } from "@/lib/agent/today-work-context";
 import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
 
 export const maxDuration = 60;
@@ -33,12 +34,20 @@ export async function POST(req: Request) {
 
   const { messages } = await req.json();
   const dailyLog = await ensureTodayDailyLog(session.user.id);
+  const todayWorkContext = await buildTodayWorkContextForAgent(
+    session.user.role,
+    session.user.id
+  );
 
   try {
-    const result = await createSalesLogAgentStream(messages, {
-      user: { id: session.user.id, role: session.user.role },
-      dailyLogId: dailyLog.id,
-    });
+    const result = await createSalesLogAgentStream(
+      messages,
+      {
+        user: { id: session.user.id, role: session.user.role },
+        dailyLogId: dailyLog.id,
+      },
+      { todayWorkContext }
+    );
     return result.toDataStreamResponse({
       getErrorMessage: (error) =>
         error instanceof Error ? error.message : "AI 请求失败",

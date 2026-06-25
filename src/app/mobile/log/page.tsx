@@ -5,7 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { SALES_LOG_OPENING_MESSAGE } from "@/lib/agent/sales-log-prompt";
+import {
+  SALES_LOG_BOOTSTRAP_USER_MESSAGE,
+  SALES_LOG_LOADING_MESSAGE,
+} from "@/lib/agent/sales-log-prompt";
 import { useWeComSdk, isWeComClient } from "@/hooks/use-wecom-sdk";
 import { LocationButton } from "@/components/mobile/location-button";
 import { VoiceInputButton } from "@/components/mobile/voice-input-button";
@@ -32,7 +35,7 @@ export default function MobileLogPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<{ role: string; content: string }[]>([]);
-  const initialized = useRef(false);
+  const sessionBootstrapped = useRef(false);
 
   const [input, setInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
@@ -73,7 +76,7 @@ export default function MobileLogPage() {
     },
     experimental_prepareRequestBody: ({ messages: chatMessages }) => ({
       messages: chatMessages
-        .filter((m) => m.id !== "opening" && m.content?.trim())
+        .filter((m) => m.id !== "loading" && m.content?.trim())
         .map(({ role, content }) => ({ role, content })),
     }),
   });
@@ -93,26 +96,55 @@ export default function MobileLogPage() {
   }, [error]);
 
   useEffect(() => {
+    if (sessionBootstrapped.current) return;
+
     fetch("/api/mobile/log/sync", { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.log?.status) setLogStatus(data.log.status);
-      })
-      .catch(() => {});
-  }, []);
+        sessionBootstrapped.current = true;
+        const status = data?.log?.status as DailyLogStatus | undefined;
+        if (status) setLogStatus(status);
 
-  useEffect(() => {
-    if (!initialized.current && messages.length === 0) {
-      initialized.current = true;
-      setMessages([
-        {
-          id: "opening",
-          role: "assistant",
-          content: SALES_LOG_OPENING_MESSAGE,
-        },
-      ]);
-    }
-  }, [messages.length, setMessages]);
+        const saved = (data?.log?.conversation ?? []) as { role: string; content: string }[];
+        if (saved.length > 0) {
+          setMessages(
+            saved.map((m, i) => ({
+              id: `restored-${i}`,
+              role: m.role as "user" | "assistant" | "system" | "data",
+              content: m.content,
+            }))
+          );
+          return;
+        }
+
+        if (status === "SUBMITTED" || status === "RISK_SUBMITTED") {
+          const report = data?.log?.dailyReport?.trim();
+          setMessages([
+            {
+              id: "submitted",
+              role: "assistant",
+              content: report
+                ? `今日日报已提交。\n\n${report}`
+                : "今日日报已提交，如需补充请联系管理员。",
+            },
+          ]);
+          return;
+        }
+
+        setMessages([
+          { id: "loading", role: "assistant", content: SALES_LOG_LOADING_MESSAGE },
+        ]);
+        append({ role: "user", content: SALES_LOG_BOOTSTRAP_USER_MESSAGE });
+      })
+      .catch(() => {
+        sessionBootstrapped.current = true;
+        append({ role: "user", content: SALES_LOG_BOOTSTRAP_USER_MESSAGE });
+      });
+  }, [append, setMessages]);
+
+  const visibleMessages = messages.filter(
+    (m) => m.id !== "loading" && m.content !== SALES_LOG_BOOTSTRAP_USER_MESSAGE
+  );
 
   function appendToInput(text: string) {
     setInput((prev) => (prev ? `${prev}\n${text}` : text));
@@ -160,7 +192,7 @@ export default function MobileLogPage() {
       </header>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        {messages.map((m) => (
+        {visibleMessages.map((m) => (
           <div
             key={m.id}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
@@ -174,7 +206,12 @@ export default function MobileLogPage() {
             </Card>
           </div>
         ))}
-        {isLoading && <p className="text-sm text-muted-foreground">助理正在思考…</p>}
+        {isLoading && visibleMessages.length === 0 && (
+          <p className="text-sm text-muted-foreground">{SALES_LOG_LOADING_MESSAGE}</p>
+        )}
+        {isLoading && visibleMessages.length > 0 && (
+          <p className="text-sm text-muted-foreground">助理正在思考…</p>
+        )}
         {chatError && (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             {chatError}
@@ -210,7 +247,7 @@ export default function MobileLogPage() {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="描述今日工作，或回答助理提问…"
+            placeholder="回答助理提问，或补充今日工作…"
             className="flex-1"
             disabled={isLoading}
           />

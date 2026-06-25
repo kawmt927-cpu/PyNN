@@ -1,21 +1,78 @@
-import { canManageCustomerOwner } from "@/lib/customers/access";
+import { canEditCustomerContent, canManageCustomerOwner } from "@/lib/customers/access";
 import { dedupeCustomersByName } from "@/lib/customers/duplicate-name";
 import { buildCustomerListWhere, type CustomerListFilters } from "@/lib/customers/list-filters";
 import { buildBroadNameWhere, rankByNameMatch, scoreNameMatch } from "@/lib/search/fuzzy-text";
 import { opportunityListWhere } from "@/lib/opportunities/access";
 import { prisma } from "@/lib/prisma";
-import { OpportunityStatus, Prisma, UserRole } from "@prisma/client";
+import { CustomerCategory, OpportunityStatus, Prisma, UserRole } from "@prisma/client";
+
+type CustomerSearchRow = {
+  id: string;
+  name: string;
+  category: CustomerCategory;
+  customerGrade: string | null;
+  ownerId: string | null;
+  owner: { name: string } | null;
+  assistantOwners: { userId: string }[];
+};
+
+export type CustomerSearchResult = {
+  id: string;
+  name: string;
+  category: CustomerCategory;
+  customerGrade: string | null;
+  writable: boolean;
+  ownerName: string | null;
+};
+
+const customerSearchSelect = {
+  id: true,
+  name: true,
+  category: true,
+  customerGrade: true,
+  ownerId: true,
+  owner: { select: { name: true } },
+  assistantOwners: { select: { userId: true } },
+} as const;
+
+function toCustomerSearchResult(
+  role: UserRole,
+  userId: string,
+  row: CustomerSearchRow
+): CustomerSearchResult {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    customerGrade: row.customerGrade,
+    writable: canEditCustomerContent(role, userId, row),
+    ownerName: row.owner?.name ?? null,
+  };
+}
+
+function sortCustomersForSearch(role: UserRole, userId: string, rows: CustomerSearchRow[]) {
+  return [...rows].sort((a, b) => {
+    const aWritable = canEditCustomerContent(role, userId, a);
+    const bWritable = canEditCustomerContent(role, userId, b);
+    if (aWritable !== bWritable) return aWritable ? -1 : 1;
+    return 0;
+  });
+}
 
 export async function searchCustomersForUser(
   role: UserRole,
   userId: string,
   q: string,
-  options?: { excludeId?: string; excludeIds?: string[]; view?: "mine" | "all" | "pool" }
-) {
+  options?: {
+    excludeId?: string;
+    excludeIds?: string[];
+    view?: "mine" | "all" | "pool";
+    /** 搜索全部匹配客户，并标记是否可录入（不可录入的仍返回） */
+    markWritable?: boolean;
+  }
+): Promise<CustomerSearchResult[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
-
-  const view = options?.view ?? (canManageCustomerOwner(role) ? "all" : "mine");
 
   const filters: CustomerListFilters = {
     q: trimmed,
@@ -26,7 +83,13 @@ export async function searchCustomersForUser(
     tags: [],
   };
 
-  const where = buildCustomerListWhere(role, userId, view, filters);
+  let where: Prisma.CustomerWhereInput;
+  if (options?.markWritable) {
+    where = { ...(buildBroadNameWhere("name", trimmed) as Prisma.CustomerWhereInput) };
+  } else {
+    const view = options?.view ?? (canManageCustomerOwner(role) ? "all" : "mine");
+    where = buildCustomerListWhere(role, userId, view, filters);
+  }
 
   const excluded = [
     ...(options?.excludeId ? [options.excludeId] : []),
@@ -38,12 +101,17 @@ export async function searchCustomersForUser(
 
   const rows = await prisma.customer.findMany({
     where,
-    select: { id: true, name: true, category: true, customerGrade: true },
+    select: customerSearchSelect,
     take: 60,
     orderBy: { updatedAt: "desc" },
   });
 
-  return dedupeCustomersByName(rankByNameMatch(trimmed, rows)).slice(0, 20);
+  const ranked = rankByNameMatch(trimmed, rows);
+  const ordered = options?.markWritable ? sortCustomersForSearch(role, userId, ranked) : ranked;
+
+  return dedupeCustomersByName(ordered)
+    .slice(0, 20)
+    .map((row) => toCustomerSearchResult(role, userId, row));
 }
 
 export async function searchOpportunitiesForUser(

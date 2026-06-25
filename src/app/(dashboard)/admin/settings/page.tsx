@@ -18,11 +18,12 @@ import {
 } from "@/lib/config-settings-access";
 import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings";
 import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
+import { SalesLogPromptSettings } from "@/components/admin/sales-log-prompt-settings";
 import { AmapSettings } from "@/components/admin/amap-settings";
 import { KpiSettings } from "@/components/admin/kpi-settings";
 import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
-import { getAiAgentConfigForAdmin } from "@/lib/agent/config";
+import { getAiAgentConfigForAdmin, getSalesLogPromptSettings } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
 import {
   getSalesKpiConfigView,
@@ -52,7 +53,7 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     rawField
   );
 
-  const [users, optionsByCategory, aiAgentConfig, amapConfig, productTemplates, kpiConfig, stageOptions] =
+  const [users, optionsByCategory, aiAgentConfig, salesLogPrompt, amapConfig, productTemplates, kpiConfig, stageOptions] =
     await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
@@ -60,6 +61,7 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     }),
     getAllConfigOptionsGrouped(),
     role === "ADMIN" ? getAiAgentConfigForAdmin() : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.SALES_LOG ? getSalesLogPromptSettings() : Promise.resolve(null),
     role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
     activeTab === SETTINGS_TAB.PRODUCTS
       ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
@@ -128,6 +130,18 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             <KpiSettings kpiConfig={kpiConfig} stageOptions={stageOptions} />
           </CardContent>
         </Card>
+      ) : activeTab === SETTINGS_TAB.SALES_LOG && salesLogPrompt ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>日志助手 Prompt</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SalesLogPromptSettings
+              initial={salesLogPrompt}
+              showAiSettingsLink={role === "ADMIN"}
+            />
+          </CardContent>
+        </Card>
       ) : activeTab === SETTINGS_TAB.AI && aiAgentConfig ? (
         <Card>
           <CardHeader>
@@ -154,8 +168,19 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
               <p className="text-muted-foreground">
-                应用主页建议配置为：
-                <code className="rounded bg-muted px-1">https://你的域名/mobile/log</code>
+                将 CRM 嵌入企业微信工作台，支持手机与 PC 客户端内打开、PC 浏览器扫码登录。
+              </p>
+              <div className="rounded-md bg-muted p-3 text-xs leading-relaxed">
+                <p className="font-medium text-foreground">应用主页（推荐）</p>
+                <code className="mt-1 block break-all">
+                  https://你的域名/today-work
+                </code>
+                <p className="mt-3 font-medium text-foreground">销售日志 H5（可选二级入口）</p>
+                <code className="mt-1 block break-all">https://你的域名/mobile/log</code>
+              </div>
+              <p className="text-muted-foreground">
+                <strong>可信域名</strong>、<strong>OAuth 回调域</strong>、<strong>JS 接口安全域名</strong>
+                均填写 CRM 域名。PC 浏览器登录使用「登录页 → 企业微信扫码」。
               </p>
               <p>
                 配置状态：

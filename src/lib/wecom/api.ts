@@ -12,14 +12,27 @@ let jsapiTicketCache: TicketCache | null = null;
 let agentTicketCache: TicketCache | null = null;
 
 async function qyFetch<T extends Record<string, unknown>>(
-  url: string
+  url: string,
+  init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(url, { next: { revalidate: 0 } });
+  const res = await fetch(url, { ...init, next: { revalidate: 0 } });
   const data = (await res.json()) as T & { errcode?: number; errmsg?: string };
   if (data.errcode && data.errcode !== 0) {
     throw new Error(`企业微信 API 错误: ${data.errmsg ?? data.errcode}`);
   }
   return data;
+}
+
+async function qyPost<T extends Record<string, unknown>>(
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const token = await getAccessToken();
+  return qyFetch<T>(`${QYAPI}${path}?access_token=${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export async function getAccessToken() {
@@ -92,6 +105,13 @@ export type WeComOAuthUser = {
   userTicket?: string;
 };
 
+export type WeComUserDetail = {
+  userid: string;
+  mobile?: string;
+  email?: string;
+  biz_mail?: string;
+};
+
 export async function getOAuthUserInfo(code: string): Promise<WeComOAuthUser> {
   const token = await getAccessToken();
   const data = await qyFetch<{ userid?: string; user_ticket?: string }>(
@@ -103,6 +123,46 @@ export async function getOAuthUserInfo(code: string): Promise<WeComOAuthUser> {
   }
 
   return { userId: data.userid, userTicket: data.user_ticket };
+}
+
+export async function getWeComUserDetail(userTicket: string): Promise<WeComUserDetail> {
+  return qyPost<WeComUserDetail>("/auth/getuserdetail", { user_ticket: userTicket });
+}
+
+export async function resolveCrmUserForWeCom(input: {
+  wecomUserId: string;
+  userTicket?: string;
+}) {
+  const { prisma } = await import("@/lib/prisma");
+
+  const bound = await prisma.user.findUnique({ where: { wecomUserId: input.wecomUserId } });
+  if (bound) return { user: bound, autoBound: false as const };
+
+  if (!input.userTicket) {
+    return { user: null, autoBound: false as const };
+  }
+
+  try {
+    const detail = await getWeComUserDetail(input.userTicket);
+    const email = detail.biz_mail?.trim() || detail.email?.trim();
+    if (!email) {
+      return { user: null, autoBound: false as const };
+    }
+
+    const candidate = await prisma.user.findUnique({ where: { email } });
+    if (!candidate || candidate.wecomUserId) {
+      return { user: null, autoBound: false as const };
+    }
+
+    const user = await prisma.user.update({
+      where: { id: candidate.id },
+      data: { wecomUserId: input.wecomUserId },
+    });
+    return { user, autoBound: true as const };
+  } catch (error) {
+    console.warn("WeCom auto-bind skipped:", error);
+    return { user: null, autoBound: false as const };
+  }
 }
 
 export function buildOAuthUrl(redirectUri: string, state: string) {

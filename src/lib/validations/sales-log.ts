@@ -34,6 +34,7 @@ export const checkInFollowUpSchema = z.object({
     .optional()
     .nullable()
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  nextFollowUpContent: z.string().optional().nullable(),
   suggestedGrade: z.string().optional().nullable(),
   opportunityId: z.string().optional().nullable(),
 });
@@ -107,6 +108,7 @@ export const completeCheckInSchema = z
       .optional()
       .nullable()
       .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+    nextFollowUpContent: z.string().optional().nullable(),
   })
   .superRefine((data, ctx) => {
     if (normalizeContactIds(data).length === 0) {
@@ -133,6 +135,7 @@ export const manualLogFormSchema = z.object({
     .optional()
     .nullable()
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  nextFollowUpContent: z.string().optional().nullable(),
 });
 
 export const quickOpportunitySchema = z.object({

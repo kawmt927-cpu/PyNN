@@ -11,6 +11,7 @@ type Props = {
   customerId: string;
   ownerId: string | null;
   ownerName: string | null;
+  assistantNames?: string[];
   role: UserRole;
   salesUsers: SalesUser[];
 };
@@ -19,6 +20,7 @@ export function CustomerOwnerPanel({
   customerId,
   ownerId,
   ownerName,
+  assistantNames = [],
   role,
   salesUsers,
 }: Props) {
@@ -30,10 +32,18 @@ export function CustomerOwnerPanel({
   if (!canManage && !inPool) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-4">
-      <div className="text-sm">
-        <span className="text-muted-foreground">负责人：</span>
-        <span className="font-medium">{ownerName ?? "公海池（未分配）"}</span>
+    <div className="flex flex-col gap-3 rounded-md border bg-muted/30 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-sm">
+          <span className="text-muted-foreground">负责人：</span>
+          <span className="font-medium">{ownerName ?? "公海池（未分配）"}</span>
+        </div>
+        {assistantNames.length > 0 ? (
+          <div className="text-sm">
+            <span className="text-muted-foreground">协助负责人：</span>
+            <span className="font-medium">{assistantNames.join("、")}</span>
+          </div>
+        ) : null}
       </div>
 
       {showAssignForm && (

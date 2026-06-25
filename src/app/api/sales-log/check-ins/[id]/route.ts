@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { completeSalesCheckInManually, deleteSalesCheckIn } from "@/lib/sales-log/check-in";
 import { completeCheckInSchema, normalizeContactIds } from "@/lib/validations/sales-log";
+import { prisma } from "@/lib/prisma";
 import type { FollowUpMethod, UserRole } from "@prisma/client";
 
 const SALES_LOG_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
@@ -43,10 +44,21 @@ export async function PATCH(req: Request, { params }: Props) {
       opportunityId: parsed.opportunityId,
       nextFollowUpAt: parsed.nextFollowUpAt,
       nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
+      nextFollowUpContent: parsed.nextFollowUpContent,
+    });
+
+    const checkIn = await prisma.salesCheckIn.findUnique({
+      where: { id: id.trim() },
+      select: { customerId: true },
     });
 
     revalidatePath("/sales-log");
     revalidatePath("/today-work");
+    revalidatePath("/follow-ups");
+    if (checkIn?.customerId) {
+      revalidatePath(`/customers/${checkIn.customerId}`);
+      revalidatePath(`/customers/${checkIn.customerId}/follow-ups`);
+    }
     return Response.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) {

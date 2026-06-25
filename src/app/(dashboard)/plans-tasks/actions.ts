@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { FollowUpMethod } from "@prisma/client";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { weeklyAssignmentFormSchema } from "@/lib/validations/weekly-assignment";
@@ -10,11 +11,16 @@ import {
 } from "@/lib/validations/sales-target";
 import { monthlyKpiTargetFormSchema } from "@/lib/validations/monthly-kpi";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
+import {
+  cancelWeeklyAssignmentWithPlan,
+  createWeeklyAssignmentWithFollowUpPlan,
+} from "@/lib/today-work/create-weekly-assignment";
 
 function revalidatePlansTasks() {
   revalidatePath("/plans-tasks");
   revalidatePath("/today-work");
   revalidatePath("/weekly-tasks");
+  revalidatePath("/follow-ups");
 }
 
 export async function saveAnnualTarget(
@@ -160,34 +166,30 @@ export async function createWeeklyAssignment(formData: FormData) {
     assigneeId: formData.get("assigneeId"),
     customerId: formData.get("customerId")?.toString() || undefined,
     opportunityId: formData.get("opportunityId")?.toString() || undefined,
+    contactId: formData.get("contactId")?.toString() || undefined,
+    plannedMethod: formData.get("plannedMethod")?.toString() || undefined,
     title: formData.get("title"),
     description: formData.get("description") || undefined,
     dueAt: formData.get("dueAt"),
   });
 
-  let customerId = parsed.customerId;
-  let opportunityId = parsed.opportunityId;
+  const dueAt = new Date(parsed.dueAt);
+  if (Number.isNaN(dueAt.getTime())) throw new Error("截止时间无效");
 
-  if (parsed.opportunityId) {
-    const opportunity = await prisma.opportunity.findUnique({
-      where: { id: parsed.opportunityId },
-      select: { id: true, customerId: true },
-    });
-    if (!opportunity) throw new Error("商机不存在");
-    opportunityId = opportunity.id;
-    customerId = opportunity.customerId;
-  }
+  const plannedMethod = parsed.plannedMethod?.trim()
+    ? (parsed.plannedMethod.trim() as FollowUpMethod)
+    : null;
 
-  await prisma.salesWeeklyAssignment.create({
-    data: {
-      createdById: session.user.id,
-      assigneeId: parsed.assigneeId,
-      customerId: customerId || undefined,
-      opportunityId: opportunityId || undefined,
-      title: parsed.title,
-      description: parsed.description,
-      dueAt: new Date(parsed.dueAt),
-    },
+  await createWeeklyAssignmentWithFollowUpPlan({
+    createdById: session.user.id,
+    assigneeId: parsed.assigneeId,
+    customerId: parsed.customerId,
+    opportunityId: parsed.opportunityId?.trim() || null,
+    contactId: parsed.contactId?.trim() || null,
+    plannedMethod,
+    title: parsed.title,
+    description: parsed.description,
+    dueAt,
   });
 
   revalidatePlansTasks();
@@ -199,13 +201,8 @@ export async function cancelWeeklyAssignment(id: string) {
     throw new Error("无权取消任务");
   }
 
-  const existing = await prisma.salesWeeklyAssignment.findUnique({ where: { id } });
-  if (!existing) throw new Error("任务不存在");
-  if (existing.status !== "PENDING") throw new Error("只能取消待完成的任务");
-
-  await prisma.salesWeeklyAssignment.update({
-    where: { id },
-    data: { status: "CANCELLED" },
+  await prisma.$transaction(async (tx) => {
+    await cancelWeeklyAssignmentWithPlan(tx, id);
   });
 
   revalidatePlansTasks();

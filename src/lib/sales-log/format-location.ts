@@ -19,3 +19,17 @@ export function formatCheckInLocation(input: {
   const fallback = input.locationText?.trim();
   return fallback || "—";
 }
+
+export type CheckInLocationFields = {
+  latitude?: number | null;
+  longitude?: number | null;
+  addressProvince?: string | null;
+  addressCity?: string | null;
+  addressDistrict?: string | null;
+  addressStreet?: string | null;
+  locationText?: string | null;
+};
+
+export function hasCheckInLocation(input: CheckInLocationFields): boolean {
+  return formatCheckInLocation(input) !== "—";
+}

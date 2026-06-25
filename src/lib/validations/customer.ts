@@ -20,6 +20,7 @@ export const customerFormSchema = z.object({
   tagValues: z.array(z.string()).optional(),
   notes: z.string().optional(),
   ownerId: z.string().optional().nullable(),
+  assistantOwnerIds: z.array(z.string()).optional().default([]),
 });
 
 export type CustomerFormInput = z.infer<typeof customerFormSchema>;
@@ -38,6 +39,7 @@ export const followUpFormSchema = z.object({
     .optional()
     .nullable()
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  nextFollowUpContent: z.string().optional().nullable(),
   suggestedGrade: z.string().optional().nullable(),
   contactIds: z.array(z.string().min(1)).min(1, "请选择联系人"),
   opportunityId: z.string().optional().nullable(),

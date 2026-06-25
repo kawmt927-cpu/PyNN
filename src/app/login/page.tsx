@@ -1,8 +1,8 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,9 +10,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DEMO_ACCOUNTS, isDemoLoginEnabled, SALES_QUICK_LOGIN } from "@/lib/demo-accounts";
 import type { UserRole } from "@prisma/client";
 import { cn } from "@/lib/utils";
+import { WeComLoginSection } from "@/components/auth/wecom-login-section";
+import { resolveReturnTo } from "@/lib/navigation/return-to";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">加载中…</div>}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = resolveReturnTo(searchParams.get("returnTo"), "/");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -34,7 +46,7 @@ export default function LoginPage() {
       setError("邮箱或密码错误");
       return false;
     }
-    router.push("/");
+    router.push(returnTo);
     router.refresh();
     return true;
   }
@@ -165,6 +177,8 @@ export default function LoginPage() {
               </div>
             </>
           )}
+
+          <WeComLoginSection />
         </CardContent>
       </Card>
     </div>

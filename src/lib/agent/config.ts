@@ -21,6 +21,26 @@ export type AiAgentConfigView = Omit<EffectiveAiAgentConfig, "apiKey"> & {
   apiKeyMask: string;
 };
 
+export type SalesLogPromptSettingsView = {
+  /** 数据库中的自定义内容，空表示使用内置默认 */
+  customPrompt: string;
+  /** 实际生效的完整系统提示词 */
+  effectivePrompt: string;
+  usingDefault: boolean;
+  defaultPrompt: string;
+};
+
+export async function getSalesLogPromptSettings(): Promise<SalesLogPromptSettingsView> {
+  const row = await getAiAgentConfigRow();
+  const customPrompt = row.salesLogSystemPrompt?.trim() ?? "";
+  return {
+    customPrompt,
+    effectivePrompt: customPrompt || SALES_LOG_SYSTEM_PROMPT,
+    usingDefault: !customPrompt,
+    defaultPrompt: SALES_LOG_SYSTEM_PROMPT,
+  };
+}
+
 const DEFAULT_API_BASE = "https://api.moonshot.cn/v1";
 const DEFAULT_MODEL = "kimi-k2.5";
 

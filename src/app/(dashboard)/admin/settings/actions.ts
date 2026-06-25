@@ -9,6 +9,7 @@ import {
   requireAmapSettingsAccess,
   requireWeComSettingsAccess,
   requireKpiSettingsAccess,
+  requireSalesLogPromptSettingsAccess,
 } from "@/lib/config-settings-access";
 import { configOptionSchema, saveConfigCategoryOptionsSchema, saveCustomerGradeOptionsSchema, saveCustomerTagOptionsSchema } from "@/lib/validations/customer";
 import { generateConfigOptionValue, CONFIG_CATEGORY } from "@/lib/config-options";
@@ -18,8 +19,9 @@ import {
   nextConfigOptionSortOrder,
   renumberConfigOptions,
 } from "@/lib/config-options-sort";
-import { aiAgentConfigSchema } from "@/lib/validations/ai-agent";
+import { aiAgentConfigSchema, salesLogPromptSchema } from "@/lib/validations/ai-agent";
 import { getAiAgentConfigRow } from "@/lib/agent/config";
+import { SALES_LOG_SYSTEM_PROMPT } from "@/lib/agent/sales-log-prompt";
 import { getAmapConfigRow } from "@/lib/amap/config";
 import { resolveCheckInLocation } from "@/lib/amap/reverse-geocode";
 import { amapConfigSchema } from "@/lib/validations/amap";
@@ -41,7 +43,6 @@ function parseAiAgentFormData(formData: FormData) {
     model: (formData.get("model") as string)?.trim(),
     maxSteps: Number(formData.get("maxSteps")),
     thinkingEnabled: formCheckbox(formData, "thinkingEnabled"),
-    salesLogSystemPrompt: (formData.get("salesLogSystemPrompt") as string)?.trim() || undefined,
     toolSearchCustomers: formCheckbox(formData, "toolSearchCustomers"),
     toolSearchOpportunities: formCheckbox(formData, "toolSearchOpportunities"),
     toolGetCustomer: formCheckbox(formData, "toolGetCustomer"),
@@ -76,11 +77,34 @@ export async function saveAiAgentConfig(formData: FormData) {
       model: parsed.model,
       maxSteps: parsed.maxSteps,
       thinkingEnabled: parsed.thinkingEnabled,
-      salesLogSystemPrompt: parsed.salesLogSystemPrompt || null,
       toolSearchCustomers: parsed.toolSearchCustomers,
       toolSearchOpportunities: parsed.toolSearchOpportunities,
       toolGetCustomer: parsed.toolGetCustomer,
       toolListFollowUps: parsed.toolListFollowUps,
+      updatedById: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/settings");
+}
+
+export async function saveSalesLogPrompt(formData: FormData) {
+  const session = await requireSalesLogPromptSettingsAccess();
+  const raw = (formData.get("salesLogSystemPrompt") as string | null)?.trim() ?? "";
+  salesLogPromptSchema.parse({ salesLogSystemPrompt: raw || undefined });
+
+  const normalized =
+    raw === "" || raw === SALES_LOG_SYSTEM_PROMPT.trim() ? null : raw;
+
+  await prisma.aiAgentConfig.upsert({
+    where: { id: "default" },
+    create: {
+      id: "default",
+      salesLogSystemPrompt: normalized,
+      updatedById: session.user.id,
+    },
+    update: {
+      salesLogSystemPrompt: normalized,
       updatedById: session.user.id,
     },
   });

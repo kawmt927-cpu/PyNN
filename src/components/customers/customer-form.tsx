@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import { CustomerTagSelect } from "@/components/customers/customer-tag-select";
+import { AssistantOwnersField } from "@/components/customers/assistant-owners-field";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
@@ -39,6 +40,7 @@ type CustomerFormValues = {
   customerGrade: string | null;
   notes: string | null;
   ownerId: string | null;
+  assistantOwnerIds?: string[];
 };
 
 type Props = {
@@ -47,6 +49,7 @@ type Props = {
   submitLabel: string;
   initial?: Partial<CustomerFormValues>;
   showOwnerSelect?: boolean;
+  showAssistantOwnersSelect?: boolean;
   salesUsers?: SalesOption[];
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
@@ -80,6 +83,7 @@ export function CustomerForm({
   submitLabel,
   initial,
   showOwnerSelect,
+  showAssistantOwnersSelect = false,
   salesUsers = [],
   sourceOptions,
   typeOptions,
@@ -105,6 +109,11 @@ export function CustomerForm({
   const [nameCorrected, setNameCorrected] = useState(false);
   const [pending, startTransition] = useTransition();
   const [enriching, startEnrichTransition] = useTransition();
+  const [selectedOwnerId, setSelectedOwnerId] = useState(
+    initial?.ownerId === null || initial?.ownerId === undefined
+      ? POOL_OWNER_VALUE
+      : initial.ownerId
+  );
 
   const canEnrich = isCreate && canUseCustomerKimiEnrich(category);
 
@@ -174,10 +183,7 @@ export function CustomerForm({
     });
   }
 
-  const defaultOwner =
-    initial?.ownerId === null || initial?.ownerId === undefined
-      ? POOL_OWNER_VALUE
-      : initial.ownerId;
+  const effectiveOwnerId = selectedOwnerId === POOL_OWNER_VALUE ? null : selectedOwnerId;
 
   return (
     <form action={handleSubmit} className="max-w-2xl space-y-6">
@@ -401,11 +407,20 @@ export function CustomerForm({
               { value: POOL_OWNER_VALUE, label: "公海池（未分配）" },
               ...salesUsers.map((u) => ({ value: u.id, label: u.name })),
             ]}
-            defaultValue={defaultOwner}
+            value={selectedOwnerId}
+            onValueChange={setSelectedOwnerId}
             className={FORM_GRID_CELL}
             labelClassName={FORM_GRID_LABEL}
           />
         )}
+
+        {showAssistantOwnersSelect && salesUsers.length > 0 ? (
+          <AssistantOwnersField
+            salesUsers={salesUsers}
+            ownerId={effectiveOwnerId}
+            initialIds={initial?.assistantOwnerIds ?? []}
+          />
+        ) : null}
 
         <div className={FORM_FULL_WIDTH}>
           <Label htmlFor="notes">备注</Label>

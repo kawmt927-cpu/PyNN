@@ -56,6 +56,9 @@ function withEmptyOption(options: ConfigOptionItem[]) {
   return [{ value: "", label: "请选择" }, ...options];
 }
 
+const FORM_GRID_CELL = "grid min-w-0 grid-rows-[2.75rem_auto] gap-2 space-y-0";
+const FORM_GRID_LABEL = "self-end leading-snug";
+
 function toDatetimeLocal(value: Date | string) {
   const d = new Date(value);
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -199,9 +202,11 @@ export function OpportunityFollowUpForm({
         <p className="text-sm font-medium text-muted-foreground">
           同步更新商机（如有变更，将与跟进合并为一条记录）
         </p>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor={`expectedAmount-${mode}`}>预计金额 *</Label>
+        <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
+          <div className={FORM_GRID_CELL}>
+            <Label htmlFor={`expectedAmount-${mode}`} className={FORM_GRID_LABEL}>
+              预计金额 *
+            </Label>
             <Input
               id={`expectedAmount-${mode}`}
               type="number"
@@ -214,8 +219,10 @@ export function OpportunityFollowUpForm({
               className={opportunity.amountLocked ? "bg-muted" : undefined}
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor={`expectedCloseDate-${mode}`}>预计签约月份 *</Label>
+          <div className={FORM_GRID_CELL}>
+            <Label htmlFor={`expectedCloseDate-${mode}`} className={FORM_GRID_LABEL}>
+              预计签约月份 *
+            </Label>
             <Input
               id={`expectedCloseDate-${mode}`}
               type="month"
@@ -231,9 +238,13 @@ export function OpportunityFollowUpForm({
             options={withEmptyOption(stageOptions)}
             value={form.stage}
             onValueChange={(stage) => patchForm({ stage })}
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
           />
-          <div className="space-y-2">
-            <Label htmlFor={`winProbability-${mode}`}>赢单概率 (%)</Label>
+          <div className={FORM_GRID_CELL}>
+            <Label htmlFor={`winProbability-${mode}`} className={FORM_GRID_LABEL}>
+              赢单概率 (%)
+            </Label>
             <Input
               id={`winProbability-${mode}`}
               type="number"

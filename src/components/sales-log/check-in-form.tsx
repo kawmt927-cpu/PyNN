@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,6 @@ import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-search-select";
 import {
-  CheckInDuplicateDialog,
-  type TodayCustomerCheckInItem,
-} from "@/components/sales-log/check-in-duplicate-dialog";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -44,6 +40,7 @@ import type { SerializedCustomerPendingFollowPlan } from "@/lib/follow-ups/unifi
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { cn } from "@/lib/utils";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
+import { useCheckInDialogClose } from "@/components/today-work/check-in-dialog-context";
 
 type EntryTiming = "later" | "now";
 
@@ -84,6 +81,7 @@ export function CheckInForm({
   customerContext?: CheckInCustomerContext;
 }) {
   const router = useRouter();
+  const closeCheckInDialog = useCheckInDialogClose();
   const customerSelectRef = useRef<EntitySearchSelectHandle>(null);
   const lockedCustomer = Boolean(customerContext);
   const pendingPlans = customerContext?.pendingPlans ?? [];
@@ -91,7 +89,7 @@ export function CheckInForm({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [checkInMode, setCheckInMode] = useState<CheckInMode>("interaction");
-  const [entryTiming, setEntryTiming] = useState<EntryTiming>(lockedCustomer ? "now" : "later");
+  const [entryTiming, setEntryTiming] = useState<EntryTiming>("now");
   const [customerId, setCustomerId] = useState(customerContext?.customerId ?? "");
   const [customerLabel, setCustomerLabel] = useState(customerContext?.customerLabel ?? "");
   const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(
@@ -111,11 +109,9 @@ export function CheckInForm({
   );
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
+  const [nextFollowUpContent, setNextFollowUpContent] = useState("");
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
-  const [duplicateOpen, setDuplicateOpen] = useState(false);
-  const [duplicateItems, setDuplicateItems] = useState<TodayCustomerCheckInItem[]>([]);
-  const [duplicatePayload, setDuplicatePayload] = useState<Record<string, unknown> | null>(null);
   const [noLocationConfirmOpen, setNoLocationConfirmOpen] = useState(false);
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
@@ -125,6 +121,11 @@ export function CheckInForm({
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
   const customerReady = Boolean(customerId);
+
+  useEffect(() => {
+    if (!customerId) return;
+    setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
+  }, [customerId, currentCustomerGrade]);
 
   async function submitCheckIn(payload: Record<string, unknown>, updateCheckInId?: string) {
     const res = await fetch("/api/sales-log/check-ins", {
@@ -161,7 +162,7 @@ export function CheckInForm({
       setSuggestedGrade(customerGradeFormValue(customerContext.customerGrade));
     } else {
       setCheckInMode("interaction");
-      setEntryTiming("later");
+      setEntryTiming("now");
       setCustomerId("");
       setCustomerLabel("");
       setCurrentCustomerGrade(null);
@@ -175,6 +176,7 @@ export function CheckInForm({
     setContent("");
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
+    setNextFollowUpContent("");
     setSelectedPendingKeys([]);
     setQueuedPayload(null);
   }
@@ -202,9 +204,23 @@ export function CheckInForm({
             opportunityId: opportunityId || null,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
+            nextFollowUpContent: nextFollowUpContent.trim() || null,
           }
         : null,
     };
+  }
+
+  function finishSubmitSuccess() {
+    setNoLocationConfirmOpen(false);
+    setPendingPayload(null);
+    setCompleteDialogOpen(false);
+    setQueuedPayload(null);
+    resetForm();
+    closeCheckInDialog?.();
+    if (customerContext?.returnPath) {
+      router.push(customerContext.returnPath);
+    }
+    router.refresh();
   }
 
   function runSubmit(
@@ -214,39 +230,12 @@ export function CheckInForm({
   ) {
     startTransition(async () => {
       try {
-        if (isInteraction && customerId) {
-          const dupRes = await fetch(
-            `/api/sales-log/check-ins/today?customerId=${encodeURIComponent(customerId)}`,
-            { credentials: "include" }
-          );
-          if (dupRes.ok) {
-            const dupData = (await dupRes.json()) as { items?: TodayCustomerCheckInItem[] };
-            const items = dupData.items ?? [];
-            if (items.length > 0 && !updateCheckInId) {
-              setDuplicateItems(items);
-              setDuplicatePayload({ ...payload, completedPendingKeys: completedKeys });
-              setDuplicateOpen(true);
-              return;
-            }
-          }
-        }
-
         await submitCheckIn({ ...payload, completedPendingKeys: completedKeys }, updateCheckInId);
       } catch (err) {
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
         return;
       }
-      setDuplicateOpen(false);
-      setDuplicatePayload(null);
-      setNoLocationConfirmOpen(false);
-      setPendingPayload(null);
-      setCompleteDialogOpen(false);
-      setQueuedPayload(null);
-      resetForm();
-      if (customerContext?.returnPath) {
-        router.push(customerContext.returnPath);
-      }
-      router.refresh();
+      finishSubmitSuccess();
     });
   }
 
@@ -288,7 +277,8 @@ export function CheckInForm({
         suggestedGrade,
         nextFollowUpAt,
         nextFollowUpMethod,
-        currentCustomerGrade
+        currentCustomerGrade,
+        nextFollowUpContent
       );
       if (planError) {
         setError(planError);
@@ -311,52 +301,6 @@ export function CheckInForm({
   function handleConfirmNoLocation() {
     if (!pendingPayload) return;
     proceedSubmit(pendingPayload);
-  }
-
-  function handleDuplicateModify(checkInId: string) {
-    if (!duplicatePayload) return;
-    const completedKeys = (duplicatePayload.completedPendingKeys as string[] | undefined) ?? [];
-    setError(null);
-    startTransition(async () => {
-      try {
-        await submitCheckIn({ ...duplicatePayload, completedPendingKeys: completedKeys }, checkInId);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
-        return;
-      }
-      setDuplicateOpen(false);
-      setDuplicatePayload(null);
-      setNoLocationConfirmOpen(false);
-      setPendingPayload(null);
-      resetForm();
-      if (customerContext?.returnPath) {
-        router.push(customerContext.returnPath);
-      }
-      router.refresh();
-    });
-  }
-
-  function handleDuplicateCreateNew() {
-    if (!duplicatePayload) return;
-    const completedKeys = (duplicatePayload.completedPendingKeys as string[] | undefined) ?? [];
-    setError(null);
-    startTransition(async () => {
-      try {
-        await submitCheckIn({ ...duplicatePayload, completedPendingKeys: completedKeys });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
-        return;
-      }
-      setDuplicateOpen(false);
-      setDuplicatePayload(null);
-      setNoLocationConfirmOpen(false);
-      setPendingPayload(null);
-      resetForm();
-      if (customerContext?.returnPath) {
-        router.push(customerContext.returnPath);
-      }
-      router.refresh();
-    });
   }
 
   return (
@@ -420,6 +364,7 @@ export function CheckInForm({
                       name="customerId"
                       label="客户"
                       required
+                      writableOnly
                       value={customerId}
                       selectedLabel={customerLabel}
                       onValueChange={(id, option) => {
@@ -572,7 +517,7 @@ export function CheckInForm({
                   </div>
                   <CustomerGradeSelect
                     id="checkInGrade"
-                    label="客户等级（可选）"
+                    label="客户等级（如需调整）"
                     value={suggestedGrade}
                     onValueChange={setSuggestedGrade}
                     options={customerFormOptions.gradeOptions}
@@ -588,8 +533,12 @@ export function CheckInForm({
                       dateId="checkInNextAt"
                       dateValue={nextFollowUpAt}
                       onDateChange={setNextFollowUpAt}
+                      contentId="checkInNextContent"
+                      contentValue={nextFollowUpContent}
+                      onContentChange={setNextFollowUpContent}
                       suggestedGrade={suggestedGrade}
                       currentCustomerGrade={currentCustomerGrade}
+                      gradeOptions={customerFormOptions.gradeOptions}
                       disabled={!customerReady}
                       methodSelectClassName={cn(!customerReady && disabledFieldClass)}
                       dateInputClassName={cn(!customerReady && disabledFieldClass)}
@@ -633,16 +582,6 @@ export function CheckInForm({
         </div>
       </form>
 
-      <CheckInDuplicateDialog
-        open={duplicateOpen}
-        onOpenChange={setDuplicateOpen}
-        customerName={customerLabel}
-        items={duplicateItems}
-        pending={pending}
-        onModify={handleDuplicateModify}
-        onCreateNew={handleDuplicateCreateNew}
-      />
-
       <Dialog open={noLocationConfirmOpen} onOpenChange={setNoLocationConfirmOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -685,6 +624,8 @@ export function CheckInForm({
         onCreated={(customer) => {
           setCustomerId(customer.id);
           setCustomerLabel(customer.name);
+          setCurrentCustomerGrade(customer.customerGrade ?? null);
+          setSuggestedGrade(customerGradeFormValue(customer.customerGrade));
           setContactIds([]);
           setOpportunityId("");
           setOpportunityLabel("");

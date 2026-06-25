@@ -4,7 +4,6 @@ import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { AiAgentConfigView } from "@/lib/agent/config";
 import { saveAiAgentConfig, testAiAgentConnection } from "@/app/(dashboard)/admin/settings/actions";
 
@@ -153,17 +152,13 @@ export function AiAgentSettings({ initial }: Props) {
           defaultChecked={initial.thinkingEnabled}
         />
 
-        <div className="space-y-2">
-          <Label htmlFor="salesLogSystemPrompt">销售日志系统提示词</Label>
-          <Textarea
-            id="salesLogSystemPrompt"
-            name="salesLogSystemPrompt"
-            rows={12}
-            defaultValue={initial.salesLogSystemPrompt}
-            placeholder="留空则使用内置默认提示词"
-            className="font-mono text-xs"
-          />
-        </div>
+        <p className="text-sm text-muted-foreground">
+          销售日志系统提示词请在{" "}
+          <a href="/admin/settings?tab=sales-log" className="font-medium text-primary underline">
+            日志助手
+          </a>{" "}
+          标签页中查看与修改。
+        </p>
 
         <div className="space-y-3 rounded-md border p-4">
           <p className="text-sm font-medium">Agent 工具</p>

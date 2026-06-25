@@ -90,7 +90,10 @@ export function PlannedFollowUpDateTimeInputs({
         value={date}
         disabled={disabled}
         required={required && !disabled}
-        onChange={(e) => updateDate(e.target.value)}
+        onChange={(e) => {
+          updateDate(e.target.value);
+          e.currentTarget.blur();
+        }}
         className={inputClassName}
       />
       <Input

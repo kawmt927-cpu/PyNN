@@ -65,6 +65,7 @@ export function FollowUpForm({
   );
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
+  const [nextFollowUpContent, setNextFollowUpContent] = useState("");
 
   const hasPendingPlans = pendingPlans.length > 0;
 
@@ -80,6 +81,7 @@ export function FollowUpForm({
     formData.set("opportunityId", opportunityId);
     formData.set("nextFollowUpAt", nextFollowUpAt);
     formData.set("nextFollowUpMethod", nextFollowUpMethod);
+    formData.set("nextFollowUpContent", nextFollowUpContent);
     return formData;
   }
 
@@ -97,6 +99,7 @@ export function FollowUpForm({
     setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
+    setNextFollowUpContent("");
     setOpportunityId("");
     setOpportunityLabel("");
     setSelectedPendingKeys([]);
@@ -133,7 +136,8 @@ export function FollowUpForm({
       suggestedGrade,
       nextFollowUpAt,
       nextFollowUpMethod,
-      currentCustomerGrade
+      currentCustomerGrade,
+      nextFollowUpContent
     );
     if (planError) {
       setError(planError);
@@ -256,8 +260,12 @@ export function FollowUpForm({
               dateId="nextFollowUpAt"
               dateValue={nextFollowUpAt}
               onDateChange={setNextFollowUpAt}
+              contentId="nextFollowUpContent"
+              contentValue={nextFollowUpContent}
+              onContentChange={setNextFollowUpContent}
               suggestedGrade={suggestedGrade}
               currentCustomerGrade={currentCustomerGrade}
+              gradeOptions={gradeOptions}
             />
           </div>
         </div>
