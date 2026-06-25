@@ -367,7 +367,6 @@ model FollowUp {
   linkedContacts FollowUpContact[]
   user           User             @relation(fields: [userId], references: [id])
   opportunity    Opportunity?     @relation(fields: [opportunityId], references: [id])
-  faceVisit      FaceVisitDetail?
   salesTask      SalesTask?
   salesCheckIn   SalesCheckIn?
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
@@ -383,21 +382,6 @@ model FollowUpContact {
   contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@id([followUpId, contactId])
-}
-
-model FaceVisitDetail {
-  id            String  @id @default(cuid())
-  followUpId    String  @unique
-  location      String
-  department    String?
-  companions    String?
-  departAt      DateTime?
-  returnAt      DateTime?
-  detailedNotes String
-  latitude      Float?
-  longitude     Float?
-
-  followUp FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
 }
 
 // ─── CRM: Opportunity ────────────────────────────────────

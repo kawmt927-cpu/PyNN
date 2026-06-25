@@ -14,6 +14,16 @@ export function normalizeCheckInMode(mode: string | null | undefined): CheckInMo
   return "interaction";
 }
 
+export function normalizeContactIds(input: {
+  contactId?: string | null;
+  contactIds?: string[] | null;
+}): string[] {
+  const fromArray = (input.contactIds ?? []).map((id) => id.trim()).filter(Boolean);
+  if (fromArray.length > 0) return [...new Set(fromArray)];
+  const single = input.contactId?.trim();
+  return single ? [single] : [];
+}
+
 export const checkInFollowUpSchema = z.object({
   method: z.enum(SALES_LOG_METHODS),
   content: z.string().min(1, "请填写往来内容"),
@@ -26,8 +36,6 @@ export const checkInFollowUpSchema = z.object({
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
   suggestedGrade: z.string().optional().nullable(),
   opportunityId: z.string().optional().nullable(),
-  location: z.string().optional().nullable(),
-  detailedNotes: z.string().optional().nullable(),
 });
 
 export const checkInFormSchema = z
@@ -37,6 +45,7 @@ export const checkInFormSchema = z
       .default("interaction"),
     customerId: z.string().optional().nullable(),
     contactId: z.string().optional().nullable(),
+    contactIds: z.array(z.string().min(1)).optional().default([]),
     latitude: z.coerce.number().optional().nullable(),
     longitude: z.coerce.number().optional().nullable(),
     locationText: z.string().optional().nullable(),
@@ -48,6 +57,7 @@ export const checkInFormSchema = z
     completeInteractionNow: z.boolean().optional().default(false),
     followUp: checkInFollowUpSchema.optional().nullable(),
     updateCheckInId: z.string().optional().nullable(),
+    completedPendingKeys: z.array(z.string().min(1)).optional().default([]),
   })
   .superRefine((data, ctx) => {
     const mode = normalizeCheckInMode(data.checkInMode);
@@ -61,8 +71,12 @@ export const checkInFormSchema = z
     if (mode === "interaction" && !data.customerId?.trim()) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请选择客户", path: ["customerId"] });
     }
-    if (mode === "interaction" && !data.contactId?.trim()) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "请选择联系人", path: ["contactId"] });
+    if (mode === "interaction" && normalizeContactIds(data).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "请至少选择一位联系人",
+        path: ["contactIds"],
+      });
     }
     if (mode === "interaction" && data.completeInteractionNow) {
       if (!data.followUp?.content?.trim()) {
@@ -78,22 +92,31 @@ export const checkInFormSchema = z
 
 export type CheckInFollowUpInput = z.infer<typeof checkInFollowUpSchema>;
 
-export const completeCheckInSchema = z.object({
-  contactId: z.string().min(1, "请选择联系人"),
-  method: z.enum(SALES_LOG_METHODS),
-  content: z.string().min(1, "请填写往来内容"),
-  result: z.string().optional().nullable(),
-  suggestedGrade: z.string().optional().nullable(),
-  opportunityId: z.string().optional().nullable(),
-  nextFollowUpAt: z.string().optional().nullable(),
-  nextFollowUpMethod: z
-    .string()
-    .optional()
-    .nullable()
-    .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
-  location: z.string().optional().nullable(),
-  detailedNotes: z.string().optional().nullable(),
-});
+export const completeCheckInSchema = z
+  .object({
+    contactId: z.string().optional().nullable(),
+    contactIds: z.array(z.string().min(1)).optional().default([]),
+    method: z.enum(SALES_LOG_METHODS),
+    content: z.string().min(1, "请填写往来内容"),
+    result: z.string().optional().nullable(),
+    suggestedGrade: z.string().optional().nullable(),
+    opportunityId: z.string().optional().nullable(),
+    nextFollowUpAt: z.string().optional().nullable(),
+    nextFollowUpMethod: z
+      .string()
+      .optional()
+      .nullable()
+      .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
+  })
+  .superRefine((data, ctx) => {
+    if (normalizeContactIds(data).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "请至少选择一位联系人",
+        path: ["contactIds"],
+      });
+    }
+  });
 
 export const manualLogFormSchema = z.object({
   customerId: z.string().min(1, "请选择客户"),
@@ -110,8 +133,6 @@ export const manualLogFormSchema = z.object({
     .optional()
     .nullable()
     .transform((v) => (v && SALES_LOG_METHODS.includes(v as (typeof SALES_LOG_METHODS)[number]) ? v : null)),
-  location: z.string().optional().nullable(),
-  detailedNotes: z.string().optional().nullable(),
 });
 
 export const quickOpportunitySchema = z.object({

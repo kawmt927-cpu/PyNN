@@ -38,6 +38,15 @@ export async function POST(req: Request) {
 
     revalidatePath("/sales-log");
     revalidatePath("/today-work");
+    revalidatePath("/follow-ups");
+    if (parsed.customerId?.trim()) {
+      revalidatePath(`/customers/${parsed.customerId.trim()}`);
+      revalidatePath(`/customers/${parsed.customerId.trim()}/follow-ups`);
+    }
+    if (parsed.followUp?.opportunityId?.trim()) {
+      revalidatePath(`/opportunities/${parsed.followUp.opportunityId.trim()}`);
+      revalidatePath(`/opportunities/${parsed.followUp.opportunityId.trim()}/follow-ups`);
+    }
     return Response.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) {

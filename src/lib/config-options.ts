@@ -48,7 +48,7 @@ export type ConfigModuleDef = {
 export const CONFIG_MODULES: ConfigModuleDef[] = [
   {
     id: "customer",
-    label: "客户管理",
+    label: "客户",
     scope: "sales",
     fields: [
       { category: CONFIG_CATEGORY.CUSTOMER_SOURCE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_SOURCE] },
@@ -58,7 +58,21 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
       { category: CONFIG_CATEGORY.CONTACT_TITLE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_TITLE] },
       { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_DEPARTMENT] },
       { category: CONFIG_CATEGORY.CONTACT_ROLE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_ROLE] },
+    ],
+  },
+  {
+    id: "opportunity",
+    label: "商机",
+    scope: "sales",
+    fields: [
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
+    ],
+  },
+  {
+    id: "contract",
+    label: "合同",
+    scope: "sales",
+    fields: [
       { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD] },
     ],
   },
@@ -76,9 +90,14 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
 ];
 
 export function resolveConfigField(moduleId: string, category: string | undefined) {
+  if (category) {
+    for (const mod of CONFIG_MODULES) {
+      const field = mod.fields.find((f) => f.category === category);
+      if (field) return { module: mod, field };
+    }
+  }
   const mod = CONFIG_MODULES.find((m) => m.id === moduleId) ?? CONFIG_MODULES[0];
-  const field =
-    mod.fields.find((f) => f.category === category) ?? mod.fields[0];
+  const field = mod.fields.find((f) => f.category === category) ?? mod.fields[0];
   return { module: mod, field };
 }
 

@@ -103,6 +103,43 @@ export async function getGradeExpiryPendingCustomers(
   return items.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime()).slice(0, take);
 }
 
+export async function getCustomerGradeExpiryPending(
+  customerId: string,
+  now: Date
+): Promise<GradeExpiryPendingItem | null> {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: {
+      id: true,
+      name: true,
+      customerGrade: true,
+      createdAt: true,
+      owner: { select: { id: true, name: true } },
+    },
+  });
+  if (!customer) return null;
+
+  const intervalMap = await getCustomerGradeIntervalMap();
+  const intervalDays = resolveGradeIntervalDays(customer.customerGrade, intervalMap);
+  if (!intervalDays) return null;
+
+  const lastInteractionMap = await getLastInteractionMap([customerId]);
+  const lastInteractionAt = lastInteractionMap.get(customerId) ?? customer.createdAt;
+  const dueAt = computeGradeFollowUpDueAt(lastInteractionAt, intervalDays);
+  if (dueAt > now) return null;
+
+  return {
+    kind: "grade_expiry",
+    customerId: customer.id,
+    customerName: customer.name,
+    customerGrade: customer.customerGrade,
+    owner: customer.owner ?? { id: "", name: "未分配" },
+    dueAt,
+    lastInteractionAt,
+    overdue: true,
+  };
+}
+
 export async function getLastInteractionBefore(
   customerId: string,
   before: Date

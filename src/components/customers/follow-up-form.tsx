@@ -11,6 +11,11 @@ import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-
 import { ContactSelectField } from "@/components/sales-log/contact-select-field";
 import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity-dialog";
 import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
+import { CustomerPendingFollowPlansPanel } from "@/components/customers/customer-pending-follow-plans-panel";
+import {
+  CompletePendingFollowUpDialog,
+  planSelectionKey,
+} from "@/components/customers/complete-pending-follow-up-dialog";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import { createFollowUp } from "@/app/(dashboard)/customers/actions";
@@ -19,6 +24,7 @@ import {
   customerGradeSubmitValue,
 } from "@/lib/customers/grade";
 import type { ConfigOptionItem } from "@/lib/config-options";
+import type { SerializedCustomerPendingFollowPlan } from "@/lib/follow-ups/unified";
 
 type Props = {
   customerId: string;
@@ -26,6 +32,7 @@ type Props = {
   currentCustomerGrade?: string | null;
   stageOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  pendingPlans?: SerializedCustomerPendingFollowPlan[];
 };
 
 function todayLocalDatetime() {
@@ -40,6 +47,7 @@ export function FollowUpForm({
   currentCustomerGrade,
   stageOptions,
   gradeOptions,
+  pendingPlans = [],
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -49,13 +57,72 @@ export function FollowUpForm({
   const [opportunityId, setOpportunityId] = useState("");
   const [opportunityLabel, setOpportunityLabel] = useState("");
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
+  const [pendingForm, setPendingForm] = useState<HTMLFormElement | null>(null);
   const [suggestedGrade, setSuggestedGrade] = useState(() =>
     customerGradeFormValue(currentCustomerGrade)
   );
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
 
-  const isFaceVisit = method === "FACE_VISIT";
+  const hasPendingPlans = pendingPlans.length > 0;
+
+  function buildFormData(form: HTMLFormElement) {
+    const formData = new FormData(form);
+    formData.set("customerId", customerId);
+    formData.delete("contactIds");
+    for (const id of contactIds) {
+      formData.append("contactIds", id);
+    }
+    formData.set("method", method);
+    formData.set("suggestedGrade", customerGradeSubmitValue(suggestedGrade, currentCustomerGrade) ?? "");
+    formData.set("opportunityId", opportunityId);
+    formData.set("nextFollowUpAt", nextFollowUpAt);
+    formData.set("nextFollowUpMethod", nextFollowUpMethod);
+    return formData;
+  }
+
+  function applyPendingSelection(formData: FormData, keys: string[]) {
+    formData.delete("completedPendingKeys");
+    for (const key of keys) {
+      formData.append("completedPendingKeys", key);
+    }
+  }
+
+  function resetFormState(form: HTMLFormElement) {
+    form.reset();
+    setContactIds([]);
+    setMethod("PHONE");
+    setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
+    setNextFollowUpAt("");
+    setNextFollowUpMethod("");
+    setOpportunityId("");
+    setOpportunityLabel("");
+    setSelectedPendingKeys([]);
+  }
+
+  function submitFollowUp(form: HTMLFormElement, completedKeys?: string[]) {
+    const formData = buildFormData(form);
+    if (completedKeys && completedKeys.length > 0) {
+      applyPendingSelection(formData, completedKeys);
+    }
+
+    startTransition(async () => {
+      const result = await createFollowUp(formData);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setCompleteDialogOpen(false);
+      if (result.redirectTo) {
+        router.push(result.redirectTo);
+        router.refresh();
+        return;
+      }
+      resetFormState(form);
+    });
+  }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -73,44 +140,26 @@ export function FollowUpForm({
       return;
     }
 
-    const formData = new FormData(form);
-    formData.set("customerId", customerId);
-    formData.delete("contactIds");
-    for (const id of contactIds) {
-      formData.append("contactIds", id);
+    if (hasPendingPlans) {
+      setPendingForm(form);
+      setCompleteDialogOpen(true);
+      return;
     }
-    formData.set("method", method);
-    formData.set("suggestedGrade", customerGradeSubmitValue(suggestedGrade, currentCustomerGrade) ?? "");
-    formData.set("opportunityId", opportunityId);
-    formData.set("nextFollowUpAt", nextFollowUpAt);
-    formData.set("nextFollowUpMethod", nextFollowUpMethod);
 
-    startTransition(async () => {
-      const result = await createFollowUp(formData);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      if (result.redirectTo) {
-        router.push(result.redirectTo);
-        router.refresh();
-        return;
-      }
-      form.reset();
-      setContactIds([]);
-      setMethod("PHONE");
-      setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
-      setNextFollowUpAt("");
-      setNextFollowUpMethod("");
-      setOpportunityId("");
-      setOpportunityLabel("");
-    });
+    submitFollowUp(form);
+  }
+
+  function handleConfirmComplete() {
+    if (!pendingForm || selectedPendingKeys.length === 0) return;
+    submitFollowUp(pendingForm, selectedPendingKeys);
   }
 
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
+          <CustomerPendingFollowPlansPanel items={pendingPlans} />
+
           <ContactSelectField
             customerId={customerId}
             multiple
@@ -211,30 +260,6 @@ export function FollowUpForm({
               currentCustomerGrade={currentCustomerGrade}
             />
           </div>
-
-          {isFaceVisit && (
-            <>
-              <div className="space-y-2 md:col-span-2">
-                <p className="text-sm font-medium text-muted-foreground">面访详情</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="location">地点 *</Label>
-                <Input id="location" name="location" required={isFaceVisit} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="department">科室</Label>
-                <Input id="department" name="department" />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="companions">同行人员</Label>
-                <Input id="companions" name="companions" />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="detailedNotes">详细纪要 *</Label>
-                <Textarea id="detailedNotes" name="detailedNotes" required={isFaceVisit} rows={4} />
-              </div>
-            </>
-          )}
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -242,6 +267,16 @@ export function FollowUpForm({
           {pending ? "保存中…" : "保存跟进"}
         </Button>
       </form>
+
+      <CompletePendingFollowUpDialog
+        open={completeDialogOpen}
+        onOpenChange={setCompleteDialogOpen}
+        items={pendingPlans}
+        selectedKeys={selectedPendingKeys}
+        onSelectedKeysChange={setSelectedPendingKeys}
+        onConfirm={handleConfirmComplete}
+        pending={pending}
+      />
 
       <QuickOpportunityDialog
         open={opportunityDialogOpen}

@@ -91,6 +91,12 @@ export function resolveAccessibleConfigField(
   moduleId: string | undefined,
   category: string | undefined
 ) {
+  if (category) {
+    for (const mod of modules) {
+      const field = mod.fields.find((item) => item.category === category);
+      if (field) return { module: mod, field };
+    }
+  }
   const mod = modules.find((item) => item.id === moduleId) ?? modules[0];
   const field = mod?.fields.find((item) => item.category === category) ?? mod?.fields[0];
   return { module: mod, field };

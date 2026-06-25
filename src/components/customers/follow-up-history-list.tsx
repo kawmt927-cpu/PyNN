@@ -58,13 +58,6 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
               {format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}
             </p>
           )}
-          {f.faceVisit && (
-            <div className="mt-2 rounded bg-muted/50 p-2 text-xs">
-              <p>地点：{f.faceVisit.location}</p>
-              {f.faceVisit.department && <p>科室：{f.faceVisit.department}</p>}
-              <p className="mt-1">{f.faceVisit.detailedNotes}</p>
-            </div>
-          )}
         </li>
       ))}
     </ul>

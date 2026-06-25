@@ -222,19 +222,6 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
           />
         </div>
 
-        {method === "FACE_VISIT" && (
-          <>
-            <div className="space-y-2">
-              <Label htmlFor="interactionLocation">面访地点</Label>
-              <Input id="interactionLocation" name="location" placeholder="医院/公司地址" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="interactionDetail">面访纪要</Label>
-              <Textarea id="interactionDetail" name="detailedNotes" rows={2} />
-            </div>
-          </>
-        )}
-
         {error && <p className="text-sm text-destructive md:col-span-2">{error}</p>}
         <div className="md:col-span-2">
           <Button type="submit" disabled={pending || !customerId || !contactId}>

@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { completeSalesCheckInManually, deleteSalesCheckIn } from "@/lib/sales-log/check-in";
-import { completeCheckInSchema } from "@/lib/validations/sales-log";
+import { completeCheckInSchema, normalizeContactIds } from "@/lib/validations/sales-log";
 import type { FollowUpMethod, UserRole } from "@prisma/client";
 
 const SALES_LOG_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
@@ -29,12 +29,13 @@ export async function PATCH(req: Request, { params }: Props) {
   try {
     const body = await req.json();
     const parsed = completeCheckInSchema.parse(body);
+    const contactIds = normalizeContactIds(parsed);
 
     await completeSalesCheckInManually({
       checkInId: id.trim(),
       userId: session.user.id,
       role: session.user.role,
-      contactId: parsed.contactId,
+      contactIds,
       method: parsed.method,
       content: parsed.content,
       result: parsed.result,
@@ -42,8 +43,6 @@ export async function PATCH(req: Request, { params }: Props) {
       opportunityId: parsed.opportunityId,
       nextFollowUpAt: parsed.nextFollowUpAt,
       nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
-      location: parsed.location,
-      detailedNotes: parsed.detailedNotes,
     });
 
     revalidatePath("/sales-log");

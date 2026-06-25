@@ -218,10 +218,6 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
           .optional()
           .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
-        location: z.string().optional().describe("面访地点（面访时填写）"),
-        department: z.string().optional().describe("面访科室"),
-        companions: z.string().optional().describe("同行人员"),
-        detailedNotes: z.string().optional().describe("面访详细纪要"),
       }),
       execute: async (input) => createFollowUpFromAgent(ctx, input),
     }),
@@ -285,8 +281,6 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
           .optional()
           .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
-        location: z.string().optional().describe("面访地点"),
-        detailedNotes: z.string().optional().describe("面访详细纪要"),
       }),
       execute: async (input) => completeCheckInFromAgent(ctx, input),
     }),

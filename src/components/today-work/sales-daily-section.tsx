@@ -115,7 +115,6 @@ export async function CheckInSection({ role, userId, mapKey, geocodeReady }: Sec
                           customerName={row.customer.name}
                           currentCustomerGrade={row.customer.customerGrade}
                           contactId={row.contact?.id}
-                          locationLabel={formatCheckInLocation(row)}
                           stageOptions={interactionFormOptions.stageOptions}
                           gradeOptions={interactionFormOptions.gradeOptions}
                         />

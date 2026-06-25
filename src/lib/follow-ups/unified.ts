@@ -1,7 +1,7 @@
 import type { FollowUpMethod, Prisma } from "@prisma/client";
-import { getPrismaClient } from "@/lib/prisma";
 import type { UserRole } from "@prisma/client";
-import { getGradeExpiryPendingCustomers } from "@/lib/customers/grade-expiry";
+import { getPrismaClient } from "@/lib/prisma";
+import { getGradeExpiryPendingCustomers, getCustomerGradeExpiryPending } from "@/lib/customers/grade-expiry";
 import { pendingFollowUpOpportunityWhere } from "@/lib/opportunities/status";
 
 export type UnifiedFollowUpHistoryItem = {
@@ -15,11 +15,6 @@ export type UnifiedFollowUpHistoryItem = {
   nextFollowUpMethod?: FollowUpMethod | null;
   user: { name: string };
   contacts: { id: string; name: string }[];
-  faceVisit: {
-    location: string;
-    department: string | null;
-    detailedNotes: string;
-  } | null;
   opportunity: { id: string; title: string } | null;
   changeSummary: string | null;
 };
@@ -35,6 +30,37 @@ export type UnifiedPendingFollowUp = {
   user: { name: string } | null;
   opportunity: { id: string; title: string } | null;
 };
+
+export type CustomerPendingFollowPlan = {
+  id: string;
+  source: "customer" | "opportunity" | "grade_expiry";
+  method: FollowUpMethod | null;
+  nextFollowUpMethod: FollowUpMethod | null;
+  content: string;
+  nextFollowUpAt: Date;
+  followUpAt: Date | null;
+  opportunity: { id: string; title: string } | null;
+  userName: string | null;
+  isOverdue: boolean;
+};
+
+export type SerializedCustomerPendingFollowPlan = Omit<
+  CustomerPendingFollowPlan,
+  "nextFollowUpAt" | "followUpAt"
+> & {
+  nextFollowUpAt: string;
+  followUpAt: string | null;
+};
+
+export function serializeCustomerPendingFollowPlan(
+  item: CustomerPendingFollowPlan
+): SerializedCustomerPendingFollowPlan {
+  return {
+    ...item,
+    nextFollowUpAt: item.nextFollowUpAt.toISOString(),
+    followUpAt: item.followUpAt?.toISOString() ?? null,
+  };
+}
 
 function customerOwnerFilter(role: UserRole, userId: string) {
   return role === "SALES" ? { ownerId: userId } : {};
@@ -85,7 +111,6 @@ export async function getCustomerFollowUpHistory(
         linkedContacts: {
           include: { contact: { select: { id: true, name: true } } },
         },
-        faceVisit: true,
         opportunity: { select: { id: true, title: true } },
       },
     }),
@@ -117,7 +142,6 @@ export async function getCustomerFollowUpHistory(
         nextFollowUpMethod: item.nextFollowUpMethod,
         user: item.user,
         contacts,
-        faceVisit: item.faceVisit,
         opportunity: item.opportunity,
         changeSummary: null,
       };
@@ -132,7 +156,6 @@ export async function getCustomerFollowUpHistory(
       nextFollowUpAt: item.nextFollowUpAt,
       user: item.user,
       contacts: [],
-      faceVisit: null,
       opportunity: item.opportunity,
       changeSummary: item.changeSummary,
     })),
@@ -152,6 +175,140 @@ export async function countCustomerFollowUps(customerId: string) {
     }),
   ]);
   return customerCount + opportunityCount;
+}
+
+export async function getCustomerPendingFollowPlans(
+  customerId: string,
+  now: Date
+): Promise<CustomerPendingFollowPlan[]> {
+  const db = getPrismaClient();
+
+  const [customerItems, opportunityItems, gradeExpiry] = await Promise.all([
+    db.followUp.findMany({
+      where: {
+        customerId,
+        nextFollowUpAt: { not: null },
+        OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
+      },
+      include: {
+        user: { select: { name: true } },
+        opportunity: { select: { id: true, title: true } },
+      },
+      orderBy: { nextFollowUpAt: "asc" },
+    }),
+    db.opportunityFollowUp.findMany({
+      where: {
+        nextFollowUpAt: { not: null },
+        opportunity: {
+          customerId,
+          ...pendingFollowUpOpportunityWhere,
+        },
+      },
+      include: {
+        user: { select: { name: true } },
+        opportunity: { select: { id: true, title: true } },
+      },
+      orderBy: { nextFollowUpAt: "asc" },
+    }),
+    getCustomerGradeExpiryPending(customerId, now),
+  ]);
+
+  const unified: CustomerPendingFollowPlan[] = [
+    ...customerItems
+      .filter((item): item is typeof item & { nextFollowUpAt: Date } => Boolean(item.nextFollowUpAt))
+      .map((item) => ({
+        id: item.id,
+        source: "customer" as const,
+        method: item.method,
+        nextFollowUpMethod: item.nextFollowUpMethod,
+        content: item.content,
+        nextFollowUpAt: item.nextFollowUpAt,
+        followUpAt: item.followUpAt,
+        opportunity: item.opportunity,
+        userName: item.user.name,
+        isOverdue: item.nextFollowUpAt <= now,
+      })),
+    ...opportunityItems
+      .filter((item): item is typeof item & { nextFollowUpAt: Date } => Boolean(item.nextFollowUpAt))
+      .map((item) => ({
+        id: item.id,
+        source: "opportunity" as const,
+        method: item.method,
+        nextFollowUpMethod: null,
+        content: item.content,
+        nextFollowUpAt: item.nextFollowUpAt,
+        followUpAt: item.followUpAt,
+        opportunity: item.opportunity,
+        userName: item.user.name,
+        isOverdue: item.nextFollowUpAt <= now,
+      })),
+  ];
+
+  if (gradeExpiry) {
+    unified.push({
+      id: `grade-expiry:${customerId}`,
+      source: "grade_expiry",
+      method: null,
+      nextFollowUpMethod: null,
+      content: "超过等级规定的往来间隔，需尽快跟进",
+      nextFollowUpAt: gradeExpiry.dueAt,
+      followUpAt: gradeExpiry.lastInteractionAt,
+      opportunity: null,
+      userName: null,
+      isOverdue: true,
+    });
+  }
+
+  return unified.sort((a, b) => a.nextFollowUpAt.getTime() - b.nextFollowUpAt.getTime());
+}
+
+type CompletePendingInput = {
+  source: "customer" | "opportunity" | "grade_expiry";
+  id: string;
+};
+
+export function parsePendingPlanSelectionKey(key: string): CompletePendingInput | null {
+  const [source, ...idParts] = key.split(":");
+  const id = idParts.join(":");
+  if (source !== "customer" && source !== "opportunity" && source !== "grade_expiry") return null;
+  if (!id) return null;
+  return { source, id };
+}
+
+export function pendingPlanSelectionKey(source: string, id: string) {
+  return `${source}:${id}`;
+}
+
+export async function completeCustomerPendingFollowPlan(
+  tx: Prisma.TransactionClient,
+  customerId: string,
+  input: CompletePendingInput
+) {
+  if (input.source === "grade_expiry") return;
+
+  if (input.source === "customer") {
+    const updated = await tx.followUp.updateMany({
+      where: { id: input.id, customerId, nextFollowUpAt: { not: null } },
+      data: { nextFollowUpAt: null, nextFollowUpMethod: null },
+    });
+    if (updated.count === 0) throw new Error("所选待跟进计划无效或已完成");
+    return;
+  }
+
+  const followUp = await tx.opportunityFollowUp.findFirst({
+    where: {
+      id: input.id,
+      nextFollowUpAt: { not: null },
+      opportunity: { customerId, ...pendingFollowUpOpportunityWhere },
+    },
+    select: { opportunityId: true },
+  });
+  if (!followUp) throw new Error("所选待跟进计划无效或已完成");
+
+  await tx.opportunityFollowUp.update({
+    where: { id: input.id },
+    data: { nextFollowUpAt: null },
+  });
 }
 
 export async function getPendingFollowUps(

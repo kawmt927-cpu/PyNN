@@ -50,7 +50,6 @@ export const SALES_LOG_SYSTEM_PROMPT = `# Role: 培安(PyNN)智能销售助理
 ## 注意
 - **无客户打卡**仅记录定位，不需要 completeCheckIn
 - **往来打卡**若白天已当场录入往来，status 为已完善，无需再处理
-- 面访打卡完善时 method 通常为 FACE_VISIT，location 可沿用打卡定位
 - followUpAt 用 ISO8601；默认打卡时间或销售所述时间
 - 信息不全时可 riskFlag 带风险提交
 

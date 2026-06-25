@@ -9,24 +9,28 @@ import {
   CONFIG_CATEGORY,
   labelForConfig,
   loadCustomerFieldLabelMaps,
-  loadInteractionFormOptions,
 } from "@/lib/config-options";
 import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FollowUpForm } from "@/components/customers/follow-up-form";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
+import {
+  CustomerFollowUpCheckInSection,
+} from "@/components/customers/customer-follow-up-check-in-section";
 import { BackLink } from "@/components/navigation/back-link";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import {
   countCustomerFollowUps,
   getCustomerFollowUpHistory,
+  getCustomerPendingFollowPlans,
+  serializeCustomerPendingFollowPlan,
 } from "@/lib/follow-ups/unified";
+import { prisma } from "@/lib/prisma";
 import { selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; contactId?: string; opportunityId?: string }>;
 };
 
 export default async function CustomerFollowUpsPage({ params, searchParams }: Props) {
@@ -40,12 +44,25 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const canManage = canManageCustomerOwner(session.user.role);
   const canEdit = customer.ownerId === session.user.id || canManage;
 
-  const [followUps, followUpCount, labelMaps, formOptions] = await Promise.all([
+  const now = new Date();
+  const opportunityId = query.opportunityId?.trim() || undefined;
+  const contactId = query.contactId?.trim() || undefined;
+
+  const [followUps, followUpCount, labelMaps, pendingPlans, opportunity] = await Promise.all([
     getCustomerFollowUpHistory(id, 50),
     countCustomerFollowUps(id),
     loadCustomerFieldLabelMaps(),
-    loadInteractionFormOptions(),
+    getCustomerPendingFollowPlans(id, now),
+    opportunityId
+      ? prisma.opportunity.findFirst({
+          where: { id: opportunityId, customerId: id },
+          select: { id: true, title: true },
+        })
+      : Promise.resolve(null),
   ]);
+
+  const serializedPendingPlans = pendingPlans.map(serializeCustomerPendingFollowPlan);
+  const pendingOpportunity = pendingPlans.find((item) => item.opportunity)?.opportunity;
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
@@ -85,15 +102,25 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
       {canEdit ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">新增跟进</CardTitle>
+            <CardTitle className="text-lg">往来打卡</CardTitle>
           </CardHeader>
           <CardContent>
-            <FollowUpForm
-              customerId={customer.id}
-              customerName={customer.name}
-              currentCustomerGrade={customer.customerGrade}
-              stageOptions={formOptions.stageOptions}
-              gradeOptions={formOptions.gradeOptions}
+            <CustomerFollowUpCheckInSection
+              role={session.user.role}
+              customer={{
+                id: customer.id,
+                name: customer.name,
+                customerGrade: customer.customerGrade,
+                contacts: customer.contacts.map((contact) => ({
+                  id: contact.id,
+                  isPrimary: contact.isPrimary,
+                })),
+              }}
+              pendingPlans={serializedPendingPlans}
+              returnPath={selfPath}
+              initialContactId={contactId}
+              initialOpportunityId={opportunity?.id ?? pendingOpportunity?.id}
+              initialOpportunityLabel={opportunity?.title ?? pendingOpportunity?.title}
             />
           </CardContent>
         </Card>

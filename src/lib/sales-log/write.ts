@@ -166,6 +166,7 @@ export async function createFollowUpFromAgent(
     customerId?: string;
     customerName?: string;
     contactId?: string;
+    contactIds?: string[];
     opportunityId?: string;
     method: FollowUpMethod;
     content: string;
@@ -174,10 +175,6 @@ export async function createFollowUpFromAgent(
     nextFollowUpAt?: string;
     nextFollowUpMethod?: FollowUpMethod;
     suggestedGrade?: string | null;
-    location?: string;
-    department?: string;
-    companions?: string;
-    detailedNotes?: string;
   }
 ) {
   assertSalesLogRole(ctx.role);
@@ -198,11 +195,18 @@ export async function createFollowUpFromAgent(
   );
   if (planError) throw new Error(planError);
 
-  if (input.contactId) {
-    const contact = await prisma.contact.findFirst({
-      where: { id: input.contactId, customerId },
+  const contactIds = [...new Set(
+    (input.contactIds?.length ? input.contactIds : input.contactId?.trim() ? [input.contactId.trim()] : [])
+      .map((id) => id.trim())
+      .filter(Boolean)
+  )];
+
+  if (contactIds.length > 0) {
+    const contacts = await prisma.contact.findMany({
+      where: { id: { in: contactIds }, customerId },
+      select: { id: true },
     });
-    if (!contact) throw new Error("联系人不属于该客户");
+    if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
   }
 
   if (input.opportunityId) {
@@ -222,7 +226,7 @@ export async function createFollowUpFromAgent(
     const created = await tx.followUp.create({
       data: {
         customerId,
-        contactId: input.contactId || undefined,
+        contactId: contactIds[0] || undefined,
         opportunityId: input.opportunityId || undefined,
         userId: ctx.userId,
         method: input.method,
@@ -234,25 +238,16 @@ export async function createFollowUpFromAgent(
         suggestedGrade: suggestedGrade ?? undefined,
         gradeApplied: applyGrade,
         salesDailyLogId: ctx.dailyLogId,
+        ...(contactIds.length > 0
+          ? {
+              linkedContacts: {
+                create: contactIds.map((contactId) => ({ contactId })),
+              },
+            }
+          : {}),
       },
       include: { customer: { select: { name: true } } },
     });
-
-    if (input.method === "FACE_VISIT") {
-      const location = input.location?.trim();
-      const detailedNotes = (input.detailedNotes?.trim() || content).trim();
-      if (location && detailedNotes) {
-        await tx.faceVisitDetail.create({
-          data: {
-            followUpId: created.id,
-            location,
-            department: input.department?.trim() || null,
-            companions: input.companions?.trim() || null,
-            detailedNotes,
-          },
-        });
-      }
-    }
 
     if (applyGrade && suggestedGrade) {
       await tx.customer.update({

@@ -11,7 +11,6 @@ import type { EntitySearchSelectHandle } from "@/components/ui/entity-search-sel
 import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import type { CheckInMode } from "@/lib/validations/sales-log";
-import { formatCheckInLocation } from "@/lib/sales-log/format-location";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import {
   customerGradeFormValue,
@@ -37,6 +36,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CustomerPendingFollowPlansPanel } from "@/components/customers/customer-pending-follow-plans-panel";
+import {
+  CompletePendingFollowUpDialog,
+} from "@/components/customers/complete-pending-follow-up-dialog";
+import type { SerializedCustomerPendingFollowPlan } from "@/lib/follow-ups/unified";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { cn } from "@/lib/utils";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
@@ -46,6 +50,17 @@ type EntryTiming = "later" | "now";
 const disabledFieldClass =
   "cursor-not-allowed bg-muted text-muted-foreground disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 const alignedFieldLabelClass = "flex min-h-9 items-center";
+
+export type CheckInCustomerContext = {
+  customerId: string;
+  customerLabel: string;
+  customerGrade?: string | null;
+  initialContactIds?: string[];
+  initialOpportunityId?: string;
+  initialOpportunityLabel?: string;
+  pendingPlans?: SerializedCustomerPendingFollowPlan[];
+  returnPath?: string;
+};
 
 export type CheckInCustomerFormOptions = {
   sourceOptions: ConfigOptionItem[];
@@ -61,29 +76,39 @@ export function CheckInForm({
   mapKey,
   geocodeReady,
   customerFormOptions,
+  customerContext,
 }: {
   mapKey: string | null;
   geocodeReady: boolean;
   customerFormOptions: CheckInCustomerFormOptions;
+  customerContext?: CheckInCustomerContext;
 }) {
   const router = useRouter();
   const customerSelectRef = useRef<EntitySearchSelectHandle>(null);
+  const lockedCustomer = Boolean(customerContext);
+  const pendingPlans = customerContext?.pendingPlans ?? [];
+  const hasPendingPlans = pendingPlans.length > 0;
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [checkInMode, setCheckInMode] = useState<CheckInMode>("interaction");
-  const [entryTiming, setEntryTiming] = useState<EntryTiming>("now");
-  const [customerId, setCustomerId] = useState("");
-  const [customerLabel, setCustomerLabel] = useState("");
-  const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(null);
-  const [contactId, setContactId] = useState("");
+  const [entryTiming, setEntryTiming] = useState<EntryTiming>(lockedCustomer ? "now" : "later");
+  const [customerId, setCustomerId] = useState(customerContext?.customerId ?? "");
+  const [customerLabel, setCustomerLabel] = useState(customerContext?.customerLabel ?? "");
+  const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(
+    customerContext?.customerGrade ?? null
+  );
+  const [contactIds, setContactIds] = useState<string[]>(customerContext?.initialContactIds ?? []);
   const [location, setLocation] = useState<CheckInLocationValue | null>(null);
   const [method, setMethod] = useState<SalesLogMethod>("FACE_VISIT");
   const [content, setContent] = useState("");
-  const [detailedNotes, setDetailedNotes] = useState("");
-  const [opportunityId, setOpportunityId] = useState("");
-  const [opportunityLabel, setOpportunityLabel] = useState("");
+  const [opportunityId, setOpportunityId] = useState(customerContext?.initialOpportunityId ?? "");
+  const [opportunityLabel, setOpportunityLabel] = useState(
+    customerContext?.initialOpportunityLabel ?? ""
+  );
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
-  const [suggestedGrade, setSuggestedGrade] = useState("");
+  const [suggestedGrade, setSuggestedGrade] = useState(() =>
+    customerGradeFormValue(customerContext?.customerGrade)
+  );
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
@@ -93,6 +118,9 @@ export function CheckInForm({
   const [duplicatePayload, setDuplicatePayload] = useState<Record<string, unknown> | null>(null);
   const [noLocationConfirmOpen, setNoLocationConfirmOpen] = useState(false);
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
+  const [queuedPayload, setQueuedPayload] = useState<Record<string, unknown> | null>(null);
 
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
@@ -121,30 +149,41 @@ export function CheckInForm({
   }
 
   function resetForm() {
-    setCheckInMode("interaction");
-    setEntryTiming("later");
-    setCustomerId("");
-    setCustomerLabel("");
-    setCurrentCustomerGrade(null);
-    setContactId("");
+    if (lockedCustomer && customerContext) {
+      setCheckInMode("interaction");
+      setEntryTiming("now");
+      setCustomerId(customerContext.customerId);
+      setCustomerLabel(customerContext.customerLabel);
+      setCurrentCustomerGrade(customerContext.customerGrade ?? null);
+      setContactIds(customerContext.initialContactIds ?? []);
+      setOpportunityId(customerContext.initialOpportunityId ?? "");
+      setOpportunityLabel(customerContext.initialOpportunityLabel ?? "");
+      setSuggestedGrade(customerGradeFormValue(customerContext.customerGrade));
+    } else {
+      setCheckInMode("interaction");
+      setEntryTiming("later");
+      setCustomerId("");
+      setCustomerLabel("");
+      setCurrentCustomerGrade(null);
+      setContactIds([]);
+      setOpportunityId("");
+      setOpportunityLabel("");
+      setSuggestedGrade("");
+    }
     setLocation(null);
     setMethod("FACE_VISIT");
     setContent("");
-    setDetailedNotes("");
-    setOpportunityId("");
-    setOpportunityLabel("");
-    setSuggestedGrade("");
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
+    setSelectedPendingKeys([]);
+    setQueuedPayload(null);
   }
 
-  function buildPayload(notes: string | null) {
-    const locationLabel = location ? formatCheckInLocation(location) : null;
-
+  function buildPayload(notes: string | null, completedKeys: string[] = []) {
     return {
       checkInMode,
       customerId: isInteraction ? customerId : null,
-      contactId: isInteraction ? contactId || null : null,
+      contactIds: isInteraction ? contactIds : [],
       latitude: location?.latitude ?? null,
       longitude: location?.longitude ?? null,
       locationText: location?.locationText ?? null,
@@ -154,6 +193,7 @@ export function CheckInForm({
       addressStreet: location?.addressStreet ?? null,
       notes,
       completeInteractionNow: completeNow,
+      completedPendingKeys: completedKeys,
       followUp: completeNow
         ? {
             method,
@@ -162,14 +202,16 @@ export function CheckInForm({
             opportunityId: opportunityId || null,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
-            location: method === "FACE_VISIT" ? locationLabel : null,
-            detailedNotes: method === "FACE_VISIT" ? detailedNotes.trim() || null : null,
           }
         : null,
     };
   }
 
-  function runSubmit(payload: Record<string, unknown>, updateCheckInId?: string) {
+  function runSubmit(
+    payload: Record<string, unknown>,
+    updateCheckInId?: string,
+    completedKeys: string[] = []
+  ) {
     startTransition(async () => {
       try {
         if (isInteraction && customerId) {
@@ -182,14 +224,14 @@ export function CheckInForm({
             const items = dupData.items ?? [];
             if (items.length > 0 && !updateCheckInId) {
               setDuplicateItems(items);
-              setDuplicatePayload(payload);
+              setDuplicatePayload({ ...payload, completedPendingKeys: completedKeys });
               setDuplicateOpen(true);
               return;
             }
           }
         }
 
-        await submitCheckIn(payload, updateCheckInId);
+        await submitCheckIn({ ...payload, completedPendingKeys: completedKeys }, updateCheckInId);
       } catch (err) {
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
         return;
@@ -198,9 +240,28 @@ export function CheckInForm({
       setDuplicatePayload(null);
       setNoLocationConfirmOpen(false);
       setPendingPayload(null);
+      setCompleteDialogOpen(false);
+      setQueuedPayload(null);
       resetForm();
+      if (customerContext?.returnPath) {
+        router.push(customerContext.returnPath);
+      }
       router.refresh();
     });
+  }
+
+  function proceedSubmit(payload: Record<string, unknown>, completedKeys: string[] = []) {
+    if (hasPendingPlans && completeNow && completedKeys.length === 0) {
+      setQueuedPayload(payload);
+      setCompleteDialogOpen(true);
+      return;
+    }
+    runSubmit(payload, undefined, completedKeys);
+  }
+
+  function handleConfirmCompletePending() {
+    if (!queuedPayload || selectedPendingKeys.length === 0) return;
+    runSubmit(queuedPayload, undefined, selectedPendingKeys);
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -214,8 +275,8 @@ export function CheckInForm({
       setError("请选择客户，或新增客户");
       return;
     }
-    if (isInteraction && !contactId) {
-      setError("请选择联系人，或新增联系人");
+    if (isInteraction && contactIds.length === 0) {
+      setError("请至少选择一位联系人，或新增联系人");
       return;
     }
     if (completeNow && !content.trim()) {
@@ -244,20 +305,21 @@ export function CheckInForm({
       return;
     }
 
-    runSubmit(payload);
+    proceedSubmit(payload);
   }
 
   function handleConfirmNoLocation() {
     if (!pendingPayload) return;
-    runSubmit(pendingPayload);
+    proceedSubmit(pendingPayload);
   }
 
   function handleDuplicateModify(checkInId: string) {
     if (!duplicatePayload) return;
+    const completedKeys = (duplicatePayload.completedPendingKeys as string[] | undefined) ?? [];
     setError(null);
     startTransition(async () => {
       try {
-        await submitCheckIn(duplicatePayload, checkInId);
+        await submitCheckIn({ ...duplicatePayload, completedPendingKeys: completedKeys }, checkInId);
       } catch (err) {
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
         return;
@@ -267,16 +329,20 @@ export function CheckInForm({
       setNoLocationConfirmOpen(false);
       setPendingPayload(null);
       resetForm();
+      if (customerContext?.returnPath) {
+        router.push(customerContext.returnPath);
+      }
       router.refresh();
     });
   }
 
   function handleDuplicateCreateNew() {
     if (!duplicatePayload) return;
+    const completedKeys = (duplicatePayload.completedPendingKeys as string[] | undefined) ?? [];
     setError(null);
     startTransition(async () => {
       try {
-        await submitCheckIn(duplicatePayload);
+        await submitCheckIn({ ...duplicatePayload, completedPendingKeys: completedKeys });
       } catch (err) {
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
         return;
@@ -286,6 +352,9 @@ export function CheckInForm({
       setNoLocationConfirmOpen(false);
       setPendingPayload(null);
       resetForm();
+      if (customerContext?.returnPath) {
+        router.push(customerContext.returnPath);
+      }
       router.refresh();
     });
   }
@@ -293,121 +362,137 @@ export function CheckInForm({
   return (
     <>
       <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2 md:col-span-2">
-          <Label>打卡类型</Label>
-          <div className="flex flex-wrap gap-4">
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="checkInModeRadio"
-                checked={isInteraction}
-                onChange={() => {
-                  setCheckInMode("interaction");
-                  setError(null);
-                }}
-                className="h-4 w-4"
-              />
-              往来打卡（关联客户与往来）
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="checkInModeRadio"
-                checked={!isInteraction}
-                onChange={() => {
-                  setCheckInMode("without_customer");
-                  setCustomerId("");
-                  setCustomerLabel("");
-                  setContactId("");
-                  setError(null);
-                }}
-                className="h-4 w-4"
-              />
-              无客户打卡（仅记录定位）
-            </label>
+        {!lockedCustomer ? (
+          <div className="space-y-2 md:col-span-2">
+            <Label>打卡类型</Label>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="checkInModeRadio"
+                  checked={isInteraction}
+                  onChange={() => {
+                    setCheckInMode("interaction");
+                    setError(null);
+                  }}
+                  className="h-4 w-4"
+                />
+                往来打卡（关联客户与往来）
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="checkInModeRadio"
+                  checked={!isInteraction}
+                  onChange={() => {
+                    setCheckInMode("without_customer");
+                    setCustomerId("");
+                    setCustomerLabel("");
+                    setContactIds([]);
+                    setError(null);
+                  }}
+                  className="h-4 w-4"
+                />
+                无客户打卡（仅记录定位）
+              </label>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {isInteraction ? (
           <>
+            {hasPendingPlans ? <CustomerPendingFollowPlansPanel items={pendingPlans} /> : null}
+
             <div className="space-y-2 md:col-span-2">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div className="min-w-[240px] flex-1">
-                  <CustomerSearchSelect
-                    ref={customerSelectRef}
-                    id="checkInCustomer"
-                    name="customerId"
-                    label="客户"
-                    required
-                    value={customerId}
-                    selectedLabel={customerLabel}
-                    onValueChange={(id, option) => {
-                      setCustomerId(id);
-                      setCustomerLabel(option?.label ?? "");
-                      const grade = option?.customerGrade ?? null;
-                      setCurrentCustomerGrade(grade);
-                      setSuggestedGrade(customerGradeFormValue(grade));
-                      setContactId("");
-                      setOpportunityId("");
-                      setOpportunityLabel("");
-                    }}
-                    onCreateNew={openCreateCustomer}
-                  />
+              {lockedCustomer ? (
+                <div className="space-y-2">
+                  <Label>客户</Label>
+                  <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-medium">
+                    {customerLabel}
+                  </div>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => openCreateCustomer()}>
-                  新增客户
-                </Button>
-              </div>
+              ) : (
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="min-w-[240px] flex-1">
+                    <CustomerSearchSelect
+                      ref={customerSelectRef}
+                      id="checkInCustomer"
+                      name="customerId"
+                      label="客户"
+                      required
+                      value={customerId}
+                      selectedLabel={customerLabel}
+                      onValueChange={(id, option) => {
+                        setCustomerId(id);
+                        setCustomerLabel(option?.label ?? "");
+                        const grade = option?.customerGrade ?? null;
+                        setCurrentCustomerGrade(grade);
+                        setSuggestedGrade(customerGradeFormValue(grade));
+                        setContactIds([]);
+                        setOpportunityId("");
+                        setOpportunityLabel("");
+                      }}
+                      onCreateNew={openCreateCustomer}
+                    />
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => openCreateCustomer()}>
+                    新增客户
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <ContactSelectField
                 customerId={customerId}
-                value={contactId}
-                onChange={setContactId}
+                multiple
+                value={contactIds}
+                onChange={setContactIds}
                 required
               />
             </div>
 
-            <div className={cn("space-y-2 md:col-span-2", !customerReady && "opacity-60")}>
-              <Label>往来录入</Label>
-              <div className="flex flex-wrap gap-4">
-                <label
-                  className={cn(
-                    "flex items-center gap-2 text-sm",
-                    customerReady ? "cursor-pointer" : "cursor-not-allowed"
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="entryTiming"
-                    checked={entryTiming === "now"}
-                    disabled={!customerReady}
-                    onChange={() => setEntryTiming("now")}
-                    className="h-4 w-4"
-                  />
-                  同时录入往来内容
-                </label>
-                <label
-                  className={cn(
-                    "flex items-center gap-2 text-sm",
-                    customerReady ? "cursor-pointer" : "cursor-not-allowed"
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="entryTiming"
-                    checked={entryTiming === "later"}
-                    disabled={!customerReady}
-                    onChange={() => setEntryTiming("later")}
-                    className="h-4 w-4"
-                  />
-                  仅打卡，收工后与 AI 补全往来
-                </label>
+            {!lockedCustomer ? (
+              <div className={cn("space-y-2 md:col-span-2", !customerReady && "opacity-60")}>
+                <Label>往来录入</Label>
+                <div className="flex flex-wrap gap-4">
+                  <label
+                    className={cn(
+                      "flex items-center gap-2 text-sm",
+                      customerReady ? "cursor-pointer" : "cursor-not-allowed"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="entryTiming"
+                      checked={entryTiming === "now"}
+                      disabled={!customerReady}
+                      onChange={() => setEntryTiming("now")}
+                      className="h-4 w-4"
+                    />
+                    同时录入往来内容
+                  </label>
+                  <label
+                    className={cn(
+                      "flex items-center gap-2 text-sm",
+                      customerReady ? "cursor-pointer" : "cursor-not-allowed"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="entryTiming"
+                      checked={entryTiming === "later"}
+                      disabled={!customerReady}
+                      onChange={() => setEntryTiming("later")}
+                      className="h-4 w-4"
+                    />
+                    仅打卡，收工后与 AI 补全往来
+                  </label>
+                </div>
+                {!customerReady ? (
+                  <p className="text-xs text-muted-foreground">请先选择客户后再选择往来录入方式</p>
+                ) : null}
               </div>
-              {!customerReady ? (
-                <p className="text-xs text-muted-foreground">请先选择客户后再选择往来录入方式</p>
-              ) : null}
-            </div>
+            ) : null}
 
             {completeNow && (
               <div
@@ -510,25 +595,6 @@ export function CheckInForm({
                       dateInputClassName={cn(!customerReady && disabledFieldClass)}
                     />
                   </div>
-                  {method === "FACE_VISIT" && (
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="checkInDetail">面访纪要（可选）</Label>
-                      <Textarea
-                        id="checkInDetail"
-                        rows={2}
-                        value={detailedNotes}
-                        disabled={!customerReady}
-                        onChange={(e) => setDetailedNotes(e.target.value)}
-                        placeholder={customerReady ? undefined : "请先选择客户"}
-                        className={cn(!customerReady && disabledFieldClass)}
-                      />
-                      {location ? (
-                        <p className="text-xs text-muted-foreground">
-                          面访地点将使用打卡地点：{formatCheckInLocation(location)}
-                        </p>
-                      ) : null}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -558,7 +624,7 @@ export function CheckInForm({
             disabled={
               pending ||
               (!isInteraction && !location) ||
-              (isInteraction && (!customerId || !contactId)) ||
+              (isInteraction && (!customerId || contactIds.length === 0)) ||
               (completeNow && !content.trim())
             }
           >
@@ -619,7 +685,7 @@ export function CheckInForm({
         onCreated={(customer) => {
           setCustomerId(customer.id);
           setCustomerLabel(customer.name);
-          setContactId("");
+          setContactIds([]);
           setOpportunityId("");
           setOpportunityLabel("");
           setError(null);
@@ -636,6 +702,16 @@ export function CheckInForm({
           setOpportunityId(opp.id);
           setOpportunityLabel(opp.title);
         }}
+      />
+
+      <CompletePendingFollowUpDialog
+        open={completeDialogOpen}
+        onOpenChange={setCompleteDialogOpen}
+        items={pendingPlans}
+        selectedKeys={selectedPendingKeys}
+        onSelectedKeysChange={setSelectedPendingKeys}
+        onConfirm={handleConfirmCompletePending}
+        pending={pending}
       />
     </>
   );

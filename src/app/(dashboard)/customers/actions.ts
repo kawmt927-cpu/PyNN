@@ -15,6 +15,12 @@ import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
+import {
+  completeCustomerPendingFollowPlan,
+  getCustomerPendingFollowPlans,
+  parsePendingPlanSelectionKey,
+  pendingPlanSelectionKey,
+} from "@/lib/follow-ups/unified";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -189,10 +195,9 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
     suggestedGrade: formData.get("suggestedGrade") || null,
     contactIds: formData.getAll("contactIds").filter((id): id is string => typeof id === "string" && id.trim().length > 0),
     opportunityId: formData.get("opportunityId") || null,
-    location: formData.get("location") || undefined,
-    department: formData.get("department") || undefined,
-    companions: formData.get("companions") || undefined,
-    detailedNotes: formData.get("detailedNotes") || undefined,
+    completedPendingKeys: formData
+      .getAll("completedPendingKeys")
+      .filter((key): key is string => typeof key === "string" && key.trim().length > 0),
   });
 
   const customer = await getCustomerForUser(
@@ -227,6 +232,23 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
   });
   if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
 
+  const now = new Date();
+  const pendingPlans = await getCustomerPendingFollowPlans(parsed.customerId, now);
+  const pendingKeySet = new Set(
+    pendingPlans.map((item) => pendingPlanSelectionKey(item.source, item.id))
+  );
+  const completedPendingKeys = [...new Set(parsed.completedPendingKeys)];
+  if (pendingPlans.length > 0) {
+    if (completedPendingKeys.length === 0) {
+      throw new Error("请至少选择一条要完成的待跟进计划");
+    }
+    for (const key of completedPendingKeys) {
+      if (!pendingKeySet.has(key)) {
+        throw new Error("所选待跟进计划无效或已完成");
+      }
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
     const followUp = await tx.followUp.create({
       data: {
@@ -248,23 +270,19 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
       },
     });
 
-    if (parsed.method === "FACE_VISIT" && parsed.location && parsed.detailedNotes) {
-      await tx.faceVisitDetail.create({
-        data: {
-          followUpId: followUp.id,
-          location: parsed.location,
-          department: parsed.department,
-          companions: parsed.companions,
-          detailedNotes: parsed.detailedNotes,
-        },
-      });
-    }
-
     if (applyGrade && suggestedGrade) {
       await tx.customer.update({
         where: { id: parsed.customerId },
         data: { customerGrade: suggestedGrade },
       });
+    }
+
+    if (completedPendingKeys.length > 0) {
+      for (const key of completedPendingKeys) {
+        const input = parsePendingPlanSelectionKey(key);
+        if (!input) throw new Error("所选待跟进计划无效或已完成");
+        await completeCustomerPendingFollowPlan(tx, parsed.customerId, input);
+      }
     }
   });
 
@@ -273,6 +291,22 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
   revalidatePath(`/customers/${parsed.customerId}/follow-ups`);
   if (parsed.opportunityId) {
     revalidatePath(`/opportunities/${parsed.opportunityId}`);
+  }
+  if (completedPendingKeys.length > 0) {
+    const opportunityFollowUpIds = completedPendingKeys
+      .map((key) => parsePendingPlanSelectionKey(key))
+      .filter((input): input is NonNullable<typeof input> => input?.source === "opportunity")
+      .map((input) => input.id);
+    if (opportunityFollowUpIds.length > 0) {
+      const oppFollowUps = await prisma.opportunityFollowUp.findMany({
+        where: { id: { in: opportunityFollowUpIds } },
+        select: { opportunityId: true },
+      });
+      for (const row of oppFollowUps) {
+        revalidatePath(`/opportunities/${row.opportunityId}`);
+        revalidatePath(`/opportunities/${row.opportunityId}/follow-ups`);
+      }
+    }
   }
   return { redirectTo: `/customers/${parsed.customerId}/follow-ups` };
   } catch (error) {

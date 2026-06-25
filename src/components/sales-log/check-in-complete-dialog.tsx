@@ -33,8 +33,7 @@ type Props = {
   customerId: string;
   customerName: string;
   currentCustomerGrade?: string | null;
-  defaultContactId?: string;
-  defaultLocation?: string;
+  defaultContactIds?: string[];
   stageOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
 };
@@ -46,15 +45,14 @@ export function CheckInCompleteDialog({
   customerId,
   customerName,
   currentCustomerGrade,
-  defaultContactId = "",
-  defaultLocation = "",
+  defaultContactIds = [],
   stageOptions,
   gradeOptions,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [contactId, setContactId] = useState(defaultContactId);
+  const [contactIds, setContactIds] = useState<string[]>(defaultContactIds);
   const [opportunityId, setOpportunityId] = useState("");
   const [opportunityLabel, setOpportunityLabel] = useState("");
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
@@ -64,11 +62,10 @@ export function CheckInCompleteDialog({
   const [suggestedGrade, setSuggestedGrade] = useState("");
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
-  const [detailedNotes, setDetailedNotes] = useState("");
 
   useEffect(() => {
     if (!open) return;
-    setContactId(defaultContactId);
+    setContactIds(defaultContactIds);
     setOpportunityId("");
     setOpportunityLabel("");
     setMethod("FACE_VISIT");
@@ -77,9 +74,8 @@ export function CheckInCompleteDialog({
     setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
-    setDetailedNotes("");
     setError(null);
-  }, [open, checkInId, defaultContactId, currentCustomerGrade]);
+  }, [open, checkInId, defaultContactIds, currentCustomerGrade]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -103,7 +99,7 @@ export function CheckInCompleteDialog({
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contactId,
+            contactIds,
             method,
             content: content.trim(),
             result: result.trim() || null,
@@ -111,8 +107,6 @@ export function CheckInCompleteDialog({
             opportunityId: opportunityId || null,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
-            location: method === "FACE_VISIT" ? defaultLocation || null : null,
-            detailedNotes: method === "FACE_VISIT" ? detailedNotes.trim() || null : null,
           }),
         });
         const data = (await res.json()) as { ok?: boolean; error?: string };
@@ -142,8 +136,9 @@ export function CheckInCompleteDialog({
             <div className="md:col-span-2">
               <ContactSelectField
                 customerId={customerId}
-                value={contactId}
-                onChange={setContactId}
+                multiple
+                value={contactIds}
+                onChange={setContactIds}
                 required
               />
             </div>
@@ -225,27 +220,12 @@ export function CheckInCompleteDialog({
               />
             </div>
 
-            {method === "FACE_VISIT" && (
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="completeDetail">面访纪要（可选）</Label>
-                <Textarea
-                  id="completeDetail"
-                  rows={2}
-                  value={detailedNotes}
-                  onChange={(e) => setDetailedNotes(e.target.value)}
-                />
-                {defaultLocation ? (
-                  <p className="text-xs text-muted-foreground">面访地点：{defaultLocation}</p>
-                ) : null}
-              </div>
-            )}
-
             {error ? <p className="text-sm text-destructive md:col-span-2">{error}</p> : null}
             <div className="flex justify-end gap-2 md:col-span-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 取消
               </Button>
-              <Button type="submit" disabled={pending || !contactId || !content.trim()}>
+              <Button type="submit" disabled={pending || contactIds.length === 0 || !content.trim()}>
                 {pending ? "提交中…" : "确认完善"}
               </Button>
             </div>
