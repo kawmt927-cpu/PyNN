@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { UserRole } from "@prisma/client";
 import { z } from "zod";
 import type { EffectiveAiAgentConfig } from "@/lib/agent/config";
-import { getCustomerForUser } from "@/lib/customers/access";
+import { canEditCustomerFollowUp, getCustomerForUser } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import {
   createCustomerFromAgent,
@@ -19,6 +19,10 @@ import {
   createOpportunityFromAgent,
   updateOpportunityFromAgent,
 } from "@/lib/sales-log/opportunity-write";
+import {
+  fetchCustomerBriefForAgent,
+  customerBriefToToolPayload,
+} from "@/lib/agent/customer-brief";
 import {
   searchCustomersForUser,
   searchOpportunitiesForUser,
@@ -46,7 +50,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       ? {
           searchCustomers: tool({
             description:
-              "按名称搜索 CRM 已有客户，用于重复预警或获取 customerId。新建客户前务必先搜索。",
+              "按名称搜索 CRM 已有客户。返回 writable：仅 writable=true 时可录入往来/完善打卡；false 表示非本人负责，禁止落库。",
             parameters: z.object({
               query: z.string().describe("客户名称关键词"),
             }),
@@ -54,10 +58,13 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
               const rows = await searchCustomersForUser(role, userId, query);
               return {
                 count: rows.length,
-                customers: rows.map((c) => ({
+                  customers: rows.map((c) => ({
                   id: c.id,
                   name: c.name,
                   category: c.category,
+                  customerGrade: c.customerGrade,
+                  writable: c.writable,
+                  ownerName: c.ownerName,
                 })),
               };
             },
@@ -95,7 +102,8 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     ...(config.toolGetCustomer
       ? {
           getCustomer: tool({
-            description: "根据客户 ID 获取客户详情（含联系人、归属销售）",
+            description:
+              "根据客户 ID 获取详情。writable=false 时不可录入往来或完善打卡，应告知销售联系负责人。",
             parameters: z.object({
               customerId: z.string().describe("客户 ID"),
             }),
@@ -104,6 +112,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
               if (!customer) {
                 return { error: "客户不存在或无权访问" };
               }
+              const writable = canEditCustomerFollowUp(role, userId, customer);
               return {
                 id: customer.id,
                 name: customer.name,
@@ -112,7 +121,9 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
                 city: customer.city,
                 customerType: customer.customerType,
                 customerGrade: customer.customerGrade,
+                writable,
                 owner: customer.owner?.name ?? null,
+                assistants: customer.assistantOwners.map((row) => row.user.name),
                 notes: customer.notes,
                 contacts: customer.contacts.map((c) => ({
                   name: c.name,
@@ -125,10 +136,25 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           }),
         }
       : {}),
+    getCustomerBrief: tool({
+      description:
+        "获取客户档案简报（等级、上次往来、下次计划）。销售自述后落库或需确认等级/商机时调用，勿在开场播报。",
+      parameters: z.object({
+        customerId: z.string().describe("客户 ID"),
+      }),
+      execute: async ({ customerId }) => {
+        const brief = await fetchCustomerBriefForAgent(customerId, role, userId);
+        if (!brief) {
+          return { error: "客户不存在或无权访问" };
+        }
+        return customerBriefToToolPayload(brief);
+      },
+    }),
     ...(config.toolListFollowUps
       ? {
           listCustomerFollowUps: tool({
-            description: "列出指定客户最近的往来跟进记录",
+            description:
+              "列出指定客户最近往来记录（需更详细历史时用）。日常优先 getCustomerBrief；切换客户前若快照无该客户也需先 getCustomerBrief。",
             parameters: z.object({
               customerId: z.string().describe("客户 ID"),
               limit: z
@@ -203,7 +229,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     createFollowUp: tool({
       description:
-        "为已有客户写入一条跟进/往来记录，并关联今日销售日报。老客户确认事实后即可调用。",
+        "为已有客户写入跟进/往来（须为该客户负责人或协助负责人，否则工具会失败）。写入前建议 searchCustomers/getCustomer 确认 writable=true。",
       parameters: z.object({
         customerId: z.string().optional().describe("客户 ID（与 customerName 二选一）"),
         customerName: z.string().optional().describe("客户名称（与 customerId 二选一）"),
@@ -219,7 +245,21 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .optional()
           .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
       }),
-      execute: async (input) => createFollowUpFromAgent(ctx, input),
+      execute: async (input) => {
+        try {
+          return await createFollowUpFromAgent(ctx, input);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "写入往来失败";
+          return {
+            success: false,
+            error: message,
+            hint:
+              message.includes("无权")
+                ? "该客户非本人负责，勿重复落库；可写入日报说明，或请销售联系负责人。"
+                : "请核对客户与必填字段后重试。",
+          };
+        }
+      },
     }),
     submitDailyLog: tool({
       description:
@@ -250,6 +290,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
             id: row.id,
             customerId: row.customer?.id ?? null,
             customerName: row.customer?.name ?? null,
+            customerGrade: row.customer?.customerGrade ?? null,
             requiresFollowUp: checkInRequiresFollowUp(row),
             contactName: row.contact?.name ?? null,
             checkedInAt: row.checkedInAt.toISOString(),
@@ -267,9 +308,9 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     completeCheckIn: tool({
       description:
-        "将今日关联客户的打卡记录完善为正式往来跟进。无客户打卡无需调用此工具。面访打卡默认 method=FACE_VISIT。",
+        "将今日关联客户的打卡记录完善为正式往来跟进。调用前务必先用 listTodayCheckIns 取得最新 checkInId；无客户打卡勿用。面访打卡默认 method=FACE_VISIT。",
       parameters: z.object({
-        checkInId: z.string().describe("打卡记录 ID"),
+        checkInId: z.string().describe("listTodayCheckIns 返回的 id 字段，勿编造或复用过期 ID"),
         method: z
           .enum(["PHONE", "WECHAT", "FACE_VISIT", "OTHER"])
           .describe("往来方式"),
@@ -282,7 +323,18 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .optional()
           .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
       }),
-      execute: async (input) => completeCheckInFromAgent(ctx, input),
+      execute: async (input) => {
+        try {
+          return await completeCheckInFromAgent(ctx, input);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "完善打卡失败";
+          return {
+            success: false,
+            error: message,
+            hint: "请先调用 listTodayCheckIns 获取最新 checkInId 后重试；若已完善可继续下一条或提交日报。若提示无权，说明该客户非本人负责，勿重复落库。",
+          };
+        }
+      },
     }),
     createOpportunity: tool({
       description: "新建商机。需关联已有客户，填写预计金额、预计签约月份、阶段。",

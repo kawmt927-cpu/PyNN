@@ -370,7 +370,7 @@ export async function listTodayCheckIns(role: UserRole, userId: string, status?:
     },
     orderBy: { checkedInAt: "desc" },
     include: {
-      customer: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true, customerGrade: true } },
       contact: { select: { id: true, name: true, title: true } },
       user: { select: { id: true, name: true } },
       followUp: { select: { id: true, method: true, content: true } },
@@ -386,6 +386,51 @@ export function checkInStatusLabel(checkIn: { customerId: string | null; status:
   if (!checkIn.customerId) return "已记录";
   if (checkIn.status === SalesCheckInStatus.PENDING) return "待完善";
   return "已完善";
+}
+
+/** 规范化 Agent 传入的打卡 ID（避免复制快照里的 id= 前缀） */
+export function normalizeAgentCheckInId(raw: string): string {
+  const trimmed = raw.trim();
+  const labeled = trimmed.match(/(?:^id[=:\s]+|^checkInId[=:\s]+)(c[a-z0-9]+)/i);
+  if (labeled) return labeled[1];
+  const bare = trimmed.match(/^(c[a-z0-9]{20,})$/i);
+  if (bare) return bare[1];
+  return trimmed;
+}
+
+const checkInForAgentInclude = {
+  customer: { select: { name: true } },
+} as const;
+
+async function findCheckInForAgentCompletion(ctx: AgentWriteContext, rawCheckInId: string) {
+  const checkInId = normalizeAgentCheckInId(rawCheckInId);
+  const direct = await prisma.salesCheckIn.findUnique({
+    where: { id: checkInId },
+    include: checkInForAgentInclude,
+  });
+  if (direct) return { checkIn: direct, autoResolved: false as const };
+
+  const { start, end } = getTodayRange();
+  const pending = await prisma.salesCheckIn.findMany({
+    where: {
+      ...salesCheckInListWhere(ctx.role, ctx.userId),
+      customerId: { not: null },
+      status: SalesCheckInStatus.PENDING,
+      checkedInAt: { gte: start, lt: end },
+    },
+    include: checkInForAgentInclude,
+    orderBy: { checkedInAt: "asc" },
+  });
+
+  if (pending.length === 1) {
+    return { checkIn: pending[0], autoResolved: true as const };
+  }
+
+  return {
+    checkIn: null,
+    autoResolved: false as const,
+    pendingCount: pending.length,
+  };
 }
 
 export async function completeSalesCheckInManually(input: {
@@ -486,12 +531,20 @@ export async function completeCheckInFromAgent(
     suggestedGrade?: string | null;
   }
 ) {
-  const checkIn = await prisma.salesCheckIn.findUnique({
-    where: { id: input.checkInId },
-    include: { customer: { select: { name: true } } },
-  });
+  const resolved = await findCheckInForAgentCompletion(ctx, input.checkInId);
+  if (!resolved.checkIn) {
+    const hint =
+      resolved.pendingCount > 1
+        ? `今日还有 ${resolved.pendingCount} 条待完善打卡，请先调用 listTodayCheckIns 获取正确 checkInId。`
+        : "请先调用 listTodayCheckIns 获取最新 checkInId，勿使用快照或对话中的过期 ID。";
+    throw new Error(`打卡记录不存在（checkInId=${normalizeAgentCheckInId(input.checkInId)}）。${hint}`);
+  }
 
-  if (!checkIn) throw new Error("打卡记录不存在");
+  const checkIn = resolved.checkIn;
+  const autoResolvedNote = resolved.autoResolved
+    ? `（已自动匹配今日唯一待完善打卡 ${checkIn.id}）`
+    : "";
+
   if (!checkIn.customerId) {
     throw new Error("无客户打卡仅记录定位，无需完善往来");
   }
@@ -503,7 +556,7 @@ export async function completeCheckInFromAgent(
       success: true as const,
       alreadyCompleted: true,
       followUpId: checkIn.followUpId,
-      message: `打卡「${checkIn.customer!.name}」已完善过`,
+      message: `打卡「${checkIn.customer!.name}」已完善过${autoResolvedNote}`,
     };
   }
 
@@ -526,23 +579,19 @@ export async function completeCheckInFromAgent(
     suggestedGrade: input.suggestedGrade,
   });
 
-  if (hasCheckInLocation(checkIn)) {
-    await prisma.salesCheckIn.update({
-      where: { id: checkIn.id },
-      data: {
-        status: SalesCheckInStatus.COMPLETED,
-        followUpId: followUpResult.followUpId,
-      },
-    });
-  } else {
-    await prisma.salesCheckIn.delete({ where: { id: checkIn.id } });
-  }
+  await prisma.salesCheckIn.update({
+    where: { id: checkIn.id },
+    data: {
+      status: SalesCheckInStatus.COMPLETED,
+      followUpId: followUpResult.followUpId,
+    },
+  });
 
   return {
     success: true as const,
     checkInId: checkIn.id,
     followUpId: followUpResult.followUpId,
     customerName: checkIn.customer!.name,
-    message: `已完善打卡并写入跟进：${checkIn.customer!.name}`,
+    message: `已完善打卡并写入跟进：${checkIn.customer!.name}${autoResolvedNote}`,
   };
 }

@@ -5,10 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  SALES_LOG_BOOTSTRAP_USER_MESSAGE,
-  SALES_LOG_LOADING_MESSAGE,
-} from "@/lib/agent/sales-log-prompt";
+import { SALES_LOG_OPENING_MESSAGE } from "@/lib/agent/sales-log-prompt";
 import { useWeComSdk, isWeComClient } from "@/hooks/use-wecom-sdk";
 import { LocationButton } from "@/components/mobile/location-button";
 import { VoiceInputButton } from "@/components/mobile/voice-input-button";
@@ -76,7 +73,7 @@ export default function MobileLogPage() {
     },
     experimental_prepareRequestBody: ({ messages: chatMessages }) => ({
       messages: chatMessages
-        .filter((m) => m.id !== "loading" && m.content?.trim())
+        .filter((m) => m.id !== "opening" && m.content?.trim())
         .map(({ role, content }) => ({ role, content })),
     }),
   });
@@ -132,19 +129,26 @@ export default function MobileLogPage() {
         }
 
         setMessages([
-          { id: "loading", role: "assistant", content: SALES_LOG_LOADING_MESSAGE },
+          {
+            id: "opening",
+            role: "assistant",
+            content: SALES_LOG_OPENING_MESSAGE,
+          },
         ]);
-        append({ role: "user", content: SALES_LOG_BOOTSTRAP_USER_MESSAGE });
       })
       .catch(() => {
         sessionBootstrapped.current = true;
-        append({ role: "user", content: SALES_LOG_BOOTSTRAP_USER_MESSAGE });
+        setMessages([
+          {
+            id: "opening",
+            role: "assistant",
+            content: SALES_LOG_OPENING_MESSAGE,
+          },
+        ]);
       });
-  }, [append, setMessages]);
+  }, [setMessages]);
 
-  const visibleMessages = messages.filter(
-    (m) => m.id !== "loading" && m.content !== SALES_LOG_BOOTSTRAP_USER_MESSAGE
-  );
+  const visibleMessages = messages;
 
   function appendToInput(text: string) {
     setInput((prev) => (prev ? `${prev}\n${text}` : text));
@@ -166,7 +170,7 @@ export default function MobileLogPage() {
           <div>
             <h1 className="text-lg font-bold">今日销售日志</h1>
             <p className="text-xs text-muted-foreground">
-              {inWeCom ? "企业微信 · AI 助理" : "AI 完善外勤记录"}
+              {inWeCom ? "企业微信 · AI 助理" : "口述今日工作 · AI 整理日报"}
               {logStatus ? ` · ${STATUS_LABEL[logStatus]}` : ""}
             </p>
           </div>
@@ -206,11 +210,8 @@ export default function MobileLogPage() {
             </Card>
           </div>
         ))}
-        {isLoading && visibleMessages.length === 0 && (
-          <p className="text-sm text-muted-foreground">{SALES_LOG_LOADING_MESSAGE}</p>
-        )}
-        {isLoading && visibleMessages.length > 0 && (
-          <p className="text-sm text-muted-foreground">助理正在思考…</p>
+        {isLoading && (
+          <p className="text-sm text-muted-foreground">助理正在整理…</p>
         )}
         {chatError && (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -247,7 +248,7 @@ export default function MobileLogPage() {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="回答助理提问，或补充今日工作…"
+            placeholder="口述今日拜访与外勤情况…"
             className="flex-1"
             disabled={isLoading}
           />
@@ -256,7 +257,7 @@ export default function MobileLogPage() {
           </Button>
         </div>
         <p className="mt-2 text-center text-xs text-muted-foreground">
-          确认后 AI 将自动写入客户、跟进与日报 · 快捷词：新客户 · 老客户 · 生成日报
+          确认后 AI 将结合打卡记录落库并生成日报 · 快捷词：生成日报
         </p>
       </form>
     </div>

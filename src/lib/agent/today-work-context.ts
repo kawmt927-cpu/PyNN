@@ -6,6 +6,10 @@ import {
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
 import { salesLogMethodLabel } from "@/lib/sales-log/methods";
 import { listTodayFollowUps } from "@/lib/sales-log/today-follow-ups";
+import {
+  fetchCustomerBriefsForAgent,
+  formatCustomerBriefForPrompt,
+} from "@/lib/agent/customer-brief";
 
 function formatTime(iso: Date | string): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
@@ -29,13 +33,16 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
   const completedCheckIns = checkIns.filter((row) => !checkInRequiresFollowUp(row));
   const standaloneFollowUps = followUps.filter((row) => !row.salesCheckIn);
 
-  const lines: string[] = ["## 今日工作快照（系统已注入，对话开始时请据此主动追问）", ""];
+  const lines: string[] = [
+    "## 今日工作快照（后台参考：销售自述后对照理解，开场勿抢先追问）",
+    "",
+  ];
 
   if (pendingCheckIns.length > 0) {
-    lines.push(`### 待完善往来打卡（${pendingCheckIns.length} 条，优先处理）`);
+    lines.push(`### 待完善往来打卡（${pendingCheckIns.length} 条）`);
     for (const row of pendingCheckIns) {
       lines.push(
-        `- id=${row.id} · ${row.customer?.name ?? "未知客户"} · ${formatTime(row.checkedInAt)} · ${formatCheckInLocation(row)}` +
+        `- checkInId: ${row.id} · ${row.customer?.name ?? "未知客户"} · ${formatTime(row.checkedInAt)} · ${formatCheckInLocation(row)}` +
           (row.contact?.name ? ` · 联系人 ${row.contact.name}` : "") +
           (row.notes?.trim() ? ` · 备注：${truncate(row.notes, 40)}` : "")
       );
@@ -69,28 +76,30 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
   }
 
   if (checkIns.length === 0 && followUps.length === 0) {
-    lines.push("### 今日尚无打卡或往来记录");
-    lines.push("- 请主动询问销售今天见了哪些客户、电话/微信沟通情况，再落库。");
-    lines.push("");
-  } else if (pendingCheckIns.length === 0) {
-    lines.push("### 待办提示");
-    lines.push("- 所有往来打卡已完善。请核对已录入往来是否完整，补充遗漏的客户/沟通，或引导销售说「生成日报」收尾。");
+    lines.push("### 系统内尚无今日打卡或往来");
+    lines.push("- 销售自述后，按描述落库即可。");
     lines.push("");
   }
 
-  lines.push("### 开场要求");
-  if (pendingCheckIns.length > 0) {
-    const first = [...pendingCheckIns].sort(
-      (a, b) => a.checkedInAt.getTime() - b.checkedInAt.getTime()
-    )[0];
-    lines.push(
-      `- 第一条待完善打卡：${first.customer?.name}（${formatTime(first.checkedInAt)}）。开场用一句话点出该客户，只问一个最关键问题（见了谁/聊了什么/下一步）。`
-    );
-  } else if (followUps.length > 0) {
-    lines.push("- 无待完善打卡。简要概括今日已记录工作，问是否还有遗漏的客户或沟通。");
-  } else {
-    lines.push("- 无系统记录。友好开场，问今天主要跟进了哪些客户。");
+  const briefCustomerIds = [
+    ...pendingCheckIns.map((row) => row.customer?.id),
+    ...standaloneFollowUps.map((row) => row.customer.id),
+    ...completedCheckIns.map((row) => row.customer?.id),
+  ].filter((id): id is string => Boolean(id));
+
+  const customerBriefs = await fetchCustomerBriefsForAgent(briefCustomerIds, role, userId);
+  if (customerBriefs.length > 0) {
+    lines.push("### 相关客户档案摘要（落库或追问前参考，不必在开场播报）");
+    for (const brief of customerBriefs) {
+      lines.push(formatCustomerBriefForPrompt(brief));
+      lines.push("");
+    }
   }
+
+  lines.push("### 使用说明");
+  lines.push("- 销售先自述；自述后再对照本快照匹配打卡与落库。");
+  lines.push("- 信息清楚则直接落库；仅缺失、矛盾、无权限、建档改商机时才追问。");
+  lines.push("- 非本人负责客户不可落库。");
 
   return lines.join("\n");
 }
