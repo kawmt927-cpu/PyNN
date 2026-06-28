@@ -13,6 +13,10 @@ import { formatDailyReportDateLabel } from "@/lib/sales-log/daily-reports";
 import { DailyReportDayNav } from "@/components/daily-reports/daily-report-day-nav";
 import { DailyReportDetailView } from "@/components/daily-reports/daily-report-detail";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  defaultDailyReportDayDate,
+  listDailyReportMarkedDates,
+} from "@/lib/sales-log/daily-report-day";
 
 type Props = {
   searchParams: Promise<{
@@ -58,6 +62,9 @@ export default async function DailyReportsPage({ searchParams }: Props) {
   if (!report) notFound();
 
   const nav = dailyReportDayNavDates(activeParams.date);
+  const [y, m] = activeParams.date.split("-").map(Number);
+  const markedDates = await listDailyReportMarkedDates(subjectUser.id, y, m);
+  const maxDate = defaultDailyReportDayDate();
   const hasActivity =
     report.checkIns.length > 0 ||
     report.followUps.length > 0 ||
@@ -71,7 +78,7 @@ export default async function DailyReportsPage({ searchParams }: Props) {
         <h1 className="text-2xl font-bold">日报管理</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {showAll
-            ? "按日查看各销售的打卡、往来与日报。"
+            ? "先选择销售，再选日期查看打卡、往来与日报；日历圆点仅标记该销售有记录的日子。"
             : "按日查看本人的打卡、往来与日报。"}
         </p>
       </div>
@@ -94,6 +101,8 @@ export default async function DailyReportsPage({ searchParams }: Props) {
             canGoNext={nav.canGoNext}
             isToday={nav.isToday}
             userId={activeParams.userId}
+            maxDate={maxDate}
+            markedDates={markedDates}
             showUserFilter={showAll}
             salesUsers={salesUsers}
           />

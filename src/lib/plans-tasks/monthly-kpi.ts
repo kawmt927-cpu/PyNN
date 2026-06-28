@@ -1,5 +1,5 @@
 import { endOfDay, startOfDay } from "date-fns";
-import { FollowUpMethod, SalesDailyLogStatus } from "@prisma/client";
+import { FollowUpMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { signedContractStatusFilter } from "@/lib/contracts/access";
 import { sumContractPaymentsForOwner } from "@/lib/contracts/payment-actuals";
@@ -11,9 +11,10 @@ import {
   resolveGradeIntervalDays,
 } from "@/lib/customers/grade-intervals";
 import { getProjectDevMinStageSortOrder } from "@/lib/plans-tasks/kpi-config";
-
-/** 日报须在当日 22:00 前提交 */
-export const DAILY_REPORT_DEADLINE_HOUR = 22;
+import {
+  isDailyReportSubmitted,
+  isLateDailyReportSubmission,
+} from "@/lib/sales-log/daily-report-submission";
 
 export type MonthlyKpiTargets = {
   channelDev: number | null;
@@ -59,15 +60,6 @@ function sameCalendarDay(a: Date, b: Date) {
   );
 }
 
-function isSubmittedStatus(status: SalesDailyLogStatus) {
-  return status === SalesDailyLogStatus.SUBMITTED || status === SalesDailyLogStatus.RISK_SUBMITTED;
-}
-
-function isLateSubmission(submittedAt: Date, logDate: Date): boolean {
-  const deadline = new Date(logDate);
-  deadline.setHours(DAILY_REPORT_DEADLINE_HOUR, 0, 0, 0);
-  return submittedAt > deadline;
-}
 
 async function countChannelDevelopment(
   userId: string,
@@ -186,7 +178,7 @@ async function computeProcessCompliance(
 
     const log = logs.find((row) => sameCalendarDay(row.logDate, dayStart));
     const hasCheckIn = checkIns.some((row) => sameCalendarDay(row.checkedInAt, dayStart));
-    const submitted = log && isSubmittedStatus(log.status);
+    const submitted = log && isDailyReportSubmitted(log.status);
 
     if (!submitted) {
       if (now > dayEnd) missedCount += 1;
@@ -194,7 +186,7 @@ async function computeProcessCompliance(
     }
 
     const submittedAt = log.submittedAt ?? log.updatedAt;
-    const late = isLateSubmission(submittedAt, dayStart);
+    const late = isLateDailyReportSubmission(submittedAt, dayStart);
     const compliant = hasCheckIn && !late;
 
     if (compliant) {

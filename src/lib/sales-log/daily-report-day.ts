@@ -160,3 +160,56 @@ export function dailyReportDayNavDates(dateStr: string) {
 export function defaultDailyReportDayDate() {
   return formatDailyReportDayParam();
 }
+
+function monthRange(year: number, month: number) {
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 1);
+  return { start, end };
+}
+
+function toDayKey(date: Date) {
+  return format(date, "yyyy-MM-dd");
+}
+
+/** 返回某月内有日报/打卡/往来记录的日期（yyyy-MM-dd） */
+export async function listDailyReportMarkedDates(
+  subjectUserId: string,
+  year: number,
+  month: number
+): Promise<string[]> {
+  const { start, end } = monthRange(year, month);
+  const marked = new Set<string>();
+
+  const [logs, checkIns, followUps] = await Promise.all([
+    prisma.salesDailyLog.findMany({
+      where: { userId: subjectUserId, logDate: { gte: start, lt: end } },
+      select: { logDate: true, status: true, dailyReport: true },
+    }),
+    prisma.salesCheckIn.findMany({
+      where: { userId: subjectUserId, checkedInAt: { gte: start, lt: end } },
+      select: { checkedInAt: true },
+    }),
+    prisma.followUp.findMany({
+      where: { userId: subjectUserId, followUpAt: { gte: start, lt: end } },
+      select: { followUpAt: true },
+    }),
+  ]);
+
+  for (const log of logs) {
+    const hasReport =
+      log.status === "SUBMITTED" ||
+      log.status === "RISK_SUBMITTED" ||
+      Boolean(log.dailyReport?.trim());
+    if (hasReport) marked.add(toDayKey(log.logDate));
+  }
+
+  for (const row of checkIns) {
+    marked.add(toDayKey(row.checkedInAt));
+  }
+
+  for (const row of followUps) {
+    marked.add(toDayKey(row.followUpAt));
+  }
+
+  return [...marked].sort();
+}
