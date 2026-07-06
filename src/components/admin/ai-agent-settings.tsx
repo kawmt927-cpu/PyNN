@@ -161,6 +161,55 @@ export function AiAgentSettings({ initial }: Props) {
         </p>
 
         <div className="space-y-3 rounded-md border p-4">
+          <p className="text-sm font-medium">浏览器语音输入（SenseVoice）</p>
+          <p className="text-xs text-muted-foreground">
+            浏览器内语音转文字需单独配置语音识别 API（推荐{" "}
+            <a
+              href="https://cloud.siliconflow.cn"
+              className="text-primary underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              硅基流动
+            </a>
+            ）。Chrome 内置 Web Speech 在国内无法使用，请勿依赖浏览器原生识别。
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="sttApiKey">语音识别 API Key</Label>
+              <Input
+                id="sttApiKey"
+                name="sttApiKey"
+                type="password"
+                autoComplete="off"
+                placeholder={initial.sttApiKeyConfigured ? "留空则保持现有密钥" : "sk-..."}
+              />
+              <p className="text-xs text-muted-foreground">{initial.sttApiKeyMask}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sttApiBase">语音识别 API Base</Label>
+              <Input
+                id="sttApiBase"
+                name="sttApiBase"
+                defaultValue={initial.sttApiBase}
+                placeholder="https://api.siliconflow.cn/v1"
+                required
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="sttModel">语音识别模型</Label>
+              <Input
+                id="sttModel"
+                name="sttModel"
+                defaultValue={initial.sttModel}
+                placeholder="FunAudioLLM/SenseVoiceSmall"
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-md border p-4">
           <p className="text-sm font-medium">Agent 工具</p>
           <div className="grid gap-3 md:grid-cols-2">
             <CheckboxField

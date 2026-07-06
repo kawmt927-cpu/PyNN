@@ -14,11 +14,16 @@ export type EffectiveAiAgentConfig = {
   toolSearchOpportunities: boolean;
   toolGetCustomer: boolean;
   toolListFollowUps: boolean;
+  sttApiKey: string | null;
+  sttApiBase: string;
+  sttModel: string;
 };
 
-export type AiAgentConfigView = Omit<EffectiveAiAgentConfig, "apiKey"> & {
+export type AiAgentConfigView = Omit<EffectiveAiAgentConfig, "apiKey" | "sttApiKey"> & {
   apiKeyConfigured: boolean;
   apiKeyMask: string;
+  sttApiKeyConfigured: boolean;
+  sttApiKeyMask: string;
 };
 
 export type SalesLogPromptSettingsView = {
@@ -43,6 +48,8 @@ export async function getSalesLogPromptSettings(): Promise<SalesLogPromptSetting
 
 const DEFAULT_API_BASE = "https://api.moonshot.cn/v1";
 const DEFAULT_MODEL = "kimi-k2.5";
+const DEFAULT_STT_API_BASE = "https://api.siliconflow.cn/v1";
+const DEFAULT_STT_MODEL = "FunAudioLLM/SenseVoiceSmall";
 
 export function maskApiKey(key: string | null | undefined): string {
   if (!key) return "未配置";
@@ -91,6 +98,13 @@ export async function getEffectiveAiAgentConfig(): Promise<EffectiveAiAgentConfi
     toolSearchOpportunities: row?.toolSearchOpportunities ?? true,
     toolGetCustomer: row?.toolGetCustomer ?? true,
     toolListFollowUps: row?.toolListFollowUps ?? true,
+    sttApiKey: row?.sttApiKey?.trim() || process.env.STT_API_KEY?.trim() || null,
+    sttApiBase:
+      row?.sttApiBase?.trim() ||
+      process.env.STT_API_BASE?.trim() ||
+      DEFAULT_STT_API_BASE,
+    sttModel:
+      row?.sttModel?.trim() || process.env.STT_MODEL?.trim() || DEFAULT_STT_MODEL,
   };
 }
 
@@ -110,7 +124,15 @@ export async function getAiAgentConfigForAdmin(): Promise<AiAgentConfigView> {
     toolSearchOpportunities: row?.toolSearchOpportunities ?? effective.toolSearchOpportunities,
     toolGetCustomer: row?.toolGetCustomer ?? effective.toolGetCustomer,
     toolListFollowUps: row?.toolListFollowUps ?? effective.toolListFollowUps,
+    sttApiBase: row?.sttApiBase ?? effective.sttApiBase,
+    sttModel: row?.sttModel ?? effective.sttModel,
     apiKeyConfigured: Boolean(row?.apiKey?.trim() || process.env.LLM_API_KEY?.trim()),
     apiKeyMask: maskApiKey(row?.apiKey?.trim() || process.env.LLM_API_KEY?.trim() || null),
+    sttApiKeyConfigured: Boolean(
+      row?.sttApiKey?.trim() || process.env.STT_API_KEY?.trim()
+    ),
+    sttApiKeyMask: maskApiKey(
+      row?.sttApiKey?.trim() || process.env.STT_API_KEY?.trim() || null
+    ),
   };
 }

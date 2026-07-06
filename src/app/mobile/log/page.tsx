@@ -38,6 +38,7 @@ export default function MobileLogPage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [logStatus, setLogStatus] = useState<DailyLogStatus>(null);
   const [syncHint, setSyncHint] = useState<string | null>(null);
+  const [inputActionHint, setInputActionHint] = useState<string | null>(null);
 
   const syncConversation = useCallback(async (items: { role: string; content: string }[]) => {
     try {
@@ -231,6 +232,7 @@ export default function MobileLogPage() {
             wecomReady={wecomReady}
             onGetWeComLocation={getLocation}
             onLocation={appendToInput}
+            onStatus={setInputActionHint}
           />
           <VoiceInputButton
             disabled={isLoading}
@@ -239,9 +241,10 @@ export default function MobileLogPage() {
             onStartWeComRecord={startVoiceRecord}
             onStopWeComRecord={stopVoiceRecord}
             onTranscript={appendToInput}
+            onStatus={setInputActionHint}
           />
-          <span className="flex items-center text-xs text-muted-foreground">
-            定位 · 按住说话
+          <span className="flex min-w-0 flex-1 items-center text-xs text-muted-foreground">
+            {inputActionHint ?? (inWeCom ? "定位 · 按住说话" : "定位 · 点击麦克风说话")}
           </span>
         </div>
         <div className="flex gap-2">

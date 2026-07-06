@@ -947,6 +947,9 @@ model AiAgentConfig {
   toolSearchOpportunities Boolean @default(true)
   toolGetCustomer       Boolean  @default(true)
   toolListFollowUps     Boolean  @default(true)
+  sttApiKey             String?
+  sttApiBase            String   @default("https://api.siliconflow.cn/v1")
+  sttModel              String   @default("FunAudioLLM/SenseVoiceSmall")
   updatedAt             DateTime @updatedAt
   updatedById           String?
 

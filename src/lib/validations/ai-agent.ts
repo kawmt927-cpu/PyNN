@@ -12,6 +12,9 @@ export const aiAgentConfigSchema = z.object({
   toolSearchOpportunities: z.boolean(),
   toolGetCustomer: z.boolean(),
   toolListFollowUps: z.boolean(),
+  sttApiKey: z.string().optional(),
+  sttApiBase: z.string().url("语音识别 API Base 须为有效 URL"),
+  sttModel: z.string().min(1),
 });
 
 export type AiAgentConfigInput = z.infer<typeof aiAgentConfigSchema>;

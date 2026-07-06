@@ -35,6 +35,7 @@ function formCheckbox(formData: FormData, name: string): boolean {
 
 function parseAiAgentFormData(formData: FormData) {
   const apiKeyRaw = (formData.get("apiKey") as string | null)?.trim();
+  const sttApiKeyRaw = (formData.get("sttApiKey") as string | null)?.trim();
   return aiAgentConfigSchema.parse({
     enabled: formCheckbox(formData, "enabled"),
     provider: "kimi",
@@ -47,6 +48,9 @@ function parseAiAgentFormData(formData: FormData) {
     toolSearchOpportunities: formCheckbox(formData, "toolSearchOpportunities"),
     toolGetCustomer: formCheckbox(formData, "toolGetCustomer"),
     toolListFollowUps: formCheckbox(formData, "toolListFollowUps"),
+    sttApiKey: sttApiKeyRaw || undefined,
+    sttApiBase: (formData.get("sttApiBase") as string)?.trim(),
+    sttModel: (formData.get("sttModel") as string)?.trim(),
   });
 }
 
@@ -80,6 +84,9 @@ export async function saveAiAgentConfig(formData: FormData) {
       toolSearchOpportunities: parsed.toolSearchOpportunities,
       toolGetCustomer: parsed.toolGetCustomer,
       toolListFollowUps: parsed.toolListFollowUps,
+      sttApiKey: parsed.sttApiKey?.trim() || null,
+      sttApiBase: parsed.sttApiBase,
+      sttModel: parsed.sttModel,
       updatedById: session.user.id,
     },
     update: {
@@ -94,6 +101,9 @@ export async function saveAiAgentConfig(formData: FormData) {
       toolSearchOpportunities: parsed.toolSearchOpportunities,
       toolGetCustomer: parsed.toolGetCustomer,
       toolListFollowUps: parsed.toolListFollowUps,
+      sttApiKey: parsed.sttApiKey?.trim() || existing?.sttApiKey,
+      sttApiBase: parsed.sttApiBase,
+      sttModel: parsed.sttModel,
       updatedById: session.user.id,
     },
   });
