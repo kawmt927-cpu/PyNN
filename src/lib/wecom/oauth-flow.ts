@@ -6,7 +6,7 @@ export const WECOM_DEFAULT_RETURN_TO = "/today-work";
 
 export const WECOM_OAUTH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: process.env.NEXTAUTH_URL?.startsWith("https://") ?? false,
   sameSite: "lax" as const,
   path: "/",
   maxAge: 600,
@@ -20,8 +20,20 @@ export function sanitizeWeComReturnTo(raw: string | null | undefined): string {
   return resolveReturnTo(raw, WECOM_DEFAULT_RETURN_TO);
 }
 
+export function resolvePublicOrigin(requestOrigin: string): string {
+  const fromEnv = process.env.NEXTAUTH_URL?.trim();
+  if (fromEnv) {
+    try {
+      return new URL(fromEnv).origin;
+    } catch {
+      // ignore invalid NEXTAUTH_URL
+    }
+  }
+  return requestOrigin;
+}
+
 export function buildWeComCallbackUrl(origin: string): string {
-  return new URL("/api/auth/wecom/callback", origin).toString();
+  return new URL("/api/auth/wecom/callback", resolvePublicOrigin(origin)).toString();
 }
 
 export function attachWeComOAuthCookies(

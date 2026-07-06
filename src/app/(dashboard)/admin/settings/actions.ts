@@ -20,9 +20,9 @@ import {
   renumberConfigOptions,
 } from "@/lib/config-options-sort";
 import { aiAgentConfigSchema, salesLogPromptSchema } from "@/lib/validations/ai-agent";
-import { getAiAgentConfigRow } from "@/lib/agent/config";
+import { findAiAgentConfigRow } from "@/lib/agent/config";
 import { SALES_LOG_SYSTEM_PROMPT } from "@/lib/agent/sales-log-prompt";
-import { getAmapConfigRow } from "@/lib/amap/config";
+import { findAmapConfigRow } from "@/lib/amap/config";
 import { resolveCheckInLocation } from "@/lib/amap/reverse-geocode";
 import { amapConfigSchema } from "@/lib/validations/amap";
 import { isKimiThinkingModel } from "@/lib/agent/moonshot-fetch";
@@ -53,8 +53,8 @@ function parseAiAgentFormData(formData: FormData) {
 async function resolveApiKeyForTest(formData: FormData): Promise<string> {
   const parsed = parseAiAgentFormData(formData);
   if (parsed.apiKey) return parsed.apiKey;
-  const row = await getAiAgentConfigRow();
-  if (row.apiKey?.trim()) return row.apiKey.trim();
+  const row = await findAiAgentConfigRow();
+  if (row?.apiKey?.trim()) return row.apiKey.trim();
   const envKey = process.env.LLM_API_KEY?.trim();
   if (envKey) return envKey;
   throw new Error("请先填写 API Key");
@@ -63,16 +63,29 @@ async function resolveApiKeyForTest(formData: FormData): Promise<string> {
 export async function saveAiAgentConfig(formData: FormData) {
   const session = await requireAiAgentSettingsAccess();
   const parsed = parseAiAgentFormData(formData);
-  const existing = await getAiAgentConfigRow();
+  const existing = await findAiAgentConfigRow();
 
-  const apiKey = parsed.apiKey?.trim() || existing.apiKey;
-
-  await prisma.aiAgentConfig.update({
+  await prisma.aiAgentConfig.upsert({
     where: { id: "default" },
-    data: {
+    create: {
+      id: "default",
       enabled: parsed.enabled,
       provider: parsed.provider,
-      apiKey,
+      apiKey: parsed.apiKey?.trim() || null,
+      apiBase: parsed.apiBase,
+      model: parsed.model,
+      maxSteps: parsed.maxSteps,
+      thinkingEnabled: parsed.thinkingEnabled,
+      toolSearchCustomers: parsed.toolSearchCustomers,
+      toolSearchOpportunities: parsed.toolSearchOpportunities,
+      toolGetCustomer: parsed.toolGetCustomer,
+      toolListFollowUps: parsed.toolListFollowUps,
+      updatedById: session.user.id,
+    },
+    update: {
+      enabled: parsed.enabled,
+      provider: parsed.provider,
+      apiKey: parsed.apiKey?.trim() || existing?.apiKey,
       apiBase: parsed.apiBase,
       model: parsed.model,
       maxSteps: parsed.maxSteps,
@@ -151,8 +164,8 @@ function parseAmapFormData(formData: FormData) {
 async function resolveWebServiceKeyForTest(formData: FormData): Promise<string> {
   const parsed = parseAmapFormData(formData);
   if (parsed.webServiceKey) return parsed.webServiceKey;
-  const row = await getAmapConfigRow();
-  if (row.webServiceKey?.trim()) return row.webServiceKey.trim();
+  const row = await findAmapConfigRow();
+  if (row?.webServiceKey?.trim()) return row.webServiceKey.trim();
   const envKey =
     process.env.AMAP_WEB_SERVICE_KEY?.trim() || process.env.AMAP_KEY?.trim();
   if (envKey) return envKey;
@@ -162,13 +175,19 @@ async function resolveWebServiceKeyForTest(formData: FormData): Promise<string> 
 export async function saveAmapConfig(formData: FormData) {
   const session = await requireAmapSettingsAccess();
   const parsed = parseAmapFormData(formData);
-  const existing = await getAmapConfigRow();
+  const existing = await findAmapConfigRow();
 
-  await prisma.amapConfig.update({
+  await prisma.amapConfig.upsert({
     where: { id: "default" },
-    data: {
-      webServiceKey: parsed.webServiceKey?.trim() || existing.webServiceKey,
-      jsKey: parsed.jsKey?.trim() || existing.jsKey,
+    create: {
+      id: "default",
+      webServiceKey: parsed.webServiceKey?.trim() || null,
+      jsKey: parsed.jsKey?.trim() || null,
+      updatedById: session.user.id,
+    },
+    update: {
+      webServiceKey: parsed.webServiceKey?.trim() || existing?.webServiceKey,
+      jsKey: parsed.jsKey?.trim() || existing?.jsKey,
       updatedById: session.user.id,
     },
   });

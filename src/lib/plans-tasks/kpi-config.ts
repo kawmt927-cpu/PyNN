@@ -7,17 +7,13 @@ export type SalesKpiConfigView = {
 };
 
 export async function getSalesKpiConfig() {
-  const row = await prisma.salesKpiConfig.findUnique({ where: { id: KPI_CONFIG_ID } });
-  if (row) return row;
-  return prisma.salesKpiConfig.create({
-    data: { id: KPI_CONFIG_ID },
-  });
+  return prisma.salesKpiConfig.findUnique({ where: { id: KPI_CONFIG_ID } });
 }
 
 export async function getSalesKpiConfigView(): Promise<SalesKpiConfigView> {
   const row = await getSalesKpiConfig();
   return {
-    projectDevMinStageValue: row.projectDevMinStageValue,
+    projectDevMinStageValue: row?.projectDevMinStageValue ?? null,
   };
 }
 
@@ -31,7 +27,7 @@ export async function saveProjectDevMinStage(value: string | null) {
 
 export async function getProjectDevMinStageSortOrder(): Promise<number | null> {
   const config = await getSalesKpiConfig();
-  if (!config.projectDevMinStageValue) return null;
+  if (!config?.projectDevMinStageValue) return null;
 
   const stage = await prisma.configOption.findFirst({
     where: {

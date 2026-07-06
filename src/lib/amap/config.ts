@@ -33,27 +33,28 @@ function envJsKey(): string | null {
   );
 }
 
+export async function findAmapConfigRow() {
+  return prisma.amapConfig.findUnique({ where: { id: "default" } });
+}
+
+/** @deprecated 仅保留兼容；读取配置请用 findAmapConfigRow */
 export async function getAmapConfigRow() {
-  return prisma.amapConfig.upsert({
-    where: { id: "default" },
-    create: { id: "default" },
-    update: {},
-  });
+  return findAmapConfigRow();
 }
 
 export async function getEffectiveAmapConfig(): Promise<EffectiveAmapConfig> {
-  const row = await getAmapConfigRow();
+  const row = await findAmapConfigRow();
   return {
-    webServiceKey: row.webServiceKey?.trim() || envWebServiceKey(),
-    jsKey: row.jsKey?.trim() || envJsKey(),
+    webServiceKey: row?.webServiceKey?.trim() || envWebServiceKey(),
+    jsKey: row?.jsKey?.trim() || envJsKey(),
   };
 }
 
 export async function getAmapConfigForAdmin(): Promise<AmapConfigView> {
-  const row = await getAmapConfigRow();
+  const row = await findAmapConfigRow();
   const effective = await getEffectiveAmapConfig();
-  const dbWeb = row.webServiceKey?.trim() || null;
-  const dbJs = row.jsKey?.trim() || null;
+  const dbWeb = row?.webServiceKey?.trim() || null;
+  const dbJs = row?.jsKey?.trim() || null;
 
   return {
     webServiceKeyConfigured: Boolean(dbWeb || envWebServiceKey()),

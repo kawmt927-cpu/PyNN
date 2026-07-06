@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import type { UserRole } from "@prisma/client";
 import { isWeComConfigured, isWeComUserAgent } from "@/lib/wecom/config";
+import { getDefaultHomeForRole } from "@/lib/permissions";
 
 const PROTECTED_PREFIXES = [
   "/dashboard",
@@ -27,6 +29,15 @@ const WECOM_OAUTH_SKIP_PREFIXES = ["/mobile/wecom/unbound"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (pathname === "/") {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+    if (!token) {
+      return NextResponse.redirect(new URL("/login", req.url));
+    }
+    const home = getDefaultHomeForRole(token.role as UserRole);
+    return NextResponse.redirect(new URL(home, req.url));
+  }
 
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   if (!isProtected) {
@@ -59,6 +70,7 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
+    "/",
     "/dashboard/:path*",
     "/customers/:path*",
     "/approvals/:path*",

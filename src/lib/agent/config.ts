@@ -31,8 +31,8 @@ export type SalesLogPromptSettingsView = {
 };
 
 export async function getSalesLogPromptSettings(): Promise<SalesLogPromptSettingsView> {
-  const row = await getAiAgentConfigRow();
-  const customPrompt = row.salesLogSystemPrompt?.trim() ?? "";
+  const row = await findAiAgentConfigRow();
+  const customPrompt = row?.salesLogSystemPrompt?.trim() ?? "";
   return {
     customPrompt,
     effectivePrompt: customPrompt || SALES_LOG_SYSTEM_PROMPT,
@@ -50,12 +50,13 @@ export function maskApiKey(key: string | null | undefined): string {
   return `已配置（${key.slice(0, 4)}***${key.slice(-4)}）`;
 }
 
+export async function findAiAgentConfigRow() {
+  return prisma.aiAgentConfig.findUnique({ where: { id: "default" } });
+}
+
+/** @deprecated 仅保留兼容；读取配置请用 findAiAgentConfigRow */
 export async function getAiAgentConfigRow() {
-  return prisma.aiAgentConfig.upsert({
-    where: { id: "default" },
-    create: { id: "default" },
-    update: {},
-  });
+  return findAiAgentConfigRow();
 }
 
 function envFallbackConfig(): Partial<EffectiveAiAgentConfig> {
@@ -69,46 +70,47 @@ function envFallbackConfig(): Partial<EffectiveAiAgentConfig> {
 }
 
 export async function getEffectiveAiAgentConfig(): Promise<EffectiveAiAgentConfig> {
-  const row = await getAiAgentConfigRow();
+  const row = await findAiAgentConfigRow();
   const env = envFallbackConfig();
 
-  const apiKey = row.apiKey?.trim() || env.apiKey || null;
-  const neverConfiguredByAdmin = row.updatedById === null && !row.apiKey?.trim();
-  const enabled = (row.enabled || neverConfiguredByAdmin) && Boolean(apiKey);
+  const apiKey = row?.apiKey?.trim() || env.apiKey || null;
+  const neverConfiguredByAdmin =
+    !row || (row.updatedById === null && !row.apiKey?.trim());
+  const enabled = ((row?.enabled ?? false) || neverConfiguredByAdmin) && Boolean(apiKey);
 
   return {
     enabled,
-    provider: row.provider || "kimi",
+    provider: row?.provider || "kimi",
     apiKey,
-    apiBase: row.apiBase?.trim() || env.apiBase || DEFAULT_API_BASE,
-    model: row.model?.trim() || env.model || DEFAULT_MODEL,
-    maxSteps: row.maxSteps,
-    thinkingEnabled: row.thinkingEnabled,
-    salesLogSystemPrompt: row.salesLogSystemPrompt?.trim() || SALES_LOG_SYSTEM_PROMPT,
-    toolSearchCustomers: row.toolSearchCustomers,
-    toolSearchOpportunities: row.toolSearchOpportunities,
-    toolGetCustomer: row.toolGetCustomer,
-    toolListFollowUps: row.toolListFollowUps,
+    apiBase: row?.apiBase?.trim() || env.apiBase || DEFAULT_API_BASE,
+    model: row?.model?.trim() || env.model || DEFAULT_MODEL,
+    maxSteps: row?.maxSteps ?? 10,
+    thinkingEnabled: row?.thinkingEnabled ?? true,
+    salesLogSystemPrompt: row?.salesLogSystemPrompt?.trim() || SALES_LOG_SYSTEM_PROMPT,
+    toolSearchCustomers: row?.toolSearchCustomers ?? true,
+    toolSearchOpportunities: row?.toolSearchOpportunities ?? true,
+    toolGetCustomer: row?.toolGetCustomer ?? true,
+    toolListFollowUps: row?.toolListFollowUps ?? true,
   };
 }
 
 export async function getAiAgentConfigForAdmin(): Promise<AiAgentConfigView> {
-  const row = await getAiAgentConfigRow();
+  const row = await findAiAgentConfigRow();
   const effective = await getEffectiveAiAgentConfig();
 
   return {
-    enabled: row.enabled,
-    provider: row.provider,
-    apiBase: row.apiBase,
-    model: row.model,
-    maxSteps: row.maxSteps,
-    thinkingEnabled: row.thinkingEnabled,
-    salesLogSystemPrompt: row.salesLogSystemPrompt?.trim() ?? "",
-    toolSearchCustomers: row.toolSearchCustomers,
-    toolSearchOpportunities: row.toolSearchOpportunities,
-    toolGetCustomer: row.toolGetCustomer,
-    toolListFollowUps: row.toolListFollowUps,
-    apiKeyConfigured: Boolean(row.apiKey?.trim() || process.env.LLM_API_KEY?.trim()),
-    apiKeyMask: maskApiKey(row.apiKey?.trim() || process.env.LLM_API_KEY?.trim() || null),
+    enabled: row?.enabled ?? effective.enabled,
+    provider: row?.provider ?? effective.provider,
+    apiBase: row?.apiBase ?? effective.apiBase,
+    model: row?.model ?? effective.model,
+    maxSteps: row?.maxSteps ?? effective.maxSteps,
+    thinkingEnabled: row?.thinkingEnabled ?? effective.thinkingEnabled,
+    salesLogSystemPrompt: row?.salesLogSystemPrompt?.trim() ?? "",
+    toolSearchCustomers: row?.toolSearchCustomers ?? effective.toolSearchCustomers,
+    toolSearchOpportunities: row?.toolSearchOpportunities ?? effective.toolSearchOpportunities,
+    toolGetCustomer: row?.toolGetCustomer ?? effective.toolGetCustomer,
+    toolListFollowUps: row?.toolListFollowUps ?? effective.toolListFollowUps,
+    apiKeyConfigured: Boolean(row?.apiKey?.trim() || process.env.LLM_API_KEY?.trim()),
+    apiKeyMask: maskApiKey(row?.apiKey?.trim() || process.env.LLM_API_KEY?.trim() || null),
   };
 }
