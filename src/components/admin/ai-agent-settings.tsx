@@ -6,6 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AiAgentConfigView } from "@/lib/agent/config";
 import { saveAiAgentConfig, testAiAgentConnection } from "@/app/(dashboard)/admin/settings/actions";
+import {
+  IntegrationStatusGrid,
+  type IntegrationStatusTone,
+} from "@/components/admin/integration-status-grid";
 
 type Props = {
   initial: AiAgentConfigView;
@@ -51,10 +55,37 @@ export function AiAgentSettings({ initial }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isTesting, startTestTransition] = useTransition();
+  const [llmTestLabel, setLlmTestLabel] = useState<string | null>(null);
+  const [llmTestTone, setLlmTestTone] = useState<IntegrationStatusTone | null>(null);
+
+  function llmStatus() {
+    if (llmTestLabel && llmTestTone) {
+      return { label: llmTestLabel, tone: llmTestTone };
+    }
+    if (initial.llmReady) {
+      return { label: "已就绪", tone: "ready" as const };
+    }
+    if (initial.apiKeyConfigured && !initial.enabled) {
+      return { label: "已配置但未启用", tone: "warning" as const };
+    }
+    return { label: "未配置 API Key", tone: "warning" as const };
+  }
+
+  function sttStatus() {
+    if (initial.sttReady) {
+      return { label: "已就绪", tone: "ready" as const };
+    }
+    return { label: "未配置语音识别 Key", tone: "warning" as const };
+  }
+
+  const llm = llmStatus();
+  const stt = sttStatus();
 
   function handleSave(formData: FormData) {
     setMessage(null);
     setError(null);
+    setLlmTestLabel(null);
+    setLlmTestTone(null);
     startTransition(async () => {
       try {
         await saveAiAgentConfig(formData);
@@ -72,8 +103,13 @@ export function AiAgentSettings({ initial }: Props) {
       try {
         const result = await testAiAgentConnection(formData);
         setMessage(result.message);
+        setLlmTestLabel("连接成功");
+        setLlmTestTone("ready");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "连接测试失败");
+        const msg = e instanceof Error ? e.message : "连接测试失败";
+        setError(msg);
+        setLlmTestLabel("连接失败");
+        setLlmTestTone("error");
       }
     });
   }
@@ -88,6 +124,28 @@ export function AiAgentSettings({ initial }: Props) {
           仅作未配置时的兜底。
         </p>
       </div>
+
+      <IntegrationStatusGrid
+        items={[
+          {
+            title: "Kimi 对话",
+            label: llm.label,
+            tone: llm.tone,
+            hint:
+              llm.tone === "ready"
+                ? undefined
+                : initial.apiKeyConfigured && !initial.enabled
+                  ? "勾选「启用 AI 助手」后销售日志对话才可用"
+                  : "配置 Kimi API Key 后点击「测试连接」验证",
+          },
+          {
+            title: "浏览器语音识别",
+            label: stt.label,
+            tone: stt.tone,
+            hint: stt.tone === "ready" ? undefined : "推荐硅基流动 SenseVoice，用于 /mobile/log 麦克风输入",
+          },
+        ]}
+      />
 
       <form ref={formRef} action={handleSave} id="ai-agent-form" className="space-y-6">
         <CheckboxField

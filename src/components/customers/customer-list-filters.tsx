@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCustomerGradeOptions } from "@/lib/customers/grade";
 import { CustomerTagFilterSelect } from "@/components/customers/customer-tag-filter-select";
+import { CustomerRegionFilter } from "@/components/customers/customer-region-filter";
 
 type SalesOption = { id: string; name: string };
 
@@ -42,6 +43,9 @@ const EMPTY_FILTERS: CustomerListFilters = {
   customerGrade: "",
   ownerId: "",
   tags: [],
+  province: "",
+  city: "",
+  district: "",
 };
 
 function FilterSelect({
@@ -280,6 +284,15 @@ export function CustomerListFilters({
             options={ownerOptions}
           />
         )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <CustomerRegionFilter
+          view={view}
+          province={filters.province}
+          city={filters.city}
+          district={filters.district}
+          onChange={(patch) => applyFilters(withLocalQ(patch))}
+        />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {(listPending || suggestLoading) && (

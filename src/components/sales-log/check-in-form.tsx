@@ -84,7 +84,10 @@ export function CheckInForm({
   const closeCheckInDialog = useCheckInDialogClose();
   const customerSelectRef = useRef<EntitySearchSelectHandle>(null);
   const lockedCustomer = Boolean(customerContext);
-  const pendingPlans = customerContext?.pendingPlans ?? [];
+  const [pendingPlans, setPendingPlans] = useState<SerializedCustomerPendingFollowPlan[]>(
+    customerContext?.pendingPlans ?? []
+  );
+  const [pendingPlansLoading, setPendingPlansLoading] = useState(false);
   const hasPendingPlans = pendingPlans.length > 0;
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +124,37 @@ export function CheckInForm({
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
   const customerReady = Boolean(customerId);
+
+  useEffect(() => {
+    if (!isInteraction || !customerId) {
+      setPendingPlans([]);
+      setSelectedPendingKeys([]);
+      setPendingPlansLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPendingPlansLoading(true);
+    void fetch(`/api/customers/${encodeURIComponent(customerId)}/pending-follow-plans`, {
+      credentials: "include",
+    })
+      .then((res) => (res.ok ? res.json() : { items: [] }))
+      .then((data: { items?: SerializedCustomerPendingFollowPlan[] }) => {
+        if (cancelled) return;
+        setPendingPlans(data.items ?? []);
+        setSelectedPendingKeys([]);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPlans([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPendingPlansLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId, isInteraction]);
 
   useEffect(() => {
     if (!customerId) return;
@@ -240,6 +274,7 @@ export function CheckInForm({
   }
 
   function proceedSubmit(payload: Record<string, unknown>, completedKeys: string[] = []) {
+    if (pendingPlansLoading) return;
     if (hasPendingPlans && completeNow && completedKeys.length === 0) {
       setQueuedPayload(payload);
       setCompleteDialogOpen(true);
@@ -345,8 +380,6 @@ export function CheckInForm({
 
         {isInteraction ? (
           <>
-            {hasPendingPlans ? <CustomerPendingFollowPlansPanel items={pendingPlans} /> : null}
-
             <div className="space-y-2 md:col-span-2">
               {lockedCustomer ? (
                 <div className="space-y-2">
@@ -386,6 +419,9 @@ export function CheckInForm({
                 </div>
               )}
             </div>
+
+            {hasPendingPlans ? <CustomerPendingFollowPlansPanel items={pendingPlans} /> : null}
+
             <div className="space-y-2">
               <ContactSelectField
                 customerId={customerId}
@@ -506,7 +542,7 @@ export function CheckInForm({
                           setOpportunityId(id);
                           setOpportunityLabel(option?.label ?? "");
                         }}
-                        placeholder="无关联商机"
+                        placeholder="点击选择关联商机（可选）"
                         className="relative"
                       />
                     ) : (
@@ -572,12 +608,13 @@ export function CheckInForm({
             type="submit"
             disabled={
               pending ||
+              pendingPlansLoading ||
               (!isInteraction && !location) ||
               (isInteraction && (!customerId || contactIds.length === 0)) ||
               (completeNow && !content.trim())
             }
           >
-            {pending ? "提交中…" : completeNow ? "提交往来打卡" : "提交打卡"}
+            {pending ? "提交中…" : pendingPlansLoading ? "加载计划…" : completeNow ? "提交往来打卡" : "提交打卡"}
           </Button>
         </div>
       </form>

@@ -178,6 +178,12 @@ enum CustomerClaimStatus {
   REJECTED
 }
 
+enum WeComAccessStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // ─── User & Personnel ────────────────────────────────────
 
 model User {
@@ -225,6 +231,29 @@ model User {
   weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
   salesPlanBoards          SalesPlanBoard[]
   assistedCustomers        CustomerAssistant[]      @relation("CustomerAssistant")
+  wecomAccessRequestsReviewed WeComAccessRequest[] @relation("WeComAccessReviewer")
+  wecomAccessRequest         WeComAccessRequest?
+}
+
+model WeComAccessRequest {
+  id          String            @id @default(cuid())
+  wecomUserId String
+  name        String
+  email       String
+  message     String?
+  status      WeComAccessStatus @default(PENDING)
+  reviewerId  String?
+  reviewNote  String?
+  reviewedAt  DateTime?
+  userId      String?           @unique
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  reviewer User? @relation("WeComAccessReviewer", fields: [reviewerId], references: [id])
+  user     User? @relation(fields: [userId], references: [id])
+
+  @@index([status])
+  @@index([wecomUserId])
 }
 
 model PersonnelProfile {
@@ -865,6 +894,10 @@ model SalesCost {
   transportation       Decimal?
   meals                Decimal?
   otherTravel          Decimal?
+  accommodationNote    String?
+  transportationNote   String?
+  mealsNote            String?
+  otherTravelNote      String?
   description          String?
   createdAt            DateTime      @default(now())
 

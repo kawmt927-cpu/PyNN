@@ -11,6 +11,7 @@ import {
   deleteProductTemplate,
   updateProductTemplate,
 } from "@/app/(dashboard)/admin/settings/product-actions";
+import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 
 type Template = {
   id: string;
@@ -99,7 +100,7 @@ export function ProductTemplatesPanel({ items }: { items: Template[] }) {
                   variant="ghost"
                   disabled={pending}
                   onClick={() => {
-                    if (!confirm(`确定删除「${item.name}」？`)) return;
+                    if (!confirmDestructiveAction(`确定删除「${item.name}」？`)) return;
                     startTransition(async () => {
                       await deleteProductTemplate(item.id);
                       router.refresh();

@@ -263,14 +263,31 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     submitDailyLog: tool({
       description:
-        "提交今日销售日报。在信息采集完毕、销售确认后调用；会写入 SalesDailyLog 并标记为已提交。",
+        "提交今日销售日报。调用前必须已从销售处获得合格明日计划（具体事项+预计成果）；「待安排」「继续跟进」等会被拒绝。销售确认日报内容后再调用。",
       parameters: z.object({
         dailyReport: z.string().describe("今日日报 Markdown 正文"),
-        tomorrowPlan: z.string().optional().describe("明日计划"),
+        tomorrowPlan: z
+          .string()
+          .describe(
+            "明日计划（必填）：须含具体事项与预计成果，禁止待安排/待定/继续跟进等敷衍表述"
+          ),
         riskFlag: z.boolean().optional().describe("是否带风险提交（信息不全时）"),
         riskNotes: z.string().optional().describe("风险说明"),
       }),
-      execute: async (input) => submitDailyLogFromAgent(ctx, input),
+      execute: async (input) => {
+        try {
+          return await submitDailyLogFromAgent(ctx, input);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "提交日报失败";
+          return {
+            success: false,
+            error: message,
+            hint: message.includes("明日计划")
+              ? "不要提交。先向销售追问明日具体做什么、预计拿到什么结果，合格后再调用本工具。"
+              : "请修正日报内容后重试。",
+          };
+        }
+      },
     }),
     listTodayCheckIns: tool({
       description:

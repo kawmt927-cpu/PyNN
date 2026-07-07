@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AmapConfigView } from "@/lib/amap/config";
 import { saveAmapConfig, testAmapConnection } from "@/app/(dashboard)/admin/settings/actions";
+import { IntegrationStatusGrid, integrationTone } from "@/components/admin/integration-status-grid";
 
 type Props = {
   initial: AmapConfigView;
@@ -70,31 +71,23 @@ export function AmapSettings({ initial }: Props) {
         </p>
       </div>
 
-      <div className="grid gap-3 text-sm md:grid-cols-2">
-        <div className="rounded-md border p-3">
-          <p className="font-medium">地址解析</p>
-          <p className="mt-1 text-muted-foreground">
-            状态：
-            <span className={initial.geocodeReady ? "text-green-600" : "text-orange-600"}>
-              {initial.geocodeReady ? "已就绪" : "未配置 Web 服务 Key"}
-            </span>
-          </p>
-        </div>
-        <div className="rounded-md border p-3">
-          <p className="font-medium">地图展示</p>
-          <p className="mt-1 text-muted-foreground">
-            状态：
-            <span className={initial.mapReady ? "text-green-600" : "text-orange-600"}>
-              {initial.mapReady ? "已就绪" : "未配置 JS API Key"}
-            </span>
-          </p>
-          {!initial.mapReady ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              未配置时仍可解析地址，但打卡页不显示地图。
-            </p>
-          ) : null}
-        </div>
-      </div>
+      <IntegrationStatusGrid
+        items={[
+          {
+            title: "地址解析",
+            label: initial.geocodeReady ? "已就绪" : "未配置 Web 服务 Key",
+            tone: integrationTone(initial.geocodeReady),
+          },
+          {
+            title: "地图展示",
+            label: initial.mapReady ? "已就绪" : "未配置 JS API Key",
+            tone: integrationTone(initial.mapReady),
+            hint: initial.mapReady
+              ? undefined
+              : "未配置时仍可解析地址，但打卡页不显示地图。",
+          },
+        ]}
+      />
 
       <form ref={formRef} action={handleSave} id="amap-form" className="space-y-6">
         <div className="grid gap-6 md:grid-cols-2">

@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { UserRole, type FollowUpMethod } from "@prisma/client";
+import { revalidateApprovalSurfaces } from "@/lib/approvals/revalidate";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "@/lib/validations/customer";
-import { contactFormSchema } from "@/lib/validations/contact";
 import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
 import { replaceCustomerAssistants } from "@/lib/customers/assistants";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
@@ -389,143 +389,21 @@ export async function assignCustomerToSales(formData: FormData) {
   }
 
   revalidatePath("/customers");
-  revalidatePath("/approvals");
-  revalidatePath(`/customers/${customerId}`);
-}
-
-export async function createContact(formData: FormData): Promise<ActionResult> {
-  try {
-  const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const parsed = contactFormSchema.parse({
-    customerId: formData.get("customerId"),
-    name: formData.get("name"),
-    title: formData.get("title") || undefined,
-    department: formData.get("department") || undefined,
-    phone: formData.get("phone") || undefined,
-    wechat: formData.get("wechat") || undefined,
-    role: formData.get("role"),
-    isPrimary: formData.get("isPrimary") || "false",
-  });
-
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
-  if (!role) throw new Error("请选择角色");
-
-  const customer = await getCustomerForUser(
-    parsed.customerId,
-    session.user.role,
-    session.user.id
-  );
-  if (!customer) throw new Error("无权访问该客户");
-  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
-
-  const isPrimary = parsed.isPrimary === "true";
-
-  await prisma.$transaction(async (tx) => {
-    if (isPrimary) {
-      await tx.contact.updateMany({
-        where: { customerId: parsed.customerId },
-        data: { isPrimary: false },
-      });
-    }
-    await tx.contact.create({
-      data: {
-        customerId: parsed.customerId,
-        name: parsed.name,
-        title: parsed.title,
-        department: parsed.department,
-        phone: parsed.phone,
-        wechat: parsed.wechat,
-        role,
-        isPrimary,
-      },
-    });
-  });
-
-  revalidatePath(`/customers/${parsed.customerId}`);
-  return {};
-  } catch (error) {
-    return formatActionError(error);
-  }
-}
-
-export async function updateContact(contactId: string, formData: FormData): Promise<ActionResult> {
-  try {
-  const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const parsed = contactFormSchema.parse({
-    customerId: formData.get("customerId"),
-    name: formData.get("name"),
-    title: formData.get("title") || undefined,
-    department: formData.get("department") || undefined,
-    phone: formData.get("phone") || undefined,
-    wechat: formData.get("wechat") || undefined,
-    role: formData.get("role"),
-    isPrimary: formData.get("isPrimary") || "false",
-  });
-
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
-  if (!role) throw new Error("请选择角色");
-
-  const customer = await getCustomerForUser(
-    parsed.customerId,
-    session.user.role,
-    session.user.id
-  );
-  if (!customer) throw new Error("无权访问该客户");
-  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
-
-  const isPrimary = parsed.isPrimary === "true";
-
-  await prisma.$transaction(async (tx) => {
-    if (isPrimary) {
-      await tx.contact.updateMany({
-        where: { customerId: parsed.customerId, id: { not: contactId } },
-        data: { isPrimary: false },
-      });
-    }
-    await tx.contact.update({
-      where: { id: contactId },
-      data: {
-        name: parsed.name,
-        title: parsed.title,
-        department: parsed.department,
-        phone: parsed.phone,
-        wechat: parsed.wechat,
-        role,
-        isPrimary,
-      },
-    });
-  });
-
-  revalidatePath(`/customers/${parsed.customerId}`);
-  return {};
-  } catch (error) {
-    return formatActionError(error);
-  }
-}
-
-export async function deleteContact(formData: FormData) {
-  const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const contactId = formData.get("contactId") as string;
-  const customerId = formData.get("customerId") as string;
-  if (!contactId || !customerId) throw new Error("参数不完整");
-
-  const customer = await getCustomerForUser(customerId, session.user.role, session.user.id);
-  if (!customer) throw new Error("无权访问该客户");
-  await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
-
-  await prisma.contact.delete({ where: { id: contactId } });
+  revalidateApprovalSurfaces(customerId);
   revalidatePath(`/customers/${customerId}`);
 }
 
 export async function addCustomerRelation(formData: FormData) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const parsed = customerRelationSchema.parse({
-    customerId: formData.get("customerId"),
-    relatedCustomerId: formData.get("relatedCustomerId"),
-    relationNote: formData.get("relationNote") || undefined,
+  const parsedResult = customerRelationSchema.safeParse({
+    customerId: String(formData.get("customerId") ?? "").trim(),
+    relatedCustomerId: String(formData.get("relatedCustomerId") ?? "").trim(),
+    relationNote: String(formData.get("relationNote") ?? "").trim() || undefined,
   });
+  if (!parsedResult.success) {
+    throw new Error("请选择关联客户后再提交");
+  }
+  const parsed = parsedResult.data;
 
   if (parsed.customerId === parsed.relatedCustomerId) {
     throw new Error("不能关联自身");

@@ -16,9 +16,12 @@ import { parsePlansTasksTab } from "@/lib/plans-tasks/tabs";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 import {
   parseAnnualSubject,
+  parseMetricsMonth,
   parseMetricsPeriod,
+  parseMetricsYear,
   resolveMonthlyUserId,
 } from "@/lib/plans-tasks/metrics-scope";
+import { SalesMetricsTimeSelect } from "@/components/plans-tasks/metrics-period-switch";
 
 type Props = {
   searchParams: Promise<{
@@ -27,6 +30,8 @@ type Props = {
     subject?: string;
     userId?: string;
     monthlyUserId?: string;
+    year?: string;
+    month?: string;
   }>;
 };
 
@@ -35,8 +40,10 @@ export default async function PlansTasksPage({ searchParams }: Props) {
   const tab = parsePlansTasksTab(query.tab);
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const nowYear = now.getFullYear();
+  const nowMonth = now.getMonth() + 1;
+  const year = parseMetricsYear(query, now);
+  const month = parseMetricsMonth(query, year, now);
   const canManage = canManageWeeklyAssignments(session.user.role);
 
   const salesUsers = canManage
@@ -137,7 +144,7 @@ export default async function PlansTasksPage({ searchParams }: Props) {
       <div>
         <h1 className="text-2xl font-bold">计划与任务</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          查看年度/月度指标完成度，追踪管理员指派的全部任务。
+          查看月度/年度指标完成度，追踪管理员指派的全部任务。
         </p>
       </div>
 
@@ -161,11 +168,27 @@ export default async function PlansTasksPage({ searchParams }: Props) {
           monthlyKpi={dashboardData.manager.monthlyKpi}
           monthlyTargetsByUserId={dashboardData.manager.monthlyTargetsByUserId}
           salesUsers={dashboardData.manager.salesUsers}
+          nowYear={nowYear}
+          nowMonth={nowMonth}
         />
       ) : null}
 
       {tab === "dashboard" && dashboardData?.sales ? (
         <div className="space-y-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">我的指标</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                切换年月可查看历史月度 KPI 与年度考核完成度
+              </p>
+            </div>
+            <SalesMetricsTimeSelect
+              year={year}
+              month={month}
+              nowYear={nowYear}
+              nowMonth={nowMonth}
+            />
+          </div>
           <section className="space-y-4">
             <div>
               <h2 className="text-lg font-semibold">

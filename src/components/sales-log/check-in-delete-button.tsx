@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 
 type Props = {
   checkInId: string;
@@ -17,7 +18,7 @@ export function CheckInDeleteButton({ checkInId, hasFollowUp }: Props) {
     const message = hasFollowUp
       ? "该打卡已完善为往来记录，删除打卡不会删除往来，确定删除吗？"
       : "确定删除这条打卡记录吗？";
-    if (!window.confirm(message)) return;
+    if (!confirmDestructiveAction(message)) return;
 
     startTransition(async () => {
       try {

@@ -24,6 +24,10 @@ export type AiAgentConfigView = Omit<EffectiveAiAgentConfig, "apiKey" | "sttApiK
   apiKeyMask: string;
   sttApiKeyConfigured: boolean;
   sttApiKeyMask: string;
+  /** Kimi 对话是否可用（已配置 Key 且已启用） */
+  llmReady: boolean;
+  /** 浏览器语音识别是否可用 */
+  sttReady: boolean;
 };
 
 export type SalesLogPromptSettingsView = {
@@ -134,5 +138,7 @@ export async function getAiAgentConfigForAdmin(): Promise<AiAgentConfigView> {
     sttApiKeyMask: maskApiKey(
       row?.sttApiKey?.trim() || process.env.STT_API_KEY?.trim() || null
     ),
+    llmReady: Boolean(effective.apiKey) && (row?.enabled ?? effective.enabled),
+    sttReady: Boolean(effective.sttApiKey),
   };
 }

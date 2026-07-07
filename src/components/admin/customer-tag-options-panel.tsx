@@ -201,6 +201,7 @@ export function CustomerTagOptionsPanel({ options, onDirtyChange }: Props) {
           );
         }}
         onDelete={setPendingDelete}
+        confirmBeforeDelete={false}
         extraColumnLabel="颜色"
         renderExtra={(item) => (
           <CustomerTagColorPicker

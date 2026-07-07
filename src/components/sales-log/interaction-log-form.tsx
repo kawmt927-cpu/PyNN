@@ -159,7 +159,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
                 setOpportunityId(id);
                 setOpportunityLabel(option?.label ?? "");
               }}
-              placeholder="无关联商机"
+              placeholder="点击选择关联商机（可选）"
             />
           ) : (
             <select disabled className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm">

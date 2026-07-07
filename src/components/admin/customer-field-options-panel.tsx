@@ -241,6 +241,7 @@ export function CustomerFieldOptionsPanel({
           setSaveError(null);
         }}
         onDelete={setPendingDelete}
+        confirmBeforeDelete={false}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 px-4 py-3">

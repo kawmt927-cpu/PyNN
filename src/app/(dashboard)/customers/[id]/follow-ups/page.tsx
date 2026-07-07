@@ -9,10 +9,8 @@ import {
 } from "@/lib/customers/access";
 import {
   CONFIG_CATEGORY,
-  labelForConfig,
   loadCustomerFieldLabelMaps,
 } from "@/lib/config-options";
-import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
@@ -20,7 +18,7 @@ import {
   CustomerFollowUpCheckInSection,
 } from "@/components/customers/customer-follow-up-check-in-section";
 import { BackLink } from "@/components/navigation/back-link";
-import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { CustomerMetaLine, CustomerGradeMetaBadge } from "@/components/customers/customer-meta-line";
 import {
   countCustomerFollowUps,
   getCustomerFollowUpHistory,
@@ -79,21 +77,16 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">客户跟进</h1>
-          <p className="mt-1 text-muted-foreground">
-            {customer.name} · {CUSTOMER_CATEGORY_LABELS[customer.category]}
-            {customer.customerType && ` · ${labelForConfig(typeLabels, customer.customerType)}`}
-            {customer.customerGrade ? (
-              <>
-                {" · "}
-                <CustomerGradeIcon
-                  grade={customer.customerGrade}
-                  showLabel
-                  labelMap={gradeLabels}
-                  className="inline-flex"
-                />
-              </>
-            ) : null}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="text-base font-medium">{customer.name}</p>
+            <CustomerGradeMetaBadge grade={customer.customerGrade} labelMap={gradeLabels} />
+          </div>
+          <CustomerMetaLine
+            className="mt-1"
+            category={customer.category}
+            customerType={customer.customerType}
+            typeLabels={typeLabels}
+          />
         </div>
         <div className="flex gap-2">
           <BackLink href={detailHref} />

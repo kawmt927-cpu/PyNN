@@ -81,6 +81,9 @@ export async function searchCustomersForUser(
     customerGrade: "",
     ownerId: "",
     tags: [],
+    province: "",
+    city: "",
+    district: "",
   };
 
   let where: Prisma.CustomerWhereInput;
@@ -152,7 +155,12 @@ export async function searchOpportunitiesForUser(
       customer: { select: { name: true } },
     },
     take: 60,
+    orderBy: { updatedAt: "desc" },
   });
+
+  if (!trimmed) {
+    return rows.slice(0, 20);
+  }
 
   return rows
     .map((row) => ({

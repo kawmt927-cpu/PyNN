@@ -39,6 +39,9 @@ type Props = {
     grade?: string;
     ownerId?: string;
     tags?: string;
+    province?: string;
+    city?: string;
+    district?: string;
   }>;
 };
 

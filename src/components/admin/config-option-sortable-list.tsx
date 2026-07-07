@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 
 export type DraftConfigOption = {
   id: string;
@@ -37,6 +38,8 @@ type Props = {
   extraColumnLabel?: string;
   extraColumnClassName?: string;
   renderExtra?: (item: DraftConfigOption) => React.ReactNode;
+  /** 为 false 时由父级自行确认（如弹窗） */
+  confirmBeforeDelete?: boolean;
 };
 
 export function ConfigOptionSortableList({
@@ -52,6 +55,7 @@ export function ConfigOptionSortableList({
   extraColumnLabel,
   extraColumnClassName = "w-[9.5rem]",
   renderExtra,
+  confirmBeforeDelete = true,
 }: Props) {
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -166,7 +170,17 @@ export function ConfigOptionSortableList({
                       variant="ghost"
                       size="sm"
                       className="text-destructive hover:text-destructive"
-                      onClick={() => onDelete({ id: opt.id, label: opt.label || "新选项" })}
+                      onClick={() => {
+                        if (
+                          confirmBeforeDelete &&
+                          !confirmDestructiveAction(
+                            `确定从列表中移除「${opt.label || "新选项"}」？需点击保存后才会生效。`
+                          )
+                        ) {
+                          return;
+                        }
+                        onDelete({ id: opt.id, label: opt.label || "新选项" });
+                      }}
                     >
                       删除
                     </Button>

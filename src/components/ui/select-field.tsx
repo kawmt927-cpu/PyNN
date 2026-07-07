@@ -32,8 +32,8 @@ export function SelectField({
 }: Props) {
   const controlled = value !== undefined;
   return (
-    <div className={cn("space-y-2", className)}>
-      <Label htmlFor={id} className={cn("block", labelClassName)}>
+    <div className={cn("grid gap-2", className)}>
+      <Label htmlFor={id} className={cn("block min-h-5 leading-5", labelClassName)}>
         {label}
       </Label>
       <select
@@ -45,7 +45,7 @@ export function SelectField({
         required={required}
         disabled={disabled}
         className={cn(
-          "flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "flex h-10 w-full rounded-md border border-input px-3 py-0 text-sm leading-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           disabled ? "cursor-not-allowed bg-muted text-muted-foreground" : "bg-background"
         )}
       >

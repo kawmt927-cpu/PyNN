@@ -8,6 +8,7 @@ import { MonthlyKpiTargetSettingsDialog } from "@/components/plans-tasks/monthly
 import {
   AnnualSubjectSelect,
   MetricsPeriodSwitch,
+  MetricsTimeSelect,
   PersonSelect,
   useMetricsNavigation,
 } from "@/components/plans-tasks/metrics-period-switch";
@@ -32,6 +33,8 @@ export function ManagerMetricsOverview({
   monthlyKpi,
   monthlyTargetsByUserId,
   salesUsers,
+  nowYear,
+  nowMonth,
 }: {
   period: MetricsPeriod;
   year: number;
@@ -47,6 +50,8 @@ export function ManagerMetricsOverview({
   monthlyKpi: MonthlyKpiBundle;
   monthlyTargetsByUserId: Record<string, MonthlyKpiTargets | null>;
   salesUsers: SalesUser[];
+  nowYear: number;
+  nowMonth: number;
 }) {
   const { navigateAnnualSubject, navigateMonthlyUser } = useMetricsNavigation();
 
@@ -60,13 +65,56 @@ export function ManagerMetricsOverview({
         <div>
           <h2 className="text-lg font-semibold">指标概览</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            年度查看团队或个人的考核完成度；月度按个人查看 KPI 实际值。项目开发达标规则在系统配置中统一维护。
+            月度按个人查看 KPI 实际值；年度查看团队或个人的考核完成度。项目开发达标规则在系统配置中统一维护。
           </p>
         </div>
-        <MetricsPeriodSwitch period={period} />
+        <div className="flex flex-wrap items-center gap-2">
+          <MetricsPeriodSwitch period={period} />
+          <MetricsTimeSelect
+            period={period}
+            year={year}
+            month={month}
+            nowYear={nowYear}
+            nowMonth={nowMonth}
+          />
+        </div>
       </div>
 
-      {period === "annual" ? (
+      {period === "monthly" ? (
+        <Card>
+          <CardHeader className="pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <CardTitle className="text-base">
+                  {year} 年 {month} 月 KPI · {monthlyUserName}
+                </CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  月度指标不按团队汇总；每位销售单独设定 KPI 目标
+                </p>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <PersonSelect
+                  id="monthly-person"
+                  label="查看销售"
+                  value={monthlyUserId}
+                  salesUsers={salesUsers}
+                  onChange={navigateMonthlyUser}
+                />
+                <MonthlyKpiTargetSettingsDialog
+                  year={year}
+                  month={month}
+                  defaultUserId={monthlyUserId}
+                  salesUsers={salesUsers}
+                  targetsByUserId={monthlyTargetsByUserId}
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <MonthlyKpiDashboard kpi={monthlyKpi} subjectName={monthlyUserName} />
+          </CardContent>
+        </Card>
+      ) : (
         <Card>
           <CardHeader className="pb-4">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -101,40 +149,6 @@ export function ManagerMetricsOverview({
               subjectName={subjectName}
               variant="embedded"
             />
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader className="pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <CardTitle className="text-base">
-                  {year} 年 {month} 月 KPI · {monthlyUserName}
-                </CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  月度指标不按团队汇总；每位销售单独设定 KPI 目标
-                </p>
-              </div>
-              <div className="flex flex-wrap items-end gap-3">
-                <PersonSelect
-                  id="monthly-person"
-                  label="查看销售"
-                  value={monthlyUserId}
-                  salesUsers={salesUsers}
-                  onChange={navigateMonthlyUser}
-                />
-                <MonthlyKpiTargetSettingsDialog
-                  year={year}
-                  month={month}
-                  defaultUserId={monthlyUserId}
-                  salesUsers={salesUsers}
-                  targetsByUserId={monthlyTargetsByUserId}
-                />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <MonthlyKpiDashboard kpi={monthlyKpi} subjectName={monthlyUserName} />
           </CardContent>
         </Card>
       )}

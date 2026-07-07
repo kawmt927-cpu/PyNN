@@ -13,7 +13,7 @@ export const viewport: Viewport = {
 
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background pb-[env(safe-area-inset-bottom)]">
+    <div className="h-[100dvh] overflow-hidden bg-background">
       {children}
     </div>
   );

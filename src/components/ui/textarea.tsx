@@ -4,16 +4,30 @@ import { cn } from "@/lib/utils";
 const Textarea = React.forwardRef<
   HTMLTextAreaElement,
   React.TextareaHTMLAttributes<HTMLTextAreaElement>
->(({ className, ...props }, ref) => (
-  <textarea
-    className={cn(
-      "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
-      className
-    )}
-    ref={ref}
-    {...props}
-  />
-));
+>(({ className, autoComplete, ...props }, ref) => {
+  const resolvedAutoComplete = autoComplete ?? "off";
+  const suppressAutofill = resolvedAutoComplete === "off";
+
+  return (
+    <textarea
+      className={cn(
+        "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      ref={ref}
+      autoComplete={resolvedAutoComplete}
+      {...(suppressAutofill
+        ? {
+            "data-1p-ignore": true,
+            "data-lpignore": "true",
+            "data-bwignore": true,
+            "data-form-type": "other",
+          }
+        : {})}
+      {...props}
+    />
+  );
+});
 Textarea.displayName = "Textarea";
 
 export { Textarea };

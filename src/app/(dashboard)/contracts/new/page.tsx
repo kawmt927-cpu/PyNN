@@ -1,13 +1,14 @@
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { canManageOpportunityOwner } from "@/lib/opportunities/access";
+import { getCustomerForUser } from "@/lib/customers/access";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { resolveBackNavigation } from "@/lib/navigation/return-to";
 import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
 
 type Props = {
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; customerId?: string }>;
 };
 
 export default async function NewContractPage({ searchParams }: Props) {
@@ -15,6 +16,11 @@ export default async function NewContractPage({ searchParams }: Props) {
   const { backHref, backLabel } = resolveBackNavigation(query, "/contracts");
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
+
+  const presetCustomerId = query.customerId?.trim();
+  const presetCustomer = presetCustomerId
+    ? await getCustomerForUser(presetCustomerId, session.user.role, session.user.id)
+    : null;
 
   const [salesUsers, paymentMethods] = await Promise.all([
     prisma.user.findMany({
@@ -42,6 +48,16 @@ export default async function NewContractPage({ searchParams }: Props) {
         currentUserId={session.user.id}
         paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
         submitLabel="提交销售合同"
+        defaultValues={
+          presetCustomer
+            ? {
+                signCustomerId: presetCustomer.id,
+                signCustomerName: presetCustomer.name,
+                endUserCustomerId: presetCustomer.id,
+                endUserCustomerName: presetCustomer.name,
+              }
+            : undefined
+        }
       />
     </div>
   );

@@ -1,15 +1,20 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ComboboxField } from "@/components/ui/combobox-field";
 import { SelectField } from "@/components/ui/select-field";
-import { createContact, updateContact } from "@/app/(dashboard)/customers/actions";
+import {
+  createContactFormAction,
+  updateContactFormAction,
+} from "@/app/(dashboard)/customers/contact-actions";
+import type { ActionResult } from "@/lib/action-result";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { Contact } from "@prisma/client";
+import { cn } from "@/lib/utils";
 
 const fieldLabelClass = "flex min-h-9 items-center";
 
@@ -17,69 +22,52 @@ type Props = {
   customerId: string;
   contact?: Contact;
   onCancel?: () => void;
+  onSuccess?: () => void;
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
+  embedded?: boolean;
 };
 
 export function ContactForm({
   customerId,
   contact,
   onCancel,
+  onSuccess,
   titleOptions,
   departmentOptions,
   roleOptions,
+  embedded = false,
 }: Props) {
-  const [open, setOpen] = useState(!contact);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
   const router = useRouter();
   const isEdit = Boolean(contact);
+  const [isPrimaryChecked, setIsPrimaryChecked] = useState(contact?.isPrimary ?? false);
 
-  if (!open && !isEdit) {
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-        添加联系人
-      </Button>
-    );
-  }
+  const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
+    isEdit && contact
+      ? updateContactFormAction.bind(null, contact.id)
+      : createContactFormAction,
+    null
+  );
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-
-    const form = e.currentTarget;
-    const formData = new FormData(form);
-    const phone = (formData.get("phone") as string | null)?.trim() ?? "";
-    const wechat = (formData.get("wechat") as string | null)?.trim() ?? "";
-    if (!phone && !wechat) {
-      setError("手机和微信至少填写一项");
-      return;
-    }
-
-    startTransition(async () => {
-      const result =
-        isEdit && contact
-          ? await updateContact(contact.id, formData)
-          : await createContact(formData);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      if (onCancel) {
-        onCancel();
-      } else {
-        setOpen(false);
-        form.reset();
-      }
-      router.refresh();
-    });
-  }
+  useEffect(() => {
+    if (pending || state === null) return;
+    if (state.error) return;
+    onSuccess?.();
+    onCancel?.();
+    router.refresh();
+  }, [pending, state, onSuccess, onCancel, router]);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 rounded-md border p-4">
+    <form
+      action={formAction}
+      className={cn("space-y-3", !embedded && "rounded-md border p-4")}
+    >
       <input type="hidden" name="customerId" value={customerId} />
-      <p className="text-sm font-medium">{isEdit ? "编辑联系人" : "新增联系人"}</p>
+      <input type="hidden" name="isPrimary" value={isPrimaryChecked ? "true" : "false"} />
+      {!embedded ? (
+        <p className="text-sm font-medium">{isEdit ? "编辑联系人" : "新增联系人"}</p>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="contact-name" className={fieldLabelClass}>
@@ -128,28 +116,26 @@ export function ContactForm({
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
-          name="isPrimary"
-          value="true"
-          defaultChecked={contact?.isPrimary ?? false}
+          checked={isPrimaryChecked}
+          onChange={(event) => setIsPrimaryChecked(event.target.checked)}
         />
         设为主要联系人
       </label>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {isPrimaryChecked ? (
+        <p className="text-xs text-muted-foreground">
+          保存后将取消其他联系人的「主要」标记。
+        </p>
+      ) : null}
+      {state?.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "保存中…" : isEdit ? "保存" : "添加"}
         </Button>
-        {(onCancel || !isEdit) && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={pending}
-            onClick={() => (onCancel ? onCancel() : setOpen(false))}
-          >
+        {onCancel ? (
+          <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={onCancel}>
             取消
           </Button>
-        )}
+        ) : null}
       </div>
     </form>
   );

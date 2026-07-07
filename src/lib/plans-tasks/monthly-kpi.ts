@@ -1,7 +1,6 @@
 import { endOfDay, startOfDay } from "date-fns";
 import { FollowUpMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { signedContractStatusFilter } from "@/lib/contracts/access";
 import { sumContractPaymentsForOwner } from "@/lib/contracts/payment-actuals";
 import { getLastInteractionBefore } from "@/lib/customers/grade-expiry";
 import {
@@ -10,7 +9,6 @@ import {
   isWithinGradeExpiryWindow,
   resolveGradeIntervalDays,
 } from "@/lib/customers/grade-intervals";
-import { getProjectDevMinStageSortOrder } from "@/lib/plans-tasks/kpi-config";
 import {
   isDailyReportSubmitted,
   isLateDailyReportSubmission,
@@ -88,55 +86,42 @@ async function countChannelDevelopment(
   return withFollowUp.length;
 }
 
+/** 单次阶段变更计分：仅往前推进计 1；一次跨多级（跳两步及以上）也仅计 1，不按跨度累加 */
+function scoreForwardStageAdvance(fromOrder: number, toOrder: number): number {
+  return toOrder > fromOrder ? 1 : 0;
+}
+
+/** 项目开发：当月每条「阶段往前推进」的变更记录计 1 次（同一商机可多次累计） */
 async function countProjectDevelopment(
   userId: string,
   start: Date,
   end: Date
 ): Promise<number> {
-  const minSortOrder = await getProjectDevMinStageSortOrder();
-  const milestoneStages =
-    minSortOrder != null
-      ? await prisma.configOption.findMany({
-          where: {
-            category: "opportunity_stage",
-            enabled: true,
-            sortOrder: { gte: minSortOrder },
-          },
-          select: { value: true },
-        })
-      : [];
-  const milestoneValues = new Set(milestoneStages.map((s) => s.value));
-
-  const qualified = new Set<string>();
-
-  const signedContracts = await prisma.contract.findMany({
-    where: {
-      ownerId: userId,
-      signedAt: { gte: start, lt: end },
-      opportunityId: { not: null },
-      ...signedContractStatusFilter(),
-    },
-    select: { opportunityId: true },
+  const stageOptions = await prisma.configOption.findMany({
+    where: { category: "opportunity_stage", enabled: true },
+    select: { value: true, sortOrder: true },
   });
-  for (const row of signedContracts) {
-    if (row.opportunityId) qualified.add(row.opportunityId);
+  const stageOrder = new Map(stageOptions.map((stage) => [stage.value, stage.sortOrder]));
+
+  const logs = await prisma.opportunityStageLog.findMany({
+    where: {
+      createdAt: { gte: start, lt: end },
+      fromStage: { not: null },
+      opportunity: { ownerId: userId },
+    },
+    select: { fromStage: true, toStage: true },
+  });
+
+  let count = 0;
+  for (const log of logs) {
+    if (!log.fromStage) continue;
+    const fromOrder = stageOrder.get(log.fromStage);
+    const toOrder = stageOrder.get(log.toStage);
+    if (fromOrder == null || toOrder == null) continue;
+    count += scoreForwardStageAdvance(fromOrder, toOrder);
   }
 
-  if (milestoneValues.size > 0) {
-    const stageLogs = await prisma.opportunityStageLog.findMany({
-      where: {
-        createdAt: { gte: start, lt: end },
-        toStage: { in: [...milestoneValues] },
-        opportunity: { ownerId: userId },
-      },
-      select: { opportunityId: true },
-    });
-    for (const row of stageLogs) {
-      qualified.add(row.opportunityId);
-    }
-  }
-
-  return qualified.size;
+  return count;
 }
 
 async function sumPaymentCollection(userId: string, start: Date, end: Date): Promise<number> {

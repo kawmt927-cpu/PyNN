@@ -9,16 +9,23 @@ export type SalesMetrics = {
   payment: number;
 };
 
+export type CostBreakdown = {
+  projectCost: number;
+  dailyBusinessCost: number;
+};
+
 export type TargetMetricsBundle = {
   year: number;
   month: number;
   annual: {
     target: SalesMetrics | null;
     actual: SalesMetrics;
+    costBreakdown: CostBreakdown;
   };
   monthly: {
     target: SalesMetrics | null;
     actual: SalesMetrics;
+    costBreakdown: CostBreakdown;
   };
 };
 
@@ -53,26 +60,46 @@ async function computePaymentAmount(userId: string, start: Date, end: Date): Pro
   return sumContractPaymentsForOwner(userId, start, end);
 }
 
-async function computeCostAmount(userId: string, start: Date, end: Date): Promise<number> {
-  const [products, salesCosts] = await Promise.all([
-    prisma.contractProduct.findMany({
-      where: { contract: signedContractWhere(userId, start, end) },
-      select: { costAmount: true, actualCostPrice: true },
-    }),
-    prisma.salesCost.aggregate({
-      where: {
-        salesUserId: userId,
-        costDate: { gte: start, lt: end },
-      },
-      _sum: { totalAmount: true },
-    }),
-  ]);
+async function computeProjectCostAmount(userId: string, start: Date, end: Date): Promise<number> {
+  const products = await prisma.contractProduct.findMany({
+    where: { contract: signedContractWhere(userId, start, end) },
+    select: { costAmount: true, actualCostPrice: true, costAdjustment: true },
+  });
 
-  const productCost = products.reduce(
-    (sum, row) => sum + Number(row.costAmount || row.actualCostPrice),
+  return products.reduce(
+    (sum, row) =>
+      sum +
+      Number(row.costAmount || row.actualCostPrice) +
+      Number(row.costAdjustment ?? 0),
     0
   );
-  return productCost + Number(salesCosts._sum.totalAmount ?? 0);
+}
+
+async function computeDailyBusinessCostAmount(
+  userId: string,
+  start: Date,
+  end: Date
+): Promise<number> {
+  const salesCosts = await prisma.salesCost.aggregate({
+    where: {
+      salesUserId: userId,
+      costDate: { gte: start, lt: end },
+    },
+    _sum: { totalAmount: true },
+  });
+  return Number(salesCosts._sum.totalAmount ?? 0);
+}
+
+async function computeCostBreakdown(
+  userId: string,
+  start: Date,
+  end: Date
+): Promise<CostBreakdown> {
+  const [projectCost, dailyBusinessCost] = await Promise.all([
+    computeProjectCostAmount(userId, start, end),
+    computeDailyBusinessCostAmount(userId, start, end),
+  ]);
+  return { projectCost, dailyBusinessCost };
 }
 
 async function computeProfitAmount(userId: string, start: Date, end: Date): Promise<number> {
@@ -80,37 +107,46 @@ async function computeProfitAmount(userId: string, start: Date, end: Date): Prom
     where: signedContractWhere(userId, start, end),
     select: {
       totalAmount: true,
-      products: { select: { costAmount: true, actualCostPrice: true } },
+      products: { select: { costAmount: true, actualCostPrice: true, costAdjustment: true } },
     },
   });
   const contractProfit = contracts.reduce((sum, contract) => {
     const productCost = contract.products.reduce(
-      (s, row) => s + Number(row.costAmount || row.actualCostPrice),
+      (s, row) =>
+        s +
+        Number(row.costAmount || row.actualCostPrice) +
+        Number(row.costAdjustment ?? 0),
       0
     );
     return sum + Number(contract.totalAmount) - productCost;
   }, 0);
 
-  const costs = await prisma.salesCost.aggregate({
-    where: {
-      salesUserId: userId,
-      costDate: { gte: start, lt: end },
-    },
-    _sum: { totalAmount: true },
-  });
+  const dailyBusinessCost = await computeDailyBusinessCostAmount(userId, start, end);
 
-  return contractProfit - Number(costs._sum.totalAmount ?? 0);
+  return contractProfit - dailyBusinessCost;
 }
 
-async function computeActuals(userId: string, year: number, month?: number): Promise<SalesMetrics> {
+async function computeActuals(
+  userId: string,
+  year: number,
+  month?: number
+): Promise<{ metrics: SalesMetrics; costBreakdown: CostBreakdown }> {
   const { start, end } = periodRange(year, month);
-  const [sales, cost, profit, payment] = await Promise.all([
+  const [sales, costBreakdown, profit, payment] = await Promise.all([
     computeSalesAmount(userId, start, end),
-    computeCostAmount(userId, start, end),
+    computeCostBreakdown(userId, start, end),
     computeProfitAmount(userId, start, end),
     computePaymentAmount(userId, start, end),
   ]);
-  return { sales, cost, profit, payment };
+  return {
+    metrics: {
+      sales,
+      cost: costBreakdown.projectCost + costBreakdown.dailyBusinessCost,
+      profit,
+      payment,
+    },
+    costBreakdown,
+  };
 }
 
 function toSalesMetrics(row: {
@@ -146,13 +182,25 @@ export async function getTargetMetricsBundle(
     month,
     annual: {
       target: annualTarget ? toSalesMetrics(annualTarget) : null,
-      actual: annualActual,
+      actual: annualActual.metrics,
+      costBreakdown: annualActual.costBreakdown,
     },
     monthly: {
       target: monthlyTarget ? toSalesMetrics(monthlyTarget) : null,
-      actual: monthlyActual,
+      actual: monthlyActual.metrics,
+      costBreakdown: monthlyActual.costBreakdown,
     },
   };
+}
+
+export function sumCostBreakdown(rows: CostBreakdown[]): CostBreakdown {
+  return rows.reduce(
+    (acc, row) => ({
+      projectCost: acc.projectCost + row.projectCost,
+      dailyBusinessCost: acc.dailyBusinessCost + row.dailyBusinessCost,
+    }),
+    { projectCost: 0, dailyBusinessCost: 0 }
+  );
 }
 
 export function sumSalesMetrics(rows: SalesMetrics[]): SalesMetrics {
@@ -171,11 +219,12 @@ export function sumSalesMetrics(rows: SalesMetrics[]): SalesMetrics {
 export async function getTeamAnnualMetrics(
   userIds: string[],
   year: number
-): Promise<{ target: SalesMetrics | null; actual: SalesMetrics }> {
+): Promise<{ target: SalesMetrics | null; actual: SalesMetrics; costBreakdown: CostBreakdown }> {
   if (userIds.length === 0) {
     return {
       target: null,
       actual: { sales: 0, cost: 0, profit: 0, payment: 0 },
+      costBreakdown: { projectCost: 0, dailyBusinessCost: 0 },
     };
   }
 
@@ -187,22 +236,24 @@ export async function getTeamAnnualMetrics(
       ]);
       return {
         target: targetRow ? toSalesMetrics(targetRow) : null,
-        actual,
+        actual: actual.metrics,
+        costBreakdown: actual.costBreakdown,
       };
     })
   );
 
   const actual = sumSalesMetrics(bundles.map((item) => item.actual));
+  const costBreakdown = sumCostBreakdown(bundles.map((item) => item.costBreakdown));
   const definedTargets = bundles.map((item) => item.target).filter(Boolean) as SalesMetrics[];
   const target = definedTargets.length > 0 ? sumSalesMetrics(definedTargets) : null;
 
-  return { target, actual };
+  return { target, actual, costBreakdown };
 }
 
 export function toAnnualMetricsBundle(
   year: number,
   month: number,
-  annual: { target: SalesMetrics | null; actual: SalesMetrics }
+  annual: { target: SalesMetrics | null; actual: SalesMetrics; costBreakdown: CostBreakdown }
 ): TargetMetricsBundle {
   return {
     year,
@@ -211,6 +262,7 @@ export function toAnnualMetricsBundle(
     monthly: {
       target: null,
       actual: { sales: 0, cost: 0, profit: 0, payment: 0 },
+      costBreakdown: { projectCost: 0, dailyBusinessCost: 0 },
     },
   };
 }

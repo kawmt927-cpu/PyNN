@@ -11,6 +11,7 @@ import {
   type ConfigOptionRow,
   type DraftConfigOption,
 } from "@/components/admin/config-option-sortable-list";
+import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 
 type GradeDraft = DraftConfigOption & { followUpIntervalDays: number; value?: string };
 
@@ -148,13 +149,21 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
             items.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item))
           )
         }
-        onDelete={(opt) =>
+        onDelete={(opt) => {
+          if (
+            !confirmDestructiveAction(
+              `确定从列表中移除「${opt.label || "该等级"}」？需点击保存后才会生效。`
+            )
+          ) {
+            return;
+          }
           setDraft((items) =>
             items
               .filter((item) => item.id !== opt.id)
               .map((item, index) => ({ ...item, sortOrder: index + 1 }))
-          )
-        }
+          );
+        }}
+        confirmBeforeDelete={false}
         extraColumnLabel="往来间隔"
         extraColumnClassName="w-[8rem]"
         renderExtra={(item) => {

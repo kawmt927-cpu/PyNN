@@ -8,25 +8,32 @@ import {
   canEditCustomerContent,
 } from "@/lib/customers/access";
 import {
-  CUSTOMER_CATEGORY_LABELS,
   HOSPITAL_LEVEL_LABELS,
 } from "@/lib/permissions";
 import {
   CONFIG_CATEGORY,
   labelForConfig,
-  loadCustomerFieldLabelMaps,
   loadContactFormOptions,
+  getConfigOptionMaps,
 } from "@/lib/config-options";
 import { countCustomerFollowUps, getCustomerFollowUpHistory } from "@/lib/follow-ups/unified";
 import { getCustomerGradeFollowUpSchedule } from "@/lib/customers/grade-expiry";
+import {
+  contractListWhere,
+  opportunityListWhere,
+} from "@/lib/opportunities/access";
+import { canEditContract } from "@/lib/contracts/access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ContactList } from "@/components/customers/contact-list";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
-import { CustomerRelationsPanel } from "@/components/customers/customer-relations-panel";
+import { CustomerContactsCard } from "@/components/customers/customer-contacts-card";
+import { CustomerRelationsCard } from "@/components/customers/customer-relations-card";
+import { CustomerOpportunitiesList } from "@/components/customers/customer-opportunities-list";
+import { CustomerContractsList } from "@/components/customers/customer-contracts-list";
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
 import { BackLink } from "@/components/navigation/back-link";
+import { CustomerMetaLine, CustomerGradeMetaBadge } from "@/components/customers/customer-meta-line";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { CustomerGradeFollowUpRemaining } from "@/components/customers/customer-grade-follow-up-remaining";
 import { CustomerTagList } from "@/components/customers/customer-tag-badge";
@@ -55,9 +62,8 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
-  const followUpPreviewLimit = 10;
 
-  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, followUps, gradeFollowUpSchedule] =
+  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, opportunities, contracts, followUps, gradeFollowUpSchedule] =
     await Promise.all([
       canManage
         ? db.user.findMany({
@@ -66,7 +72,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
             orderBy: { name: "asc" },
           })
         : Promise.resolve([]),
-      loadCustomerFieldLabelMaps(),
+      getConfigOptionMaps([
+        CONFIG_CATEGORY.CUSTOMER_SOURCE,
+        CONFIG_CATEGORY.CUSTOMER_TYPE,
+        CONFIG_CATEGORY.CUSTOMER_GRADE,
+        CONFIG_CATEGORY.OPPORTUNITY_STAGE,
+      ]),
       getCustomerTagDefinitions(),
       loadContactFormOptions(),
       isSales && inPool
@@ -84,7 +95,26 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           })
         : Promise.resolve(0),
       countCustomerFollowUps(customer.id),
-      getCustomerFollowUpHistory(customer.id, followUpPreviewLimit),
+      db.opportunity.findMany({
+        where: {
+          customerId: customer.id,
+          ...opportunityListWhere(session.user.role, session.user.id),
+        },
+        orderBy: { updatedAt: "desc" },
+        include: { owner: { select: { name: true } } },
+      }),
+      db.contract.findMany({
+        where: {
+          OR: [{ signCustomerId: customer.id }, { endUserCustomerId: customer.id }],
+          ...contractListWhere(session.user.role, session.user.id),
+        },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          owner: { select: { name: true } },
+          opportunity: { select: { id: true, title: true } },
+        },
+      }),
+      getCustomerFollowUpHistory(customer.id),
       getCustomerGradeFollowUpSchedule({
         customerId: customer.id,
         customerGrade: customer.customerGrade,
@@ -95,6 +125,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+  const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
 
   const relations = [
     ...customer.relationsFrom.map((r) => ({
@@ -120,6 +151,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
     .join(" ");
 
   const canEdit = canEditCustomerContent(session.user.role, session.user.id, customer);
+  const canCreateContract = canEditContract(session.user.role) && canEdit;
 
   const customerTagValues = customer.tags.map((item) => item.tagValue);
 
@@ -130,28 +162,17 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{customer.name}</h1>
-          <p className="text-muted-foreground">
-            {CUSTOMER_CATEGORY_LABELS[customer.category]}
-            {customer.customerType && ` · ${labelForConfig(typeLabels, customer.customerType)}`}
-            {customer.customerGrade ? (
-              <>
-                {" · "}
-                <CustomerGradeIcon
-                  grade={customer.customerGrade}
-                  showLabel
-                  labelMap={gradeLabels}
-                  className="inline-flex"
-                />
-              </>
-            ) : null}
-            {gradeFollowUpSchedule ? (
-              <>
-                {" · "}
-                <CustomerGradeFollowUpRemaining schedule={gradeFollowUpSchedule} compact />
-              </>
-            ) : null}
-          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-2xl font-bold">{customer.name}</h1>
+            <CustomerGradeMetaBadge grade={customer.customerGrade} labelMap={gradeLabels} />
+          </div>
+          <CustomerMetaLine
+            className="mt-1"
+            category={customer.category}
+            customerType={customer.customerType}
+            typeLabels={typeLabels}
+            gradeFollowUpSchedule={gradeFollowUpSchedule}
+          />
           {customerTagValues.length > 0 ? (
             <CustomerTagList
               tags={customerTagValues}
@@ -246,72 +267,100 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">联系人</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ContactList
-              customerId={customer.id}
-              contacts={customer.contacts}
-              readOnly={!canEdit}
-              titleOptions={contactFormOptions.titleOptions}
-              departmentOptions={contactFormOptions.departmentOptions}
-              roleOptions={contactFormOptions.roleOptions}
-            />
-          </CardContent>
-        </Card>
+        <CustomerContactsCard
+          customerId={customer.id}
+          contacts={customer.contacts}
+          readOnly={!canEdit}
+          titleOptions={contactFormOptions.titleOptions}
+          departmentOptions={contactFormOptions.departmentOptions}
+          roleOptions={contactFormOptions.roleOptions}
+        />
       </div>
 
+      <CustomerRelationsCard
+        customerId={customer.id}
+        relations={relations}
+        excludeIds={relationExcludeIds}
+        typeLabels={typeLabels}
+        readOnly={!canEdit}
+        linkReturnTo={selfPath}
+      />
+
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">关联客户</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-lg">
+            商机
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              ({opportunities.length})
+            </span>
+          </CardTitle>
+          {canEdit ? (
+            <Button asChild variant="outline" size="sm">
+              <Link
+                href={withReturnTo(
+                  `/opportunities/new?customerId=${customer.id}`,
+                  selfPath
+                )}
+              >
+                新建商机
+              </Link>
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent>
-            <CustomerRelationsPanel
-              customerId={customer.id}
-              relations={relations}
-              excludeIds={relationExcludeIds}
-              typeLabels={typeLabels}
-              readOnly={!canEdit}
-              linkReturnTo={selfPath}
-            />
+          <CustomerOpportunitiesList
+            opportunities={opportunities}
+            stageLabels={stageLabels}
+            linkReturnTo={selfPath}
+          />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-lg">
-            跟进记录
+            合同
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              ({contracts.length})
+            </span>
+          </CardTitle>
+          {canCreateContract ? (
+            <Button asChild variant="outline" size="sm">
+              <Link
+                href={withReturnTo(`/contracts/new?customerId=${customer.id}`, selfPath)}
+              >
+                新建合同
+              </Link>
+            </Button>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          <CustomerContractsList
+            customerId={customer.id}
+            contracts={contracts}
+            linkReturnTo={selfPath}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-lg">
+            拜访记录
             <span className="ml-2 text-sm font-normal text-muted-foreground">
               ({followUpCount})
             </span>
           </CardTitle>
-          {followUpCount > followUpPreviewLimit || canEdit ? (
+          {canEdit ? (
             <Button asChild variant="outline" size="sm">
               <Link href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}>
-                {followUpCount > followUpPreviewLimit
-                  ? "查看全部"
-                  : canEdit
-                    ? "前往跟进"
-                    : "查看全部"}
+                录入跟进
               </Link>
             </Button>
           ) : null}
         </CardHeader>
         <CardContent>
           <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
-          {followUpCount > followUps.length ? (
-            <p className="mt-4 text-center text-sm text-muted-foreground">
-              仅展示最近 {followUps.length} 条，
-              <Link
-                href={withReturnTo(`/customers/${customer.id}/follow-ups`, selfPath)}
-                className="text-primary hover:underline"
-              >
-                查看全部 {followUpCount} 条
-              </Link>
-            </p>
-          ) : null}
         </CardContent>
       </Card>
     </div>

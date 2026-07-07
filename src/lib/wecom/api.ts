@@ -135,8 +135,16 @@ export async function resolveCrmUserForWeCom(input: {
 }) {
   const { prisma } = await import("@/lib/prisma");
 
-  const bound = await prisma.user.findUnique({ where: { wecomUserId: input.wecomUserId } });
-  if (bound) return { user: bound, autoBound: false as const };
+  const bound = await prisma.user.findUnique({
+    where: { wecomUserId: input.wecomUserId },
+    include: { personnelProfile: { select: { enabled: true } } },
+  });
+  if (bound) {
+    if (bound.personnelProfile && !bound.personnelProfile.enabled) {
+      return { user: null, autoBound: false as const };
+    }
+    return { user: bound, autoBound: false as const };
+  }
 
   if (!input.userTicket) {
     return { user: null, autoBound: false as const };

@@ -76,6 +76,7 @@ export function OpportunitySearchSelect({
       className={className}
       labelClassName={labelClassName}
       placeholder={props.placeholder ?? "输入商机名称搜索…"}
+      preloadOnFocus={Boolean(customerId)}
       onSearch={onSearch}
     />
   );

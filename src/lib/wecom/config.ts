@@ -1,3 +1,34 @@
+export type WeComConfigView = {
+  corpIdConfigured: boolean;
+  agentIdConfigured: boolean;
+  secretConfigured: boolean;
+  nextAuthUrlConfigured: boolean;
+  /** 企微应用凭据（CorpId / AgentId / Secret） */
+  credsReady: boolean;
+  /** OAuth 扫码登录（凭据 + NEXTAUTH_URL） */
+  oauthReady: boolean;
+  /** 企微内 H5 JS-SDK（定位/语音，依赖凭据） */
+  jsSdkReady: boolean;
+};
+
+export function getWeComConfigForAdmin(): WeComConfigView {
+  const corpIdConfigured = Boolean(process.env.WECOM_CORP_ID?.trim());
+  const agentIdConfigured = Boolean(process.env.WECOM_AGENT_ID?.trim());
+  const secretConfigured = Boolean(process.env.WECOM_SECRET?.trim());
+  const nextAuthUrlConfigured = Boolean(process.env.NEXTAUTH_URL?.trim());
+  const credsReady = corpIdConfigured && agentIdConfigured && secretConfigured;
+
+  return {
+    corpIdConfigured,
+    agentIdConfigured,
+    secretConfigured,
+    nextAuthUrlConfigured,
+    credsReady,
+    oauthReady: credsReady && nextAuthUrlConfigured,
+    jsSdkReady: credsReady,
+  };
+}
+
 export function isWeComConfigured() {
   return Boolean(
     process.env.WECOM_CORP_ID &&

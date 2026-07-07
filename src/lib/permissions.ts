@@ -87,6 +87,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/personnel", label: "实施人员", roles: ["PROJECT_ADMIN", "ADMIN"] },
   { href: "/sales-personnel", label: "销售人员", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/sales-costs", label: "销售成本", roles: ["SALES_MANAGER", "ADMIN"] },
+  { href: "/admin/users", label: "用户管理", roles: ["ADMIN"] },
   { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER"] },
 ];
 

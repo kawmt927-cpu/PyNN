@@ -140,7 +140,7 @@ export function MonthlyKpiDashboard({
           label="项目开发"
           actual={actuals.projectDev}
           target={targets?.projectDev ?? null}
-          hint="自有商机达到设定阶段或已签约"
+          hint="当月阶段往前推进的次数；一次跨多级也只计 1 次"
         />
         <AmountKpiCard
           label="回款催收"

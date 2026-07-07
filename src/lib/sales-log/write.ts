@@ -12,6 +12,10 @@ import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { prisma } from "@/lib/prisma";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
+import {
+  resolveTomorrowPlanForSubmit,
+  validateTomorrowPlan,
+} from "@/lib/sales-log/tomorrow-plan";
 
 const SALES_LOG_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
 
@@ -287,9 +291,21 @@ export async function submitDailyLogFromAgent(
   const dailyReport = input.dailyReport.trim();
   if (!dailyReport) throw new Error("日报内容不能为空");
 
+  const tomorrowPlanText = resolveTomorrowPlanForSubmit({
+    tomorrowPlan: input.tomorrowPlan,
+    dailyReport,
+  });
+
+  if (!input.riskFlag) {
+    const planError = validateTomorrowPlan(tomorrowPlanText);
+    if (planError) throw new Error(planError);
+  } else if (!tomorrowPlanText.trim()) {
+    throw new Error("带风险提交也须在 riskNotes 中说明明日计划缺失原因，并尽量补问销售");
+  }
+
   const structuredOutput: Prisma.InputJsonValue = {
     dailyReport,
-    tomorrowPlan: input.tomorrowPlan?.trim() || null,
+    tomorrowPlan: tomorrowPlanText || null,
     summary: input.summary ?? null,
     submittedAt: new Date().toISOString(),
   };

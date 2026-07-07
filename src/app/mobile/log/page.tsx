@@ -3,7 +3,7 @@
 import { useChat } from "ai/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { SALES_LOG_OPENING_MESSAGE } from "@/lib/agent/sales-log-prompt";
 import { useWeComSdk, isWeComClient } from "@/hooks/use-wecom-sdk";
@@ -31,8 +31,18 @@ export default function MobileLogPage() {
     useWeComSdk(inWeCom);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<{ role: string; content: string }[]>([]);
   const sessionBootstrapped = useRef(false);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      return;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
 
   const [input, setInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
@@ -83,9 +93,20 @@ export default function MobileLogPage() {
     messagesRef.current = messages.map((m) => ({ role: m.role, content: m.content }));
   }, [messages]);
 
+  const lastMessageContent = messages[messages.length - 1]?.content ?? "";
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isLoading, chatError, syncHint]);
+    const behavior = messages.length <= 2 ? "auto" : "smooth";
+    const id = requestAnimationFrame(() => scrollToBottom(behavior));
+    return () => cancelAnimationFrame(id);
+  }, [messages, isLoading, chatError, syncHint, scrollToBottom]);
+
+  // 流式输出时消息内容持续增长，需跟随滚动
+  useEffect(() => {
+    if (!isLoading) return;
+    const id = requestAnimationFrame(() => scrollToBottom("auto"));
+    return () => cancelAnimationFrame(id);
+  }, [lastMessageContent, isLoading, scrollToBottom]);
 
   useEffect(() => {
     if (error) {
@@ -165,8 +186,8 @@ export default function MobileLogPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-lg flex-col bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+    <div className="mx-auto flex h-[100dvh] max-w-lg flex-col overflow-hidden bg-background">
+      <header className="shrink-0 border-b bg-card p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">今日销售日志</h1>
@@ -196,7 +217,10 @@ export default function MobileLogPage() {
         )}
       </header>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 pb-6"
+      >
         {visibleMessages.map((m) => (
           <div
             key={m.id}
@@ -219,12 +243,12 @@ export default function MobileLogPage() {
             {chatError}
           </p>
         )}
-        <div ref={messagesEndRef} aria-hidden className="h-px shrink-0" />
+        <div ref={messagesEndRef} aria-hidden className="h-px shrink-0 scroll-mt-4" />
       </div>
 
       <form
         onSubmit={handleSend}
-        className="sticky bottom-0 border-t bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+        className="shrink-0 border-t bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
       >
         <div className="mb-2 flex gap-2">
           <LocationButton
@@ -247,15 +271,16 @@ export default function MobileLogPage() {
             {inputActionHint ?? (inWeCom ? "定位 · 按住说话" : "定位 · 点击麦克风说话")}
           </span>
         </div>
-        <div className="flex gap-2">
-          <Input
+        <div className="flex items-end gap-2">
+          <AutoResizeTextarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="口述今日拜访与外勤情况…"
             className="flex-1"
             disabled={isLoading}
+            maxRows={8}
           />
-          <Button type="submit" disabled={isLoading || !input.trim()}>
+          <Button type="submit" disabled={isLoading || !input.trim()} className="shrink-0">
             发送
           </Button>
         </div>

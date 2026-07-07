@@ -9,6 +9,9 @@ export type CustomerListFilters = {
   customerGrade: string;
   ownerId: string;
   tags: string[];
+  province: string;
+  city: string;
+  district: string;
 };
 
 export function parseCustomerListFilters(
@@ -25,6 +28,9 @@ export function parseCustomerListFilters(
     customerGrade: params.grade ?? "",
     ownerId: params.ownerId ?? "",
     tags: [...new Set(tags)],
+    province: params.province?.trim() ?? "",
+    city: params.city?.trim() ?? "",
+    district: params.district?.trim() ?? "",
   };
 }
 
@@ -42,6 +48,9 @@ export function hasActiveCustomerListFilters(filters: CustomerListFilters) {
       filters.customerType ||
       filters.customerGrade ||
       filters.ownerId ||
+      filters.province ||
+      filters.city ||
+      filters.district ||
       filters.tags.length > 0
   );
 }
@@ -54,6 +63,9 @@ export function buildCustomerListHref(view: CustomerListView, filters: CustomerL
   if (filters.customerType) params.set("type", filters.customerType);
   if (filters.customerGrade) params.set("grade", filters.customerGrade);
   if (filters.ownerId) params.set("ownerId", filters.ownerId);
+  if (filters.province) params.set("province", filters.province);
+  if (filters.city) params.set("city", filters.city);
+  if (filters.district) params.set("district", filters.district);
   if (filters.tags.length) params.set("tags", filters.tags.join(","));
   return `/customers?${params.toString()}`;
 }
@@ -82,6 +94,15 @@ export function buildCustomerListWhere(
   }
   if (filters.ownerId && view === "all") {
     where.ownerId = filters.ownerId === "pool" ? null : filters.ownerId;
+  }
+  if (filters.province) {
+    where.province = filters.province;
+  }
+  if (filters.city) {
+    where.city = filters.city;
+  }
+  if (filters.district) {
+    where.district = filters.district;
   }
   if (filters.tags.length > 0) {
     where.tags = {

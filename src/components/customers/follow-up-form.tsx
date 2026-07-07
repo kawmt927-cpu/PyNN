@@ -196,7 +196,7 @@ export function FollowUpForm({
                 setOpportunityId(id);
                 setOpportunityLabel(option?.label ?? "");
               }}
-              placeholder="无关联商机"
+              placeholder="点击选择关联商机（可选）"
             />
           </div>
 
