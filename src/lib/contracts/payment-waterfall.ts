@@ -43,3 +43,23 @@ export function sumPaymentRecords(
 ): number {
   return records.reduce((sum, row) => sum + Number(row.amount), 0);
 }
+
+/** 本次登记后累计回款不得超过合同金额（允许 0.01 元浮点误差） */
+export function getContractPaymentRemaining(totalAmount: number, totalPaid: number) {
+  return Math.max(0, totalAmount - totalPaid);
+}
+
+export function validateContractPaymentAmount(
+  totalAmount: number,
+  totalPaid: number,
+  addAmount: number
+): string | null {
+  if (!Number.isFinite(addAmount) || addAmount <= 0) {
+    return "回款金额须大于 0";
+  }
+  const remaining = getContractPaymentRemaining(totalAmount, totalPaid);
+  if (addAmount > remaining + 0.01) {
+    return `回款总额不能超过合同金额 ${totalAmount.toFixed(2)} 元，当前已登记 ${totalPaid.toFixed(2)} 元，最多还可登记 ${remaining.toFixed(2)} 元`;
+  }
+  return null;
+}

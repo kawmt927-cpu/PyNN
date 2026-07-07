@@ -12,8 +12,10 @@ import {
   canRecordContractPayment,
   isSignedContractStatus,
 } from "@/lib/contracts/access";
-import { sumPaymentRecords } from "@/lib/contracts/payment-waterfall";
+import { isPendingContractApproval } from "@/lib/contracts/approval";
+import { sumPaymentRecords, validateContractPaymentAmount } from "@/lib/contracts/payment-waterfall";
 import { finalizeSignedContract } from "@/lib/contracts/finalize";
+import { revalidateApprovalSurfaces } from "@/lib/approvals/revalidate";
 import {
   contractFormSchema,
   contractPaymentRecordSchema,
@@ -178,7 +180,7 @@ async function createContractCore(
   });
 
   revalidatePath("/contracts");
-  revalidatePath("/approvals");
+  revalidateApprovalSurfaces();
   revalidatePath("/opportunities");
   revalidatePath("/projects");
 
@@ -337,7 +339,7 @@ export async function approveContract(contractId: string): Promise<ActionResult>
     }
 
     const contract = await prisma.contract.findUnique({ where: { id: contractId } });
-    if (!contract || contract.status !== "PENDING_APPROVAL") {
+    if (!contract || !isPendingContractApproval(contract.status)) {
       return { error: "合同不存在或不在待审核状态" };
     }
     if (!contract.signedAt) {
@@ -347,6 +349,16 @@ export async function approveContract(contractId: string): Promise<ActionResult>
     const signedAt = contract.signedAt;
 
     await prisma.$transaction(async (tx) => {
+      if (!contract.submittedAt || !contract.submittedById) {
+        await tx.contract.update({
+          where: { id: contractId },
+          data: {
+            submittedAt: contract.submittedAt ?? contract.createdAt,
+            submittedById: contract.submittedById ?? contract.ownerId,
+          },
+        });
+      }
+
       await finalizeSignedContract(tx, {
         contractId,
         signedAt,
@@ -355,7 +367,7 @@ export async function approveContract(contractId: string): Promise<ActionResult>
     });
 
     revalidatePath("/contracts");
-    revalidatePath("/approvals");
+    revalidateApprovalSurfaces();
     revalidatePath(`/contracts/${contractId}`);
     revalidatePath("/opportunities");
     revalidatePath("/projects");
@@ -375,7 +387,7 @@ export async function rejectContract(formData: FormData): Promise<ActionResult> 
     });
 
     const contract = await prisma.contract.findUnique({ where: { id: parsed.contractId } });
-    if (!contract || contract.status !== "PENDING_APPROVAL") {
+    if (!contract || !isPendingContractApproval(contract.status)) {
       return { error: "合同不存在或不在待审核状态" };
     }
 
@@ -391,7 +403,7 @@ export async function rejectContract(formData: FormData): Promise<ActionResult> 
     });
 
     revalidatePath("/contracts");
-    revalidatePath("/approvals");
+    revalidateApprovalSurfaces();
     revalidatePath(`/contracts/${parsed.contractId}`);
 
     return {};
@@ -423,6 +435,15 @@ export async function addContractPaymentRecord(formData: FormData): Promise<Acti
     if (!isSignedContractStatus(contract.status)) {
       return { error: "仅已签署合同可登记回款" };
     }
+
+    const paymentRecords = await prisma.contractPaymentRecord.findMany({
+      where: { contractId: parsed.contractId },
+      select: { amount: true },
+    });
+    const totalPaid = sumPaymentRecords(paymentRecords);
+    const totalAmount = Number(contract.totalAmount);
+    const amountError = validateContractPaymentAmount(totalAmount, totalPaid, parsed.amount);
+    if (amountError) return { error: amountError };
 
     await prisma.contractPaymentRecord.create({
       data: {

@@ -9,6 +9,8 @@ import {
   canRecordContractPayment,
   isSignedContractStatus,
 } from "@/lib/contracts/access";
+import { isPendingContractApproval } from "@/lib/contracts/approval";
+import { ContractApprovalActions } from "@/components/contracts/contract-approval-actions";
 import {
   allocatePaymentsWaterfall,
   sumPaymentRecords,
@@ -26,6 +28,12 @@ import { ContractPaymentPanel } from "@/components/contracts/contract-payment-pa
 import { ContractForm } from "@/components/contracts/contract-form";
 import { resolveBackNavigation, selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
 import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
+import {
+  approveContract,
+  rejectContract,
+  addContractPaymentRecord,
+  deleteContractPaymentRecord,
+} from "@/app/(dashboard)/contracts/actions";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -88,7 +96,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
   const signed = isSignedContractStatus(contract.status);
   const showResubmit = contract.status === "REJECTED" && query.edit === "1";
   const canApprove =
-    canManageContractApproval(session.user.role) && contract.status === "PENDING_APPROVAL";
+    canManageContractApproval(session.user.role) && isPendingContractApproval(contract.status);
   const canEdit = canEditContract(session.user.role);
 
   const [salesUsers, paymentMethods] = await Promise.all([
@@ -186,12 +194,17 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       )}
 
       {canApprove && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          该合同待审核，请前往
-          <Link href="/approvals?type=contract" className="mx-1 font-medium text-primary hover:underline">
-            审批中心
-          </Link>
-          处理。
+        <ContractApprovalActions
+          contractId={contract.id}
+          variant="panel"
+          onApprove={approveContract}
+          onReject={rejectContract}
+        />
+      )}
+
+      {!canApprove && isPendingContractApproval(contract.status) && (
+        <div className="rounded-md border border-muted bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          合同已提交，等待销售管理审核通过后即可登记回款。
         </div>
       )}
 
@@ -358,24 +371,21 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       )}
 
       {signed && canRecordContractPayment(session.user.role) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">回款记录</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ContractPaymentPanel
-              contractId={contract.id}
-              canDelete={canManageContractApproval(session.user.role)}
-              records={contract.paymentRecords.map((row) => ({
-                id: row.id,
-                amount: Number(row.amount),
-                paidAt: row.paidAt.toISOString(),
-                notes: row.notes,
-                recordedBy: row.recordedBy,
-              }))}
-            />
-          </CardContent>
-        </Card>
+        <ContractPaymentPanel
+          contractId={contract.id}
+          totalAmount={totalAmount}
+          totalPaid={totalPaid}
+          canDelete={canManageContractApproval(session.user.role)}
+          onAdd={addContractPaymentRecord}
+          onDelete={deleteContractPaymentRecord}
+          records={contract.paymentRecords.map((row) => ({
+            id: row.id,
+            amount: Number(row.amount),
+            paidAt: row.paidAt.toISOString(),
+            notes: row.notes,
+            recordedBy: row.recordedBy,
+          }))}
+        />
       )}
     </div>
   );

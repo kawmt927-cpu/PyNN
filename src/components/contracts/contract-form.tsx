@@ -19,6 +19,9 @@ import {
 import { SIGNING_TYPE_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import type { ActionResult } from "@/lib/action-result";
+import { validateInstallmentCoverage } from "@/lib/validations/contract";
+import { getContractPaymentRemaining } from "@/lib/contracts/payment-waterfall";
+import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 
 type SalesOption = { id: string; name: string };
 type ProductTemplate = { id: string; name: string; defaultCost: number };
@@ -95,8 +98,14 @@ function defaultProductLine(): ProductLine {
   return { key: newKey(), productServiceId: "", productName: "", costAmount: "" };
 }
 
-function defaultInstallmentLine(periodNumber: number): InstallmentLine {
-  return { key: newKey(), periodNumber, amount: "", condition: "", dueAt: "" };
+function defaultInstallmentLine(periodNumber: number, amount = ""): InstallmentLine {
+  return { key: newKey(), periodNumber, amount, condition: "", dueAt: "" };
+}
+
+function formatInstallmentPrefillAmount(amount: number) {
+  if (amount <= 0) return "";
+  const rounded = Math.round(amount * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
 export function ContractForm({
@@ -179,6 +188,25 @@ export function ContractForm({
 
   const contractAmountNum = Number(totalAmount) || 0;
   const grossProfit = contractAmountNum - productCostTotal;
+  const installmentCoverageError = useMemo(() => {
+    if (contractAmountNum <= 0) return null;
+    return validateInstallmentCoverage(
+      contractAmountNum,
+      installments.map((row) => ({ amount: Number(row.amount) || 0 }))
+    );
+  }, [contractAmountNum, installments]);
+  const installmentsCovered = !installmentCoverageError;
+
+  function handleAddInstallment() {
+    setInstallments((rows) => {
+      const currentTotal = rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+      const remaining = getContractPaymentRemaining(contractAmountNum, currentTotal);
+      return [
+        ...rows,
+        defaultInstallmentLine(rows.length + 1, formatInstallmentPrefillAmount(remaining)),
+      ];
+    });
+  }
 
   function handleSubmit(formData: FormData) {
     formData.set("signCustomerId", signCustomerId);
@@ -206,6 +234,12 @@ export function ContractForm({
 
     formData.set("productsJson", JSON.stringify(productsPayload));
     formData.set("installmentsJson", JSON.stringify(installmentsPayload));
+
+    const coverageError = validateInstallmentCoverage(contractAmountNum, installmentsPayload);
+    if (coverageError) {
+      setError(coverageError);
+      return;
+    }
 
     startTransition(async () => {
       setError(null);
@@ -484,7 +518,16 @@ export function ContractForm({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setProducts((rows) => rows.filter((item) => item.key !== row.key))}
+                    onClick={() => {
+                      if (
+                        !confirmDestructiveAction(
+                          `确定删除产品「${row.productName || "该行"}」？需保存合同后才会生效。`
+                        )
+                      ) {
+                        return;
+                      }
+                      setProducts((rows) => rows.filter((item) => item.key !== row.key));
+                    }}
                   >
                     删
                   </Button>
@@ -504,22 +547,18 @@ export function ContractForm({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() =>
-                setInstallments((rows) => [
-                  ...rows,
-                  defaultInstallmentLine(rows.length + 1),
-                ])
-              }
+              onClick={handleAddInstallment}
             >
               添加期次
             </Button>
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          计划合计须等于合同金额。当前合计：
+          计划合计须等于合同金额
+          {contractAmountNum > 0 ? `（${contractAmountNum.toFixed(2)} 元）` : ""}。当前合计：
           <span
             className={
-              Math.abs(installmentTotal - contractAmountNum) < 0.01
+              installmentsCovered
                 ? "ml-1 font-medium text-emerald-600"
                 : "ml-1 font-medium text-destructive"
             }
@@ -527,6 +566,9 @@ export function ContractForm({
             {installmentTotal.toFixed(2)} 元
           </span>
         </p>
+        {installmentCoverageError && (
+          <p className="text-sm text-destructive">{installmentCoverageError}</p>
+        )}
         <div className="space-y-3">
           {installments.map((row) => (
             <div key={row.key} className="grid gap-3 rounded-lg border p-3 md:grid-cols-12">
@@ -598,7 +640,16 @@ export function ContractForm({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setInstallments((rows) => rows.filter((item) => item.key !== row.key))}
+                    onClick={() => {
+                      if (
+                        !confirmDestructiveAction(
+                          `确定删除第 ${row.periodNumber} 期回款计划？需保存合同后才会生效。`
+                        )
+                      ) {
+                        return;
+                      }
+                      setInstallments((rows) => rows.filter((item) => item.key !== row.key));
+                    }}
                   >
                     删
                   </Button>
@@ -611,7 +662,7 @@ export function ContractForm({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Button type="submit" disabled={pending}>
+      <Button type="submit" disabled={pending || !installmentsCovered}>
         {pending ? "提交中…" : submitLabel}
       </Button>
     </form>

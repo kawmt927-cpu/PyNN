@@ -11,9 +11,15 @@ type Props = {
   nav: NavItem[];
   userName: string;
   roleLabel: string;
+  pendingApprovalCount?: number;
 };
 
-export function AppSidebarClient({ nav, userName, roleLabel }: Props) {
+export function AppSidebarClient({
+  nav,
+  userName,
+  roleLabel,
+  pendingApprovalCount = 0,
+}: Props) {
   const pathname = usePathname();
 
   return (
@@ -23,20 +29,38 @@ export function AppSidebarClient({ nav, userName, roleLabel }: Props) {
         <p className="text-xs text-muted-foreground">医院软件 CRM + 项目管理</p>
       </div>
       <nav className="flex-1 space-y-1 p-3">
-        {nav.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "block rounded-md px-3 py-2 text-sm transition-colors",
-              pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
-                ? "bg-primary text-primary-foreground"
-                : "text-foreground hover:bg-muted"
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
+        {nav.map((item) => {
+          const isActive =
+            pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+          const showApprovalDot = item.href === "/approvals" && pendingApprovalCount > 0;
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : "text-foreground hover:bg-muted"
+              )}
+            >
+              <span>{item.label}</span>
+              {showApprovalDot && (
+                <>
+                  <span className="sr-only">{pendingApprovalCount} 条待审批</span>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full bg-red-500",
+                      isActive ? "ring-2 ring-primary-foreground/30" : "ring-2 ring-card"
+                    )}
+                  />
+                </>
+              )}
+            </Link>
+          );
+        })}
       </nav>
       <div className="border-t p-4">
         <p className="text-sm font-medium">{userName}</p>

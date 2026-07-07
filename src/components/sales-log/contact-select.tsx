@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SelectClearButton } from "@/components/ui/select-clear-button";
+import { cn } from "@/lib/utils";
 
 export type ContactOption = {
   id: string;
@@ -51,25 +53,37 @@ export function ContactSelect({
   }
 
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      required={required}
-      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-    >
-      {!required && <option value="">不指定联系人</option>}
-      {required && !value && (
-        <option value="" disabled>
-          请选择联系人
-        </option>
-      )}
-      {contacts.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name}
-          {c.title ? ` · ${c.title}` : ""}
-          {c.isPrimary ? "（主联系人）" : ""}
-        </option>
-      ))}
-    </select>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        className={cn(
+          "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+          !required && value && "pr-9"
+        )}
+      >
+        {!required && <option value="">不指定联系人</option>}
+        {required && !value && (
+          <option value="" disabled>
+            请选择联系人
+          </option>
+        )}
+        {contacts.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+            {c.title ? ` · ${c.title}` : ""}
+            {c.isPrimary ? "（主联系人）" : ""}
+          </option>
+        ))}
+      </select>
+      {!required ? (
+        <SelectClearButton
+          value={value}
+          ariaLabel="清除联系人"
+          onClear={() => onChange("")}
+        />
+      ) : null}
+    </div>
   );
 }

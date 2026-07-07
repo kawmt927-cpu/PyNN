@@ -1,14 +1,13 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { getPrismaClient } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { countPendingApprovals } from "@/lib/approvals/pending-count";
+import { revalidateApprovalSurfaces } from "@/lib/approvals/revalidate";
 
 function revalidateApprovalPaths(customerId?: string) {
-  revalidatePath("/approvals");
-  revalidatePath("/customers");
-  if (customerId) revalidatePath(`/customers/${customerId}`);
+  revalidateApprovalSurfaces(customerId);
 }
 
 export async function applyForCustomer(formData: FormData) {
@@ -118,11 +117,6 @@ export async function rejectCustomerClaim(formData: FormData) {
 }
 
 export async function getPendingApprovalCount() {
-  const db = getPrismaClient();
   await requireRole(["SALES_MANAGER", "ADMIN"]);
-  const [claims, contracts] = await Promise.all([
-    db.customerClaimRequest.count({ where: { status: "PENDING" } }),
-    db.contract.count({ where: { status: "PENDING_APPROVAL" } }),
-  ]);
-  return claims + contracts;
+  return countPendingApprovals();
 }

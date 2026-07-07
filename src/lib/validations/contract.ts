@@ -15,6 +15,19 @@ export const contractInstallmentLineSchema = z.object({
   dueAt: z.string().optional().nullable(),
 });
 
+export function validateInstallmentCoverage(
+  totalAmount: number,
+  installments: Array<{ amount: number }>
+): string | null {
+  const installmentSum = installments.reduce((sum, row) => sum + row.amount, 0);
+  const gap = totalAmount - installmentSum;
+  if (Math.abs(gap) <= 0.01) return null;
+  if (gap > 0.01) {
+    return `回款计划还差 ${gap.toFixed(2)} 元未覆盖合同金额（${totalAmount.toFixed(2)} 元），请继续添加期次或调大计划金额`;
+  }
+  return `回款计划合计超出合同金额 ${Math.abs(gap).toFixed(2)} 元，请调整各期计划金额`;
+}
+
 export const contractFormSchema = z
   .object({
     title: z.string().min(1, "请输入合同标题"),
@@ -35,11 +48,11 @@ export const contractFormSchema = z
     installments: z.array(contractInstallmentLineSchema).min(1, "请至少添加一期回款计划"),
   })
   .superRefine((data, ctx) => {
-    const installmentSum = data.installments.reduce((sum, row) => sum + row.amount, 0);
-    if (Math.abs(installmentSum - data.totalAmount) > 0.01) {
+    const coverageError = validateInstallmentCoverage(data.totalAmount, data.installments);
+    if (coverageError) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `回款计划合计 ${installmentSum.toFixed(2)} 须等于合同金额 ${data.totalAmount.toFixed(2)}`,
+        message: coverageError,
         path: ["installments"],
       });
     }

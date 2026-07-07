@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SelectClearButton } from "@/components/ui/select-clear-button";
 import { QuickContactDialog } from "@/components/sales-log/quick-contact-dialog";
 import type { ContactOption } from "@/components/sales-log/contact-select";
 import { cn } from "@/lib/utils";
@@ -205,20 +206,32 @@ export function ContactSelectField(props: Props) {
             </div>
           )
         ) : (
-          <select
-            id={id}
-            value={props.value}
-            onChange={(e) => props.onChange(e.target.value)}
-            required={required}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          >
-            <option value="">{required ? "请选择联系人" : "不指定联系人"}</option>
-            {contacts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {formatContactLabel(c)}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              id={id}
+              value={props.value}
+              onChange={(e) => props.onChange(e.target.value)}
+              required={required}
+              className={cn(
+                "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+                !required && props.value && "pr-9"
+              )}
+            >
+              <option value="">{required ? "请选择联系人" : "不指定联系人"}</option>
+              {contacts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {formatContactLabel(c)}
+                </option>
+              ))}
+            </select>
+            {!required ? (
+              <SelectClearButton
+                value={props.value}
+                ariaLabel="清除联系人"
+                onClear={() => props.onChange("")}
+              />
+            ) : null}
+          </div>
         )}
 
         {multiple && required ? (

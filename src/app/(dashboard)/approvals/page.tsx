@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CustomerClaimApprovalList } from "@/components/approvals/customer-claim-approval-list";
 import { ContractApprovalList } from "@/components/approvals/contract-approval-list";
 import { APPROVAL_TYPE, APPROVAL_TYPE_LABELS } from "@/lib/approvals/constants";
+import { pendingContractApprovalFilter } from "@/lib/contracts/approval";
+import { approveContract, rejectContract } from "@/app/(dashboard)/contracts/actions";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -51,13 +53,13 @@ export default async function ApprovalsPage({ searchParams }: Props) {
       : Promise.resolve([]),
     type === APPROVAL_TYPE.CONTRACT
       ? db.contract.findMany({
-          where: { status: "PENDING_APPROVAL" },
+          where: pendingContractApprovalFilter(),
           include: {
             owner: { select: { name: true } },
             signCustomer: { select: { name: true } },
             submittedBy: { select: { name: true } },
           },
-          orderBy: { submittedAt: "asc" },
+          orderBy: [{ submittedAt: "asc" }, { createdAt: "asc" }],
         })
       : Promise.resolve([]),
     type === APPROVAL_TYPE.CONTRACT
@@ -79,7 +81,7 @@ export default async function ApprovalsPage({ searchParams }: Props) {
 
   const [pendingClaimCount, pendingContractCount] = await Promise.all([
     db.customerClaimRequest.count({ where: { status: "PENDING" } }),
-    db.contract.count({ where: { status: "PENDING_APPROVAL" } }),
+    db.contract.count({ where: pendingContractApprovalFilter() }),
   ]);
 
   const pendingCount =
@@ -146,6 +148,8 @@ export default async function ApprovalsPage({ searchParams }: Props) {
             {type === APPROVAL_TYPE.CONTRACT ? (
               <ContractApprovalList
                 showActions
+                onApprove={approveContract}
+                onReject={rejectContract}
                 items={pendingContracts.map((row) => ({
                   id: row.id,
                   title: row.title,

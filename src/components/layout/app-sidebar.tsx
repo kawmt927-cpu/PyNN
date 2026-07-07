@@ -5,8 +5,16 @@ type Props = {
   nav: NavItem[];
   userName: string;
   roleLabel: string;
+  pendingApprovalCount?: number;
 };
 
-export function AppSidebar({ nav, userName, roleLabel }: Props) {
-  return <AppSidebarClient nav={nav} userName={userName} roleLabel={roleLabel} />;
+export function AppSidebar({ nav, userName, roleLabel, pendingApprovalCount = 0 }: Props) {
+  return (
+    <AppSidebarClient
+      nav={nav}
+      userName={userName}
+      roleLabel={roleLabel}
+      pendingApprovalCount={pendingApprovalCount}
+    />
+  );
 }
