@@ -27,12 +27,13 @@ function profileDataForRole(
   dailyRate?: number
 ) {
   const staffCategory = staffCategoryForRole(role);
-  const canPresales = staffCategory === StaffCategory.IMPLEMENTATION;
+  const canImplementation = staffCategory === StaffCategory.IMPLEMENTATION;
+  const rate = canImplementation && dailyRate != null ? dailyRate : null;
   return {
     staffCategory,
     enabled,
-    isPresales: canPresales && isPresales,
-    dailyRate: canPresales && isPresales && dailyRate != null ? dailyRate : null,
+    isPresales: canImplementation && isPresales,
+    dailyRate: canImplementation && (isPresales || rate != null) ? rate : null,
   };
 }
 

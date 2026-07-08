@@ -129,20 +129,21 @@ export function UserForm({ userId, defaultValues }: Props) {
               />
               售前人员（可参与售前成本结算）
             </label>
-            {isPresales ? (
-              <div className="space-y-2">
-                <Label htmlFor="dailyRate">日单价（元）</Label>
-                <Input
-                  id="dailyRate"
-                  name="dailyRate"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  required
-                  defaultValue={defaultValues?.dailyRate ?? ""}
-                />
-              </div>
-            ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="dailyRate">日单价（元）</Label>
+              <Input
+                id="dailyRate"
+                name="dailyRate"
+                type="number"
+                min="0"
+                step="0.01"
+                required={isPresales}
+                defaultValue={defaultValues?.dailyRate ?? ""}
+              />
+              <p className="text-xs text-muted-foreground">
+                用于项目人力成本分摊；售前人员必填。
+              </p>
+            </div>
           </>
         ) : null}
 
