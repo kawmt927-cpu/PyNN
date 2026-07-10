@@ -18,6 +18,7 @@ type Props = {
   searchParams: Promise<{
     range?: string;
     start?: string;
+    end?: string;
     week?: string;
     view?: string;
     project?: string;
@@ -37,6 +38,7 @@ export default async function SchedulePage({ searchParams }: Props) {
   const period = parseSchedulePeriod({
     range: params.range,
     start: params.start,
+    end: params.end,
     week: params.week,
   });
   const view = parseScheduleView(params.view);

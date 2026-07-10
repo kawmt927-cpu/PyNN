@@ -68,7 +68,18 @@ export const projectAllocationSchema = z
     if (data.allocationMode === "MANUAL" && data.plannedDays == null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "手动模式须填写总人天",
+        message: "手动模式须填写单日人天",
+        path: ["plannedDays"],
+      });
+    }
+    if (
+      data.allocationMode === "MANUAL" &&
+      data.plannedDays != null &&
+      data.plannedDays > 1
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "单日人天不能超过 1",
         path: ["plannedDays"],
       });
     }
@@ -83,7 +94,13 @@ export function parseOptionalDate(value: string | undefined): Date | null {
 export function parseDateOnlyInput(value: string | undefined): Date {
   const trimmed = value?.trim();
   if (!trimmed) throw new Error("日期不能为空");
-  const [y, m, d] = trimmed.split("-").map(Number);
-  if (!y || !m || !d) throw new Error("日期格式无效");
-  return new Date(y, m - 1, d);
+
+  // YYYY-MM-DD or ISO datetime (e.g. 2026-07-06T00:00:00.000Z) — use date part only
+  const datePart = trimmed.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+    const [y, m, d] = datePart.split("-").map(Number);
+    if (y && m && d) return new Date(y, m - 1, d);
+  }
+
+  throw new Error("日期格式无效");
 }

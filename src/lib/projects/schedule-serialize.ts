@@ -11,8 +11,10 @@ import {
 import { getWeekRange } from "./week-range";
 import { toDateOnly } from "./workdays";
 import { addDays } from "date-fns";
+import { formatLocalDateInput } from "@/lib/dates/local-date";
 import type { SchedulePeriod } from "./timeline";
 import { getWeekPeriod, workdaysInPeriod } from "./timeline";
+import { trimOverlappingProjectAllocations } from "./allocation-dedup";
 
 export type ScheduleBar = {
   id: string;
@@ -30,6 +32,38 @@ export type ScheduleBar = {
   notes: string | null;
 };
 
+const DRAFT_BAR_ID_PREFIX = "draft-";
+
+export function isDraftScheduleBarId(id: string): boolean {
+  return id.startsWith(DRAFT_BAR_ID_PREFIX);
+}
+
+export function buildDraftScheduleBar(input: {
+  userId: string;
+  userName: string;
+  projectId: string;
+  projectName: string;
+  startDate: string;
+  endDate: string;
+  dailyRate: number | null;
+}): ScheduleBar {
+  return {
+    id: `${DRAFT_BAR_ID_PREFIX}${input.userId}-${input.projectId}`,
+    userId: input.userId,
+    userName: input.userName,
+    projectId: input.projectId,
+    projectName: input.projectName,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    allocationMode: "AUTO",
+    plannedDays: null,
+    effectiveDays: 0,
+    dailyRateSnapshot: input.dailyRate ?? 0,
+    cost: 0,
+    notes: null,
+  };
+}
+
 export type ScheduleStaff = {
   id: string;
   name: string;
@@ -38,6 +72,11 @@ export type ScheduleStaff = {
   weekEffectiveDays: number;
   parallelProjects: number;
   weekLoadPercent: number;
+};
+
+export type ScheduleProjectStaff = {
+  userId: string;
+  name: string;
 };
 
 export type ScheduleProjectOption = {
@@ -52,6 +91,7 @@ export type ScheduleProjectOption = {
   periodEffectiveDays: number;
   periodStaffCount: number;
   periodCost: number;
+  periodStaff: ScheduleProjectStaff[];
 };
 
 export type ScheduleModuleData = {
@@ -131,8 +171,8 @@ async function enrichBars(
       userName: row.user.name,
       projectId: row.projectId,
       projectName: row.project.name,
-      startDate: row.startDate.toISOString(),
-      endDate: row.endDate.toISOString(),
+      startDate: formatLocalDateInput(row.startDate),
+      endDate: formatLocalDateInput(row.endDate),
       allocationMode: row.allocationMode,
       plannedDays: record.plannedDays,
       effectiveDays: computeEffectiveDays(record, userRecords, weekRange),
@@ -170,7 +210,7 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
     ).map(serializeAllocationRecord);
 
     let periodEffectiveDays = 0;
-    for (const day of eachWorkdayInRange(range.from, range.to)) {
+    for (const day of eachCalendarDayInRange(range.from, range.to)) {
       const load = getPersonDailyLoad(user.id, day, allRecords);
       periodEffectiveDays += load.totalShare;
     }
@@ -192,19 +232,20 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
   return result;
 }
 
-function eachWorkdayInRange(from: Date, to: Date): Date[] {
+function eachCalendarDayInRange(from: Date, to: Date): Date[] {
   const days: Date[] = [];
   const cursor = toDateOnly(from);
   const end = toDateOnly(to);
   while (cursor.getTime() <= end.getTime()) {
-    const dow = cursor.getDay();
-    if (dow !== 0 && dow !== 6) days.push(new Date(cursor));
+    days.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return days;
 }
 
 export async function getProjectScheduleView(projectId: string, weekStart: Date) {
+  await trimOverlappingProjectAllocations();
+
   const period = {
     mode: "week" as const,
     from: toDateOnly(weekStart),
@@ -351,6 +392,8 @@ export async function getScheduleModuleData(
   userId: string,
   period: SchedulePeriod
 ): Promise<ScheduleModuleData> {
+  await trimOverlappingProjectAllocations();
+
   const range = { from: toDateOnly(period.from), to: toDateOnly(period.to) };
   const capacityDays = workdaysInPeriod(period);
   const projectWhere = buildProjectListWhere(role, userId);
@@ -395,25 +438,25 @@ export async function getScheduleModuleData(
 
   const projectStats = new Map<
     string,
-    { effectiveDays: number; cost: number; staffIds: Set<string> }
+    { effectiveDays: number; cost: number; staff: Map<string, string> }
   >();
   for (const bar of allBars) {
     const stats = projectStats.get(bar.projectId) ?? {
       effectiveDays: 0,
       cost: 0,
-      staffIds: new Set<string>(),
+      staff: new Map<string, string>(),
     };
     stats.effectiveDays = round2(stats.effectiveDays + bar.effectiveDays);
     stats.cost = round2(stats.cost + bar.cost);
-    stats.staffIds.add(bar.userId);
+    stats.staff.set(bar.userId, bar.userName);
     projectStats.set(bar.projectId, stats);
   }
 
   return {
     period: {
       mode: period.mode,
-      from: range.from.toISOString(),
-      to: range.to.toISOString(),
+      from: formatLocalDateInput(range.from),
+      to: formatLocalDateInput(range.to),
     },
     staff,
     projects: projectsRaw.map((p) => {
@@ -428,8 +471,11 @@ export async function getScheduleModuleData(
         plannedStartAt: p.plannedStartAt?.toISOString() ?? null,
         plannedEndAt: p.plannedEndAt?.toISOString() ?? null,
         periodEffectiveDays: stats?.effectiveDays ?? 0,
-        periodStaffCount: stats?.staffIds.size ?? 0,
+        periodStaffCount: stats?.staff.size ?? 0,
         periodCost: stats?.cost ?? 0,
+        periodStaff: [...(stats?.staff.entries() ?? [])]
+          .map(([userId, name]) => ({ userId, name }))
+          .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
       };
     }),
     allBars,

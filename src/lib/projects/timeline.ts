@@ -1,16 +1,21 @@
 import { addDays, eachDayOfInterval, endOfMonth, format, isWeekend, startOfMonth } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
+import { parseDateOnlyInput } from "@/lib/validations/project";
 import { getWeekRange } from "./week-range";
-import { countWorkdays, toDateOnly } from "./workdays";
+import { countCalendarDays, maxDate, minDate, toDateOnly } from "./workdays";
 
 export const DAY_COLUMN_WIDTH = 36;
 /** 资源排班大屏 — 周视图列宽 */
 export const SCHEDULE_MODULE_DAY_WIDTH = 48;
 /** 资源排班大屏 — 月视图列宽（更窄以容纳整月） */
 export const SCHEDULE_MODULE_MONTH_DAY_WIDTH = 28;
+/** 自定义周期最长天数（约 18 个月，覆盖半年～一年半项目） */
+export const SCHEDULE_CUSTOM_MAX_DAYS = 548;
+/** 长周期下单日列最小宽度（px） */
+export const SCHEDULE_DAY_WIDTH_MIN = 4;
 
-export type ScheduleRangeMode = "month" | "week";
+export type ScheduleRangeMode = "month" | "week" | "custom";
 
 export type TimelineDay = {
   date: Date;
@@ -39,13 +44,45 @@ export function getWeekPeriod(reference = new Date()): SchedulePeriod {
   return { mode: "week", from, to: addDays(from, 6) };
 }
 
+export function getCustomPeriod(fromInput: Date, toInput: Date): SchedulePeriod {
+  let from = toDateOnly(fromInput);
+  let to = toDateOnly(toInput);
+  if (from.getTime() > to.getTime()) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  const span = countCalendarDays(from, to);
+  if (span > SCHEDULE_CUSTOM_MAX_DAYS) {
+    to = addDays(from, SCHEDULE_CUSTOM_MAX_DAYS - 1);
+  }
+  return { mode: "custom", from, to };
+}
+
 /** 兼容旧 week 参数；默认按月 */
 export function parseSchedulePeriod(params: {
   range?: string;
   start?: string;
+  end?: string;
   week?: string;
 }): SchedulePeriod {
-  const mode: ScheduleRangeMode = params.range === "week" ? "week" : "month";
+  const mode: ScheduleRangeMode =
+    params.range === "week" ? "week" : params.range === "custom" ? "custom" : "month";
+
+  if (mode === "custom") {
+    const rawStart = params.start?.trim();
+    const rawEnd = params.end?.trim() || rawStart;
+    if (rawStart && /^\d{4}-\d{2}-\d{2}$/.test(rawStart.slice(0, 10))) {
+      const from = parseDateOnlyInput(rawStart.slice(0, 10));
+      const endStr =
+        rawEnd && /^\d{4}-\d{2}-\d{2}$/.test(rawEnd.slice(0, 10))
+          ? rawEnd.slice(0, 10)
+          : formatLocalDateInput(addDays(from, 6));
+      return getCustomPeriod(from, parseDateOnlyInput(endStr));
+    }
+    const week = getWeekPeriod();
+    return getCustomPeriod(week.from, week.to);
+  }
 
   const rawStart = params.start?.trim() || params.week?.trim();
   if (rawStart) {
@@ -67,15 +104,29 @@ export function parseSchedulePeriod(params: {
 export function buildTimelineDays(period: SchedulePeriod): TimelineDay[] {
   const start = toDateOnly(period.from);
   const end = toDateOnly(period.to);
-  return eachDayOfInterval({ start, end }).map((date) => ({
-    date,
-    dateKey: formatLocalDateInput(date),
-    label:
-      period.mode === "month"
-        ? format(date, "d", { locale: zhCN })
-        : format(date, "M/d EEE", { locale: zhCN }),
-    isWeekend: isWeekend(date),
-  }));
+  const dayCount = countCalendarDays(start, end);
+  return eachDayOfInterval({ start, end }).map((date) => {
+    let label: string;
+    if (period.mode === "week" || (period.mode === "custom" && dayCount <= 14)) {
+      label = format(date, "M/d EEE", { locale: zhCN });
+    } else if (dayCount > 180) {
+      // 半年以上：仅月初标月份，其余留空避免挤成一团
+      label = date.getDate() === 1 ? format(date, "M月", { locale: zhCN }) : "";
+    } else if (dayCount > 60) {
+      // 约 2～6 个月：月初标 M/d，其余仅日号过密时隔天显示
+      if (date.getDate() === 1) label = format(date, "M/d", { locale: zhCN });
+      else if (date.getDate() % 2 === 1) label = format(date, "d", { locale: zhCN });
+      else label = "";
+    } else {
+      label = format(date, "d", { locale: zhCN });
+    }
+    return {
+      date,
+      dateKey: formatLocalDateInput(date),
+      label,
+      isWeekend: isWeekend(date),
+    };
+  });
 }
 
 export function formatPeriodLabel(period: SchedulePeriod): string {
@@ -91,11 +142,70 @@ export function shiftPeriod(period: SchedulePeriod, delta: number): SchedulePeri
     const next = new Date(period.from.getFullYear(), period.from.getMonth() + delta, 1);
     return getMonthRange(next);
   }
+  if (period.mode === "custom") {
+    const span = countCalendarDays(period.from, period.to);
+    return getCustomPeriod(
+      addDays(period.from, delta * span),
+      addDays(period.to, delta * span)
+    );
+  }
   return getWeekPeriod(addDays(period.from, delta * 7));
 }
 
 export function periodStartKey(period: SchedulePeriod): string {
+  if (period.mode === "month") {
+    const month = String(period.from.getMonth() + 1).padStart(2, "0");
+    return `${period.from.getFullYear()}-${month}`;
+  }
   return formatLocalDateInput(period.from);
+}
+
+export function periodEndKey(period: SchedulePeriod): string {
+  return formatLocalDateInput(period.to);
+}
+
+/** 当前视图所属月份（周/自定义取区间中点所在月，避免跨月误判） */
+export function periodSelectedMonthKey(period: SchedulePeriod): string {
+  const ref =
+    period.mode === "month"
+      ? period.from
+      : addDays(
+          period.from,
+          Math.floor(countCalendarDays(period.from, period.to) / 2)
+        );
+  const month = String(ref.getMonth() + 1).padStart(2, "0");
+  return `${ref.getFullYear()}-${month}`;
+}
+
+/** 按月 / 按周 / 自定义切换时的 start（及自定义默认 end） */
+export function periodRangeSwitchStart(
+  period: SchedulePeriod,
+  targetMode: ScheduleRangeMode
+): string {
+  if (targetMode === "custom") {
+    return formatLocalDateInput(period.from);
+  }
+  const monthKey = periodSelectedMonthKey(period);
+  return targetMode === "month" ? monthKey : `${monthKey}-01`;
+}
+
+export function periodRangeSwitchEnd(period: SchedulePeriod): string {
+  return formatLocalDateInput(period.to);
+}
+
+export function scheduleDayWidth(period: SchedulePeriod): number {
+  if (period.mode === "week") return SCHEDULE_MODULE_DAY_WIDTH;
+
+  const days = countCalendarDays(period.from, period.to);
+  if (period.mode === "month") return SCHEDULE_MODULE_MONTH_DAY_WIDTH;
+
+  // 自定义：区间越长，单日列越窄，保证半年～一年半仍可横向浏览
+  if (days <= 14) return SCHEDULE_MODULE_DAY_WIDTH;
+  if (days <= 45) return SCHEDULE_MODULE_MONTH_DAY_WIDTH;
+  if (days <= 90) return 16;
+  if (days <= 180) return 10;
+  if (days <= 365) return 6;
+  return SCHEDULE_DAY_WIDTH_MIN;
 }
 
 export function barStyleForRange(
@@ -165,7 +275,49 @@ export function datesFromPeriodDrop(period: SchedulePeriod): {
 }
 
 export function workdaysInPeriod(period: SchedulePeriod): number {
-  return countWorkdays(period.from, period.to);
+  return countCalendarDays(period.from, period.to);
+}
+
+export function countScheduledWorkdaysInPeriod(
+  startDate: Date | string,
+  endDate: Date | string,
+  period: SchedulePeriod
+): number {
+  const start =
+    typeof startDate === "string"
+      ? toDateOnly(parseDateOnlyInput(startDate.slice(0, 10)))
+      : toDateOnly(startDate);
+  const end =
+    typeof endDate === "string"
+      ? toDateOnly(parseDateOnlyInput(endDate.slice(0, 10)))
+      : toDateOnly(endDate);
+  const from = maxDate(period.from, start);
+  const to = minDate(period.to, end);
+  if (from.getTime() > to.getTime()) return 0;
+  return countCalendarDays(from, to);
+}
+
+export function formatPersonDays(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  if (Number.isInteger(rounded)) return String(rounded);
+  return rounded.toFixed(2).replace(/\.?0+$/, "");
+}
+
+/** 甘特行副标题：本周期有效人天；与排班工作日不一致时补充说明 */
+export function formatAllocationPersonDaysSummary(
+  bars: Array<{ startDate: string; endDate: string; effectiveDays: number }>,
+  period: SchedulePeriod
+): string {
+  const effective = Math.round(bars.reduce((sum, bar) => sum + bar.effectiveDays, 0) * 100) / 100;
+  const scheduled = bars.reduce(
+    (sum, bar) => sum + countScheduledWorkdaysInPeriod(bar.startDate, bar.endDate, period),
+    0
+  );
+  const label = formatPersonDays(effective);
+  if (scheduled > 0 && Math.abs(effective - scheduled) > 0.01) {
+    return `本周期 ${label} 人天（排班 ${scheduled} 天）`;
+  }
+  return `本周期 ${label} 人天`;
 }
 
 /** @deprecated 使用 parseSchedulePeriod */
@@ -223,6 +375,7 @@ export function parseScheduleLocks(
 export function buildScheduleModuleHref(params: {
   range?: ScheduleRangeMode;
   start?: string;
+  end?: string;
   view?: ScheduleModuleView;
   project?: ScheduleProjectScope;
   person?: string;
@@ -236,6 +389,7 @@ export function buildScheduleModuleHref(params: {
   sp.set("range", range);
   if (params.start) sp.set("start", params.start);
   else if (params.week) sp.set("start", params.week);
+  if (range === "custom" && params.end) sp.set("end", params.end);
   if (params.view) sp.set("view", params.view);
   if (params.project) sp.set("project", params.project);
   if (params.person) sp.set("person", params.person);

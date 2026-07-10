@@ -1,8 +1,7 @@
 import { AllocationMode } from "@prisma/client";
 import {
   compareDates,
-  countWorkdays,
-  eachWorkday,
+  eachCalendarDay,
   isDateInRange,
   maxDate,
   minDate,
@@ -54,9 +53,8 @@ function allocationActiveOn(allocation: AllocationRecord, date: Date): boolean {
 
 function manualDailyShare(allocation: AllocationRecord): number {
   if (allocation.allocationMode !== "MANUAL" || allocation.plannedDays == null) return 0;
-  const workdays = countWorkdays(allocation.startDate, allocation.endDate);
-  if (workdays === 0) return 0;
-  return allocation.plannedDays / workdays;
+  // plannedDays 在手动模式下表示「单日锁定人天」（如 0.4）
+  return Math.max(0, allocation.plannedDays);
 }
 
 export function getDailyShares(
@@ -70,23 +68,41 @@ export function getDailyShares(
   );
   if (active.length === 0) return shares;
 
+  // MANUAL：锁定单日人天（可与其他项目叠加；合计超过 1 时超载提示）
   let manualTotal = 0;
   for (const allocation of active) {
     if (allocation.allocationMode === "MANUAL") {
-      const daily = manualDailyShare(allocation);
-      manualTotal += daily;
-      shares.set(allocation.id, daily);
+      const share = manualDailyShare(allocation);
+      shares.set(allocation.id, share);
+      manualTotal += share;
     }
   }
 
+  // AUTO：平分 MANUAL 占用后的剩余容量（1 - manualTotal），按项目权重拆分
   const autoActive = active.filter((a) => a.allocationMode === "AUTO");
   const remaining = Math.max(0, 1 - manualTotal);
-
   if (autoActive.length > 0 && remaining > 0) {
-    const totalWeight = autoActive.reduce((sum, a) => sum + (a.splitWeight ?? 1), 0);
+    // 同一项目多条记录只计一份份额，再均分给该项目各条记录
+    const byProject = new Map<string, { weight: number; allocationIds: string[] }>();
     for (const allocation of autoActive) {
       const weight = allocation.splitWeight ?? 1;
-      shares.set(allocation.id, (remaining * weight) / totalWeight);
+      const unit = byProject.get(allocation.projectId) ?? { weight: 0, allocationIds: [] };
+      unit.weight = Math.max(unit.weight, weight);
+      unit.allocationIds.push(allocation.id);
+      byProject.set(allocation.projectId, unit);
+    }
+
+    const totalWeight = [...byProject.values()].reduce((sum, unit) => sum + unit.weight, 0);
+    for (const unit of byProject.values()) {
+      const projectShare = (unit.weight / totalWeight) * remaining;
+      const perRecord = projectShare / unit.allocationIds.length;
+      for (const id of unit.allocationIds) {
+        shares.set(id, perRecord);
+      }
+    }
+  } else if (autoActive.length > 0) {
+    for (const allocation of autoActive) {
+      shares.set(allocation.id, 0);
     }
   }
 
@@ -128,11 +144,62 @@ export function computeEffectiveDays(
   if (compareDates(rangeStart, rangeEnd) > 0) return 0;
 
   let total = 0;
-  for (const day of eachWorkday(rangeStart, rangeEnd)) {
+  for (const day of eachCalendarDay(rangeStart, rangeEnd)) {
     const shares = getDailyShares(allocation.userId, day, allUserAllocations);
     total += shares.get(allocation.id) ?? 0;
   }
   return round4(total);
+}
+
+export type AllocationDailySegment = {
+  startDate: Date;
+  endDate: Date;
+  workdays: number;
+  dailyShare: number;
+  subtotal: number;
+};
+
+export function mergePeerRecordsWithAllocation(
+  allocation: AllocationRecord,
+  peerRecords: AllocationRecord[]
+): AllocationRecord[] {
+  return [...peerRecords.filter((p) => p.id !== allocation.id), allocation];
+}
+
+/** 按连续日历日、相同日份额分段，便于展示计算明细 */
+export function buildAllocationDailySegments(
+  allocation: AllocationRecord,
+  allUserAllocations: AllocationRecord[],
+  dateRange?: { from: Date; to: Date }
+): AllocationDailySegment[] {
+  const rangeStart = maxDate(dateRange?.from ?? allocation.startDate, allocation.startDate);
+  const rangeEnd = minDate(dateRange?.to ?? allocation.endDate, allocation.endDate);
+  if (compareDates(rangeStart, rangeEnd) > 0) return [];
+
+  const segments: AllocationDailySegment[] = [];
+  let current: AllocationDailySegment | null = null;
+
+  for (const day of eachCalendarDay(rangeStart, rangeEnd)) {
+    const shares = getDailyShares(allocation.userId, day, allUserAllocations);
+    const share = round4(shares.get(allocation.id) ?? 0);
+
+    if (current && current.dailyShare === share) {
+      current.endDate = day;
+      current.workdays += 1;
+      current.subtotal = round4(current.subtotal + share);
+    } else {
+      if (current) segments.push(current);
+      current = {
+        startDate: day,
+        endDate: day,
+        workdays: 1,
+        dailyShare: share,
+        subtotal: share,
+      };
+    }
+  }
+  if (current) segments.push(current);
+  return segments;
 }
 
 export function computeAllocationCost(

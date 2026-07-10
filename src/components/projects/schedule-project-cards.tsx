@@ -5,6 +5,7 @@ import { zhCN } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { PROJECT_STATUS_LABELS } from "@/lib/projects/labels";
+import { staffColorClass } from "@/lib/projects/timeline-colors";
 import type { ScheduleProjectOption } from "@/lib/projects/schedule-serialize";
 
 type Props = {
@@ -57,6 +58,24 @@ export function ScheduleProjectCards({ projects, periodLabel, onSelectProject }:
             </p>
             <p>进度：{project.progressPercent}%</p>
           </div>
+
+          {project.periodStaff.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {project.periodStaff.map(({ userId, name }) => (
+                <span
+                  key={userId}
+                  title={name}
+                  className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                >
+                  <span
+                    className={cn("h-2 w-2 shrink-0 rounded-sm", staffColorClass(userId))}
+                    aria-hidden
+                  />
+                  <span className="max-w-[4.5rem] truncate">{name}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-3 border-t pt-3 text-xs">
             <span>

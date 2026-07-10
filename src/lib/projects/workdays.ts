@@ -24,7 +24,8 @@ export function isDateInRange(date: Date, start: Date, end: Date): boolean {
   return d >= toDateOnly(start).getTime() && d <= toDateOnly(end).getTime();
 }
 
-export function eachWorkday(start: Date, end: Date): Date[] {
+/** 排班区间内的全部日历日（含周末），用于人天拆分与合计 */
+export function eachCalendarDay(start: Date, end: Date): Date[] {
   const from = toDateOnly(start);
   const to = toDateOnly(end);
   if (compareDates(from, to) > 0) return [];
@@ -32,10 +33,19 @@ export function eachWorkday(start: Date, end: Date): Date[] {
   const days: Date[] = [];
   const cursor = new Date(from);
   while (cursor.getTime() <= to.getTime()) {
-    if (isWorkday(cursor)) days.push(new Date(cursor));
+    days.push(new Date(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return days;
+}
+
+export function countCalendarDays(start: Date, end: Date): number {
+  return eachCalendarDay(start, end).length;
+}
+
+/** 仅周一至周五（拖拽默认区间、容量口径等仍可用） */
+export function eachWorkday(start: Date, end: Date): Date[] {
+  return eachCalendarDay(start, end).filter(isWorkday);
 }
 
 export function countWorkdays(start: Date, end: Date): number {

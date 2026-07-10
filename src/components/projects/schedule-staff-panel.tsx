@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { ChevronDown, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select-field";
-import { Lock, LockOpen } from "lucide-react";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { PERSONNEL_TYPE_LABELS } from "@/lib/projects/labels";
+import { staffColorClass } from "@/lib/projects/timeline-colors";
 import type { ScheduleStaff } from "@/lib/projects/schedule-serialize";
 import type { PersonnelType } from "@prisma/client";
 
@@ -57,36 +58,44 @@ function DraggableStaffItem({
       )}
       {...(canDrag ? { ...listeners, ...attributes } : {})}
     >
-      <div className="flex items-start justify-between gap-2">
-        <p className="font-medium leading-tight">{member.name}</p>
-        <div className="flex shrink-0 items-center gap-1">
-          {member.weekLoadPercent > 100 ? (
-            <span className="text-[10px] text-destructive font-medium">
-              {member.weekLoadPercent}%
-            </span>
-          ) : null}
-          <button
-            type="button"
-            title={locked ? "解除锁定" : "锁定此人"}
-            onClick={onToggleLock}
-            className={cn(
-              "rounded p-1 transition-colors hover:bg-muted",
-              locked ? "text-primary" : "text-muted-foreground"
-            )}
-          >
-            {locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
-          </button>
+      <div className="flex gap-2">
+        <span
+          className={cn("mt-0.5 w-1 shrink-0 rounded-full self-stretch", staffColorClass(member.id))}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-medium leading-tight">{member.name}</p>
+            <div className="flex shrink-0 items-center gap-1">
+              {member.weekLoadPercent > 100 ? (
+                <span className="text-[10px] text-destructive font-medium">
+                  {member.weekLoadPercent}%
+                </span>
+              ) : null}
+              <button
+                type="button"
+                title={locked ? "解除锁定" : "锁定此人"}
+                onClick={onToggleLock}
+                className={cn(
+                  "rounded p-1 transition-colors hover:bg-muted",
+                  locked ? "text-primary" : "text-muted-foreground"
+                )}
+              >
+                {locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {member.dailyRate != null ? `${formatAmount(member.dailyRate)}/天` : "未设日单价"}
+            {member.personnelType
+              ? ` · ${PERSONNEL_TYPE_LABELS[member.personnelType as PersonnelType] ?? member.personnelType}`
+              : ""}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {periodLabel} {member.weekEffectiveDays} 人天 · {member.parallelProjects} 项目
+          </p>
         </div>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {member.dailyRate != null ? `${formatAmount(member.dailyRate)}/天` : "未设日单价"}
-        {member.personnelType
-          ? ` · ${PERSONNEL_TYPE_LABELS[member.personnelType as PersonnelType] ?? member.personnelType}`
-          : ""}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        {periodLabel} {member.weekEffectiveDays} 人天 · {member.parallelProjects} 项目
-      </p>
     </div>
   );
 }
@@ -102,6 +111,7 @@ export function ScheduleStaffPanel({
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StaffFilter>("all");
+  const [showMore, setShowMore] = useState(false);
   const hasLocks = lockedPersonIds.length > 0;
   const lockedSet = useMemo(() => new Set(lockedPersonIds), [lockedPersonIds]);
 
@@ -129,47 +139,84 @@ export function ScheduleStaffPanel({
     ];
   }, [staff]);
 
+  const hasMoreFiltersActive =
+    search.trim().length > 0 || statusFilter !== "all" || hasLocks;
+
   return (
     <div className="flex h-full flex-col border-r bg-muted/10">
-      <div className="shrink-0 space-y-3 border-b p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">人员</h2>
-          <span className="text-xs text-muted-foreground">{filtered.length} 人</span>
-        </div>
-        <Input
-          placeholder="搜索姓名…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <SelectField
-          id="staff-type-filter"
-          name="typeFilter"
-          label="人员类型"
-          value={typeFilter}
-          onValueChange={setTypeFilter}
-          options={typeOptions}
-        />
-        <SelectField
-          id="staff-status-filter"
-          name="statusFilter"
-          label="状态筛选"
-          value={statusFilter}
-          onValueChange={(v) => setStatusFilter(v as StaffFilter)}
-          options={[
-            { value: "all", label: "全部" },
-            { value: "has_rate", label: "已设日单价" },
-            { value: "overloaded", label: "超载 (>100%)" },
-            { value: "idle", label: `${periodLabel}无项目` },
-          ]}
-        />
-        {hasLocks ? (
+      <div className="shrink-0 bg-card px-4 py-3">
+        <div className="flex h-[34px] items-center gap-2">
+          <p className="shrink-0 text-sm font-medium">人员</p>
+          <span className="shrink-0 text-xs text-muted-foreground">{filtered.length} 人</span>
+          <select
+            id="staff-type-filter"
+            name="typeFilter"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {typeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
-            className="text-xs text-primary hover:underline"
-            onClick={onClearLocks}
+            onClick={() => setShowMore((open) => !open)}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-0.5 text-xs font-medium transition-colors",
+              showMore || hasMoreFiltersActive
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            )}
           >
-            解除全部锁定（{lockedPersonIds.length} 人）
+            更多
+            {hasMoreFiltersActive ? (
+              <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+            ) : null}
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 transition-transform", showMore && "rotate-180")}
+            />
           </button>
+        </div>
+        <p className="mt-1 text-xs leading-4 text-muted-foreground">
+          点击锁定联动筛选；更多可搜姓名与状态
+        </p>
+
+        {showMore ? (
+          <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+            <Input
+              placeholder="搜索姓名…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 text-xs"
+            />
+            <SelectField
+              id="staff-status-filter"
+              name="statusFilter"
+              label="状态筛选"
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as StaffFilter)}
+              labelClassName="text-xs"
+              className="gap-1.5"
+              options={[
+                { value: "all", label: "全部" },
+                { value: "has_rate", label: "已设日单价" },
+                { value: "overloaded", label: "超载 (>100%)" },
+                { value: "idle", label: `${periodLabel}无项目` },
+              ]}
+            />
+            {hasLocks ? (
+              <button
+                type="button"
+                className="text-xs text-primary hover:underline"
+                onClick={onClearLocks}
+              >
+                解除全部锁定（{lockedPersonIds.length} 人）
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

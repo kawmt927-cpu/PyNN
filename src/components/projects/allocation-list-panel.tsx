@@ -119,16 +119,25 @@ export function AllocationListPanel({
             />
             {mode === "MANUAL" ? (
               <div className="space-y-2">
-                <Label htmlFor="plannedDays">锁定总人天</Label>
+                <Label htmlFor="plannedDays" className="block min-h-5 leading-5">
+                  锁定单日人天
+                </Label>
                 <Input
                   id="plannedDays"
                   name="plannedDays"
                   type="number"
-                  min="0.1"
-                  step="0.1"
+                  min="0.01"
+                  max="1"
+                  step="0.01"
                   required
+                  placeholder="如 0.4"
                 />
               </div>
+            ) : null}
+            {mode === "MANUAL" ? (
+              <p className="text-xs text-muted-foreground md:col-span-2 -mt-1">
+                每天固定占用该份额；其余容量由同日自动排班项目平分
+              </p>
             ) : null}
             <div className="space-y-2">
               <Label htmlFor="notes">备注</Label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -23,10 +23,11 @@ import {
   buildTimelineDays,
   datesFromWeekDrop,
   getWeekPeriod,
+  formatPersonDays,
   weekNavigationHref,
   type TimelineDay,
 } from "@/lib/projects/timeline";
-import { projectColorClass } from "@/lib/projects/timeline-colors";
+import { staffColorClass } from "@/lib/projects/timeline-colors";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
 import type {
@@ -34,9 +35,12 @@ import type {
   SchedulePersonRow,
   ScheduleStaff,
 } from "@/lib/projects/schedule-serialize";
-import type { AllocationRecord } from "@/lib/projects/allocation-split";
+import { buildDraftScheduleBar } from "@/lib/projects/schedule-serialize";
+import { getDailyShares, type AllocationRecord } from "@/lib/projects/allocation-split";
 import { AllocationEditDialog } from "@/components/projects/allocation-edit-dialog";
-import { createProjectAllocationFromDrag } from "@/app/(dashboard)/projects/allocation-actions";
+import { findOverlappingSegment } from "@/lib/projects/allocation-overlap";
+import { parseDateOnlyInput } from "@/lib/validations/project";
+import { toDateOnly } from "@/lib/projects/workdays";
 
 export type SchedulerViewMode = "project" | "global";
 
@@ -98,45 +102,176 @@ function StaffCard({
   );
 }
 
+function clampShare(share: number): number {
+  if (!Number.isFinite(share) || share <= 0) return 0;
+  return Math.min(share, 1);
+}
+
+function fillHeightPct(share: number): number {
+  return Math.max(share * 100, share > 0 ? 6 : 0);
+}
+
+function dayFillCornerClass(
+  heightPct: number,
+  prevHeightPct: number | null,
+  nextHeightPct: number | null
+): string {
+  // 台阶拐角只圆「更高」一侧，避免矮块贴高块时出现内凹缺口
+  const roundTl = prevHeightPct == null || heightPct > prevHeightPct;
+  const roundTr = nextHeightPct == null || heightPct > nextHeightPct;
+  const roundBl = prevHeightPct == null;
+  const roundBr = nextHeightPct == null;
+  return cn(
+    roundTl && "rounded-tl",
+    roundTr && "rounded-tr",
+    roundBl && "rounded-bl",
+    roundBr && "rounded-br"
+  );
+}
+
+function asDateOnly(value: Date | string): Date {
+  if (value instanceof Date) return toDateOnly(value);
+  return toDateOnly(parseDateOnlyInput(String(value).slice(0, 10)));
+}
+
+function normalizePeerRecords(records: AllocationRecord[]): AllocationRecord[] {
+  return records.map((record) => ({
+    ...record,
+    startDate: asDateOnly(record.startDate),
+    endDate: asDateOnly(record.endDate),
+  }));
+}
+
+function dayFillsForBar(
+  bar: ScheduleBar,
+  days: TimelineDay[],
+  weekStart: Date,
+  peerRecords: AllocationRecord[]
+): Array<{ dateKey: string; share: number }> {
+  const style = barStyleForRange(
+    parseDateOnlyInput(bar.startDate),
+    parseDateOnlyInput(bar.endDate),
+    weekStart,
+    days.length
+  );
+  if (!style.visible) return [];
+
+  const barStart = parseDateOnlyInput(bar.startDate).getTime();
+  const barEnd = parseDateOnlyInput(bar.endDate).getTime();
+  const records = normalizePeerRecords(
+    peerRecords.length > 0
+      ? peerRecords
+      : [
+          {
+            id: bar.id,
+            projectId: bar.projectId,
+            userId: bar.userId,
+            startDate: parseDateOnlyInput(bar.startDate),
+            endDate: parseDateOnlyInput(bar.endDate),
+            allocationMode: bar.allocationMode,
+            plannedDays: bar.plannedDays,
+            splitWeight: null,
+            dailyRateSnapshot: bar.dailyRateSnapshot,
+          },
+        ]
+  );
+
+  return days
+    .filter((day) => {
+      const t = day.date.getTime();
+      return t >= barStart && t <= barEnd;
+    })
+    .map((day) => {
+      const shares = getDailyShares(bar.userId, day.date, records);
+      return {
+        dateKey: day.dateKey,
+        share: clampShare(shares.get(bar.id) ?? 0),
+      };
+    });
+}
+
 function TimelineBar({
   bar,
   weekStart,
   days,
   showProject,
+  peerRecords = [],
   onSelect,
 }: {
   bar: ScheduleBar;
   weekStart: Date;
   days: TimelineDay[];
   showProject: boolean;
+  peerRecords?: AllocationRecord[];
   onSelect: () => void;
 }) {
   const style = barStyleForRange(
-    new Date(bar.startDate),
-    new Date(bar.endDate),
+    parseDateOnlyInput(bar.startDate),
+    parseDateOnlyInput(bar.endDate),
     weekStart,
     days.length
   );
-  if (!style.visible) return null;
+  const fills = useMemo(
+    () => dayFillsForBar(bar, days, weekStart, peerRecords),
+    [bar, days, weekStart, peerRecords]
+  );
+  const [hoveredDay, setHoveredDay] = useState<string | null>(null);
+  if (!style.visible || fills.length === 0) return null;
+
+  const colorClass = staffColorClass(bar.userId);
+  const summary = `${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · 本周期 ${formatPersonDays(bar.effectiveDays)} 人天 · ${ALLOCATION_MODE_LABELS[bar.allocationMode]}`;
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      title={`${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · ${bar.effectiveDays} 人天`}
+      title={summary}
+      aria-label={summary}
+      onMouseLeave={() => setHoveredDay(null)}
       className={cn(
-        "absolute top-1 bottom-1 min-w-[24px] rounded px-1 text-left text-[10px] leading-tight text-white shadow",
-        projectColorClass(bar.projectId),
-        "hover:brightness-110"
+        "absolute top-1 bottom-1 overflow-visible transition-shadow",
+        "outline outline-1 outline-transparent",
+        hoveredDay ? "z-20 outline-2 outline-foreground/70" : null
       )}
-      style={{ left: style.left, width: style.width }}
+      style={{ left: style.left, width: style.width, minWidth: 0 }}
     >
-      <span className="block truncate font-medium">
-        {showProject ? bar.projectName : bar.userName}
-      </span>
-      <span className="opacity-90">
-        {bar.effectiveDays}d · {ALLOCATION_MODE_LABELS[bar.allocationMode]}
-      </span>
+      <div className="absolute inset-0 flex">
+        {fills.map((fill, index) => {
+          const heightPct = fillHeightPct(fill.share);
+          const prevHeightPct =
+            index > 0 ? fillHeightPct(fills[index - 1].share) : null;
+          const nextHeightPct =
+            index < fills.length - 1 ? fillHeightPct(fills[index + 1].share) : null;
+          const active = hoveredDay === fill.dateKey;
+          return (
+            <div
+              key={fill.dateKey}
+              className="relative h-full min-w-0 flex-1"
+              onMouseEnter={() => setHoveredDay(fill.dateKey)}
+            >
+              <div
+                className={cn(
+                  "absolute bottom-0 left-0 right-0",
+                  colorClass,
+                  active && "brightness-110",
+                  dayFillCornerClass(heightPct, prevHeightPct, nextHeightPct)
+                )}
+                style={{ height: `${heightPct}%` }}
+              />
+              {fill.share > 0 && active ? (
+                <span
+                  className={cn(
+                    "pointer-events-none absolute left-1/2 top-0.5 z-30 -translate-x-1/2 whitespace-nowrap",
+                    "rounded bg-foreground/90 px-1 py-0.5 text-[10px] font-medium leading-none text-background shadow"
+                  )}
+                >
+                  {formatPersonDays(fill.share)}人日
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </button>
   );
 }
@@ -149,6 +284,7 @@ function DropTimelineRow({
   showProject,
   label,
   sublabel,
+  peerRecordsByUser = {},
   canDrop,
   onSelectBar,
 }: {
@@ -159,6 +295,7 @@ function DropTimelineRow({
   showProject: boolean;
   label: string;
   sublabel?: string;
+  peerRecordsByUser?: Record<string, AllocationRecord[]>;
   canDrop: boolean;
   onSelectBar: (bar: ScheduleBar) => void;
 }) {
@@ -202,6 +339,7 @@ function DropTimelineRow({
               weekStart={weekStart}
               days={days}
               showProject={showProject}
+              peerRecords={peerRecordsByUser[bar.userId] ?? []}
               onSelect={() => onSelectBar(bar)}
             />
           ))}
@@ -224,10 +362,12 @@ export function ResourceTimelineScheduler({
   peerRecordsByUser = {},
 }: Props) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [activeStaffId, setActiveStaffId] = useState<string | null>(null);
   const [selectedBar, setSelectedBar] = useState<ScheduleBar | null>(null);
+  const [draftSegment, setDraftSegment] = useState<{ startDate: string; endDate: string } | null>(
+    null
+  );
 
   const weekStart = useMemo(() => new Date(weekStartIso), [weekStartIso]);
   const days = useMemo(() => buildTimelineDays(getWeekPeriod(weekStart)), [weekStart]);
@@ -255,17 +395,39 @@ export function ResourceTimelineScheduler({
     }
 
     const { startDate, endDate } = datesFromWeekDrop(weekStart);
+    const projectBars = (bars ?? []).filter((bar) => bar.userId === userId);
     setError(null);
-    startTransition(async () => {
-      const result = await createProjectAllocationFromDrag({
-        projectId,
+
+    const overlapping = findOverlappingSegment(startDate, endDate, projectBars);
+    setDraftSegment({ startDate, endDate });
+
+    if (overlapping) {
+      setSelectedBar(overlapping);
+      return;
+    }
+
+    if (projectBars.length > 0) {
+      setSelectedBar(projectBars[0]);
+      return;
+    }
+
+    const staffMember = staff.find((member) => member.id === userId);
+    if (!staffMember || !projectId || !projectName) {
+      setError("无法打开排班编辑器");
+      return;
+    }
+
+    setSelectedBar(
+      buildDraftScheduleBar({
         userId,
+        userName: staffMember.name,
+        projectId,
+        projectName,
         startDate,
         endDate,
-      });
-      if (result.error) setError(result.error);
-      else router.refresh();
-    });
+        dailyRate: staffMember.dailyRate,
+      })
+    );
   }
 
   const peerRecordsForSelected = selectedBar
@@ -301,7 +463,6 @@ export function ResourceTimelineScheduler({
       </p>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {pending ? <p className="text-sm text-muted-foreground">保存中…</p> : null}
 
       <DndContext
         sensors={sensors}
@@ -358,8 +519,12 @@ export function ResourceTimelineScheduler({
                 showProject={false}
                 label={projectName ?? "本项目"}
                 sublabel={`${bars.length} 条投入`}
+                peerRecordsByUser={peerRecordsByUser}
                 canDrop={canEdit && Boolean(projectId)}
-                onSelectBar={setSelectedBar}
+                onSelectBar={(bar) => {
+                  setDraftSegment(null);
+                  setSelectedBar(bar);
+                }}
               />
             ) : (
               rows.map((row) => (
@@ -372,8 +537,12 @@ export function ResourceTimelineScheduler({
                   showProject
                   label={row.userName}
                   sublabel={`${row.weekEffectiveDays} 人天 · ${row.weekLoadPercent}%`}
+                  peerRecordsByUser={peerRecordsByUser}
                   canDrop={false}
-                  onSelectBar={setSelectedBar}
+                  onSelectBar={(bar) => {
+                  setDraftSegment(null);
+                  setSelectedBar(bar);
+                }}
                 />
               ))
             )}
@@ -395,12 +564,17 @@ export function ResourceTimelineScheduler({
 
       {selectedBar ? (
         <AllocationEditDialog
+          key={`${selectedBar.id}-${draftSegment?.startDate ?? "view"}`}
           bar={selectedBar}
-          projectId={selectedBar.projectId}
+          projectSegments={(bars ?? []).filter((b) => b.userId === selectedBar.userId)}
           canEdit={canEdit}
           peerRecords={peerRecordsForSelected}
-          onClose={() => setSelectedBar(null)}
-          onDeleted={() => router.refresh()}
+          draftSegment={draftSegment}
+          onClose={() => {
+            setDraftSegment(null);
+            setSelectedBar(null);
+          }}
+          onSaved={() => router.refresh()}
         />
       ) : null}
     </div>

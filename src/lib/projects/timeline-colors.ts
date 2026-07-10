@@ -7,14 +7,27 @@ const PALETTE = [
   "bg-cyan-500",
   "bg-orange-500",
   "bg-indigo-500",
+  "bg-teal-500",
+  "bg-fuchsia-500",
+  "bg-lime-500",
+  "bg-sky-500",
 ] as const;
 
-export function projectColorClass(projectId: string): string {
+function hashKey(key: string, salt: string): number {
   let hash = 0;
-  for (let i = 0; i < projectId.length; i++) {
-    hash = (hash + projectId.charCodeAt(i) * (i + 1)) % 1000;
+  const input = `${salt}:${key}`;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash + input.charCodeAt(i) * (i + 1)) % 1000;
   }
-  return PALETTE[hash % PALETTE.length];
+  return hash;
+}
+
+export function projectColorClass(projectId: string): string {
+  return PALETTE[hashKey(projectId, "project") % PALETTE.length];
+}
+
+export function staffColorClass(userId: string): string {
+  return PALETTE[hashKey(userId, "staff") % PALETTE.length];
 }
 
 export function projectColorLabel(projectId: string): string {

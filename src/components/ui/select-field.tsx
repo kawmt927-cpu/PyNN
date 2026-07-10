@@ -32,7 +32,7 @@ export function SelectField({
 }: Props) {
   const controlled = value !== undefined;
   return (
-    <div className={cn("grid gap-2", className)}>
+    <div className={cn("space-y-2", className)}>
       <Label htmlFor={id} className={cn("block min-h-5 leading-5", labelClassName)}>
         {label}
       </Label>
