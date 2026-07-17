@@ -38,6 +38,8 @@ export async function POST(req: Request) {
 
     revalidatePath("/sales-log");
     revalidatePath("/today-work");
+    revalidatePath("/mobile");
+    revalidatePath("/mobile/check-in");
     revalidatePath("/follow-ups");
     if (parsed.customerId?.trim()) {
       revalidatePath(`/customers/${parsed.customerId.trim()}`);

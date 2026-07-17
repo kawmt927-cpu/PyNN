@@ -54,6 +54,8 @@ export async function PATCH(req: Request, { params }: Props) {
 
     revalidatePath("/sales-log");
     revalidatePath("/today-work");
+    revalidatePath("/mobile");
+    revalidatePath("/mobile/check-in");
     revalidatePath("/follow-ups");
     if (checkIn?.customerId) {
       revalidatePath(`/customers/${checkIn.customerId}`);
@@ -95,6 +97,8 @@ export async function DELETE(_req: Request, { params }: Props) {
 
     revalidatePath("/sales-log");
     revalidatePath("/today-work");
+    revalidatePath("/mobile");
+    revalidatePath("/mobile/check-in");
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除失败";

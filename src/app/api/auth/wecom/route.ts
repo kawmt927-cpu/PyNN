@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildOAuthUrl } from "@/lib/wecom/api";
 import { isWeComConfigured } from "@/lib/wecom/config";
 import {
-  attachWeComOAuthCookies,
   buildWeComCallbackUrl,
   createWeComOAuthState,
   sanitizeWeComReturnTo,
+  wecomFriendlyOAuthStart,
 } from "@/lib/wecom/oauth-flow";
 
 export async function GET(req: NextRequest) {
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const returnTo = sanitizeWeComReturnTo(req.nextUrl.searchParams.get("returnTo"));
   const state = createWeComOAuthState();
   const redirectUri = buildWeComCallbackUrl(req.nextUrl.origin);
+  const oauthUrl = buildOAuthUrl(redirectUri, state);
 
-  const res = NextResponse.redirect(buildOAuthUrl(redirectUri, state));
-  return attachWeComOAuthCookies(res, state, returnTo);
+  return wecomFriendlyOAuthStart(req, oauthUrl, state, returnTo);
 }

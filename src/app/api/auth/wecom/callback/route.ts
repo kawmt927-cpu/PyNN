@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   createWeComSessionCookie,
   getOAuthUserInfo,
@@ -9,11 +9,12 @@ import {
   clearWeComOAuthCookies,
   sanitizeWeComReturnTo,
   WECOM_DEFAULT_RETURN_TO,
+  wecomFriendlyRedirect,
 } from "@/lib/wecom/oauth-flow";
 
 export async function GET(req: NextRequest) {
   if (!isWeComConfigured()) {
-    return NextResponse.redirect(new URL("/login?error=wecom_not_configured", req.url));
+    return wecomFriendlyRedirect(req, "/login?error=wecom_not_configured");
   }
 
   const code = req.nextUrl.searchParams.get("code");
@@ -24,7 +25,9 @@ export async function GET(req: NextRequest) {
   );
 
   if (!code || !state || !savedState || state !== savedState) {
-    return NextResponse.redirect(new URL("/login?error=wecom_auth_failed", req.url));
+    return wecomFriendlyRedirect(req, "/login?error=wecom_auth_failed", (res) => {
+      clearWeComOAuthCookies(res);
+    });
   }
 
   try {
@@ -35,28 +38,45 @@ export async function GET(req: NextRequest) {
     });
 
     if (!user) {
-      const res = NextResponse.redirect(
-        new URL(
-          `/mobile/wecom/unbound?wecomUserId=${encodeURIComponent(userId)}`,
-          req.url
-        )
+      return wecomFriendlyRedirect(
+        req,
+        `/mobile/wecom/unbound?wecomUserId=${encodeURIComponent(userId)}`,
+        (res) => {
+          clearWeComOAuthCookies(res);
+        }
       );
-      clearWeComOAuthCookies(res);
-      return res;
     }
 
-    const destination = new URL(returnTo, req.url);
+    const destination = new URL(returnTo, resolveDestinationBase(req));
     if (autoBound) {
       destination.searchParams.set("wecom_bound", "1");
     }
 
-    const res = NextResponse.redirect(destination);
-    clearWeComOAuthCookies(res);
     const cookie = await createWeComSessionCookie(user);
-    res.cookies.set(cookie.name, cookie.value, cookie.options);
-    return res;
+    return wecomFriendlyRedirect(req, `${destination.pathname}${destination.search}`, (res) => {
+      clearWeComOAuthCookies(res);
+      res.cookies.set(cookie.name, cookie.value, cookie.options);
+    });
   } catch (error) {
     console.error("WeCom OAuth callback error:", error);
-    return NextResponse.redirect(new URL("/login?error=wecom_auth_failed", req.url));
+    const message = error instanceof Error ? error.message : String(error);
+    const errorCode = /not allow to access from your ip|60020/i.test(message)
+      ? "wecom_ip_denied"
+      : "wecom_auth_failed";
+    return wecomFriendlyRedirect(req, `/login?error=${errorCode}`, (res) => {
+      clearWeComOAuthCookies(res);
+    });
   }
+}
+
+function resolveDestinationBase(req: NextRequest) {
+  const fromEnv = process.env.NEXTAUTH_URL?.trim();
+  if (fromEnv) {
+    try {
+      return new URL(fromEnv).origin;
+    } catch {
+      // ignore
+    }
+  }
+  return req.nextUrl.origin;
 }

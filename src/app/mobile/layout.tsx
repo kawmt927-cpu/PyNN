@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
+import { MobileShell } from "@/components/mobile/mobile-shell";
 
 export const metadata: Metadata = {
-  title: "销售日志 - 培安 CRM",
+  title: "培安 CRM · 销售",
 };
 
 export const viewport: Viewport = {
@@ -14,7 +15,7 @@ export const viewport: Viewport = {
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-[100dvh] overflow-hidden bg-background">
-      {children}
+      <MobileShell>{children}</MobileShell>
     </div>
   );
 }

@@ -9,8 +9,6 @@ import { SALES_LOG_OPENING_MESSAGE } from "@/lib/agent/sales-log-prompt";
 import { useWeComSdk, isWeComClient } from "@/hooks/use-wecom-sdk";
 import { LocationButton } from "@/components/mobile/location-button";
 import { VoiceInputButton } from "@/components/mobile/voice-input-button";
-import Link from "next/link";
-
 type DailyLogStatus =
   | "IN_PROGRESS"
   | "PENDING_CONFIRM"
@@ -186,8 +184,8 @@ export default function MobileLogPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[100dvh] max-w-lg flex-col overflow-hidden bg-background">
-      <header className="shrink-0 border-b bg-card p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      <header className="shrink-0 border-b bg-card p-4 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">今日销售日志</h1>
@@ -196,16 +194,6 @@ export default function MobileLogPage() {
               {logStatus ? ` · ${STATUS_LABEL[logStatus]}` : ""}
             </p>
           </div>
-          {!inWeCom && (
-            <div className="flex gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href="/sales-log">外勤日志</Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/today-work">返回</Link>
-              </Button>
-            </div>
-          )}
         </div>
         {syncHint && (
           <p className="mt-2 rounded-md bg-green-50 px-2 py-1 text-xs text-green-700 dark:bg-green-950 dark:text-green-300">
@@ -246,10 +234,7 @@ export default function MobileLogPage() {
         <div ref={messagesEndRef} aria-hidden className="h-px shrink-0 scroll-mt-4" />
       </div>
 
-      <form
-        onSubmit={handleSend}
-        className="shrink-0 border-t bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-      >
+      <form onSubmit={handleSend} className="shrink-0 border-t bg-card p-3">
         <div className="mb-2 flex gap-2">
           <LocationButton
             disabled={isLoading}

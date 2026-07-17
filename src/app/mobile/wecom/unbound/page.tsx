@@ -71,7 +71,7 @@ export default async function WeComUnboundPage({ searchParams }: Props) {
             </Button>
             {request?.status === "APPROVED" || request?.status === "PENDING" ? (
               <Button asChild>
-                <a href="/api/auth/wecom?returnTo=/today-work">重新企微登录</a>
+                <a href="/api/auth/wecom?returnTo=/mobile">重新企微登录</a>
               </Button>
             ) : null}
           </div>

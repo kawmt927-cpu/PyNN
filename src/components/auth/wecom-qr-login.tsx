@@ -23,7 +23,7 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-export function WeComQrLogin({ returnTo = "/today-work" }: Props) {
+export function WeComQrLogin({ returnTo = "/mobile" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,12 +56,21 @@ export function WeComQrLogin({ returnTo = "/today-work" }: Props) {
         await loadScript(WECOM_WWLOGIN_SCRIPT_URL);
         if (cancelled || !containerRef.current) return;
 
-        containerRef.current.innerHTML = "";
+        // Only touch this host via DOM APIs — never put React children inside it.
+        const host = containerRef.current;
+        while (host.firstChild) {
+          host.removeChild(host.firstChild);
+        }
         const mount = document.createElement("div");
         mount.id = "wecom_qr_login";
-        containerRef.current.appendChild(mount);
+        host.appendChild(mount);
 
-        window.WwLogin?.({
+        // WwLogin is a constructor; calling without `new` breaks createFrame.
+        const WwLogin = window.WwLogin;
+        if (!WwLogin) {
+          throw new Error("企业微信登录组件未加载");
+        }
+        new WwLogin({
           id: "wecom_qr_login",
           appid: data.corpId,
           agentid: data.agentId,
@@ -87,17 +96,17 @@ export function WeComQrLogin({ returnTo = "/today-work" }: Props) {
 
   return (
     <div className="space-y-3">
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {loading && !error ? (
+        <p className="text-center text-sm text-muted-foreground">加载企业微信扫码…</p>
+      ) : null}
       <div
         ref={containerRef}
         className="flex min-h-[220px] items-center justify-center rounded-md border bg-background p-4"
-      >
-        {loading && !error ? (
-          <p className="text-sm text-muted-foreground">加载企业微信扫码…</p>
-        ) : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      </div>
+        suppressHydrationWarning
+      />
       <Button asChild variant="outline" className="w-full" type="button">
-        <a href={`/api/auth/wecom?returnTo=${encodeURIComponent(returnTo)}`}>
+        <a href={`/api/auth/wecom?returnTo=${encodeURIComponent(returnTo === "/" ? "/mobile" : returnTo)}`}>
           已在企业微信内打开？点此授权登录
         </a>
       </Button>
