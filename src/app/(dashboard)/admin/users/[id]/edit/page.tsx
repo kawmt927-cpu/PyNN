@@ -38,6 +38,7 @@ export default async function EditUserPage({ params }: Props) {
             userId={user.id}
             defaultValues={{
               name: user.name,
+              phone: user.phone,
               email: user.email,
               role: user.role,
               enabled: user.personnelProfile?.enabled ?? true,
@@ -46,6 +47,7 @@ export default async function EditUserPage({ params }: Props) {
                 ? Number(user.personnelProfile.dailyRate)
                 : null,
               wecomUserId: user.wecomUserId,
+              activated: Boolean(user.phone && user.passwordHash),
             }}
           />
         </CardContent>

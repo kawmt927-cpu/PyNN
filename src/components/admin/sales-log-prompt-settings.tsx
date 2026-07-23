@@ -51,8 +51,11 @@ export function SalesLogPromptSettings({ initial, showAiSettingsLink }: Props) {
         <p className="font-medium">销售日志 AI 助理 · 系统提示词</p>
         <p className="mt-1 text-emerald-800 dark:text-emerald-200">
           控制 <code className="rounded bg-white/60 px-1">/mobile/log</code>{" "}
-          对话中 AI 的角色、追问策略与工具使用规范。每次对话时，系统还会在提示词末尾自动追加
+          与 PC「今日日报」对话中 AI 的角色、追问策略与工具使用规范。每次对话时，系统还会在提示词末尾自动追加
           <strong> 当日工作快照</strong>（打卡、往来等），无需在此重复编写。
+        </p>
+        <p className="mt-2 text-emerald-800 dark:text-emerald-200">
+          代码里的默认提示词随发版更新；若本页为「已自定义」，线上不会自动吃到新默认，需手动粘贴同步或点「恢复默认」。
         </p>
         {showAiSettingsLink ? (
           <p className="mt-2 text-emerald-800 dark:text-emerald-200">

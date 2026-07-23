@@ -18,9 +18,12 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# 业务时区：避免 date-fns / Date 按 UTC 显示导致打卡/日报时间差 8 小时
+ENV TZ=Asia/Shanghai
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-RUN apk add --no-cache su-exec
+RUN apk add --no-cache su-exec tzdata
+RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

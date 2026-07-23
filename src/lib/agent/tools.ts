@@ -50,15 +50,18 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       ? {
           searchCustomers: tool({
             description:
-              "按名称搜索 CRM 已有客户。返回 writable：仅 writable=true 时可录入往来/完善打卡；false 表示非本人负责，禁止落库。",
+              "按名称搜索系统已有客户。返回 writable：仅 writable=true 时可录入往来/完善打卡；false 表示非本人负责，不可代录（对销售用白话说明需联系负责人）。",
             parameters: z.object({
               query: z.string().describe("客户名称关键词"),
             }),
             execute: async ({ query }) => {
-              const rows = await searchCustomersForUser(role, userId, query);
+              // 查重须扫全库并标记可写，避免「公海/他人客户」搜不到被误判为新客户
+              const rows = await searchCustomersForUser(role, userId, query, {
+                markWritable: true,
+              });
               return {
                 count: rows.length,
-                  customers: rows.map((c) => ({
+                customers: rows.map((c) => ({
                   id: c.id,
                   name: c.name,
                   category: c.category,
@@ -138,7 +141,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       : {}),
     getCustomerBrief: tool({
       description:
-        "获取客户档案简报（等级、上次往来、下次计划）。销售自述后落库或需确认等级/商机时调用，勿在开场播报。",
+        "获取客户档案简报（等级、上次往来、下次计划）。销售自述后写入或需确认等级/商机时调用，勿在开场播报。",
       parameters: z.object({
         customerId: z.string().describe("客户 ID"),
       }),
@@ -202,7 +205,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       : {}),
     createCustomer: tool({
       description:
-        "将确认过的新客户写入 CRM（含可选主联系人）。写入前须 searchCustomers 查重；若已存在则返回 existingCustomerId。",
+        "将确认过的新客户记进系统（含可选主联系人）。写入前须 searchCustomers 查重；若已存在则返回 existingCustomerId。",
       parameters: z.object({
         name: z.string().describe("客户全称"),
         category: z.enum(["HOSPITAL", "COMPANY", "INDIVIDUAL"]).describe("客户类别"),
@@ -219,7 +222,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
         customerType: z.string().describe("关系类型（配置项 value，必填）"),
         customerGrade: z
           .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
-          .describe("客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
+          .describe("客户等级：STAR_3 有意向或在建 / STAR_2 已交付 / STAR_1 短期无意向 / NONE 长期无意向"),
         notes: z.string().optional().describe("备注"),
         contactName: z.string().optional().describe("主联系人姓名"),
         contactPhone: z.string().optional().describe("主联系人电话"),
@@ -229,7 +232,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     createFollowUp: tool({
       description:
-        "为已有客户写入跟进/往来（须为该客户负责人或协助负责人，否则工具会失败）。写入前建议 searchCustomers/getCustomer 确认 writable=true。",
+        "为已有客户写入跟进/往来（须为该客户负责人或协助负责人，否则工具会失败）。仅在销售确认完整总结后调用；写入前建议 searchCustomers/getCustomer 确认 writable=true。对销售勿复述工具名或 writable。",
       parameters: z.object({
         customerId: z.string().optional().describe("客户 ID（与 customerName 二选一）"),
         customerName: z.string().optional().describe("客户名称（与 customerId 二选一）"),
@@ -238,12 +241,16 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .describe("往来方式：电话沟通/微信沟通/客户面访/其他"),
         content: z.string().describe("跟进内容摘要"),
         result: z.string().optional().describe("跟进结果/意向"),
-        followUpAt: z.string().describe("跟进时间 ISO8601，如 2026-06-20T14:30:00"),
+        followUpAt: z
+          .string()
+          .describe(
+            "跟进/拜访发生时间，ISO8601 且必须带东八区偏移，如 2026-07-18T14:30:00+08:00；禁止用 Z/UTC，禁止只写日期"
+          ),
         nextFollowUpAt: z.string().optional().describe("下次跟进时间 ISO8601"),
         suggestedGrade: z
           .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
           .optional()
-          .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
+          .describe("建议客户等级：STAR_3 有意向或在建 / STAR_2 已交付 / STAR_1 短期无意向 / NONE 长期无意向"),
       }),
       execute: async (input) => {
         try {
@@ -255,15 +262,15 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
             error: message,
             hint:
               message.includes("无权")
-                ? "该客户非本人负责，勿重复落库；可写入日报说明，或请销售联系负责人。"
-                : "请核对客户与必填字段后重试。",
+                ? "该客户非本人负责，勿重复写入；可写入日报说明，或请销售联系负责人（对销售勿提技术术语）。"
+                : "请核对客户与必填信息后重试。",
           };
         }
       },
     }),
     submitDailyLog: tool({
       description:
-        "提交今日销售日报。调用前必须已从销售处获得合格明日计划（具体事项+预计成果）；「待安排」「继续跟进」等会被拒绝。销售确认日报内容后再调用。",
+        "提交今日销售日报。仅在销售已在对话中确认完整总结（含今日总结+明日计划）后调用；须先有合格明日计划（具体事项+预计成果），「待安排」「继续跟进」等会被拒绝。禁止在未展示总结并获确认前调用。",
       parameters: z.object({
         dailyReport: z.string().describe("今日日报 Markdown 正文"),
         tomorrowPlan: z
@@ -283,7 +290,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
             success: false,
             error: message,
             hint: message.includes("明日计划")
-              ? "不要提交。先向销售追问明日具体做什么、预计拿到什么结果，合格后再调用本工具。"
+              ? "不要提交。先收齐明日计划，发出完整总结供销售确认，确认后再调用本工具。"
               : "请修正日报内容后重试。",
           };
         }
@@ -325,7 +332,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     completeCheckIn: tool({
       description:
-        "将今日关联客户的打卡记录完善为正式往来跟进。调用前务必先用 listTodayCheckIns 取得最新 checkInId；无客户打卡勿用。面访打卡默认 method=FACE_VISIT。",
+        "将今日关联客户的打卡记录完善为正式往来跟进。仅在销售确认完整总结后调用；调用前务必先用 listTodayCheckIns 取得最新 checkInId；无客户打卡勿用。面访打卡默认 method=FACE_VISIT。对销售勿复述工具名。",
       parameters: z.object({
         checkInId: z.string().describe("listTodayCheckIns 返回的 id 字段，勿编造或复用过期 ID"),
         method: z
@@ -333,12 +340,17 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           .describe("往来方式"),
         content: z.string().describe("往来内容"),
         result: z.string().optional().describe("结果/意向"),
-        followUpAt: z.string().optional().describe("往来时间 ISO8601，默认打卡时间"),
-        nextFollowUpAt: z.string().optional().describe("下次跟进时间"),
+        followUpAt: z
+          .string()
+          .optional()
+          .describe(
+            "往来时间，东八区 ISO8601（如 2026-07-18T14:30:00+08:00）；默认用打卡时间。须为实际拜访时刻"
+          ),
+        nextFollowUpAt: z.string().optional().describe("下次跟进时间，东八区 ISO8601"),
         suggestedGrade: z
           .enum(["STAR_3", "STAR_2", "STAR_1", "NONE"])
           .optional()
-          .describe("建议客户等级：STAR_3 三星 / STAR_2 两星 / STAR_1 一星 / NONE 未评级"),
+          .describe("建议客户等级：STAR_3 有意向或在建 / STAR_2 已交付 / STAR_1 短期无意向 / NONE 长期无意向"),
       }),
       execute: async (input) => {
         try {
@@ -348,7 +360,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
           return {
             success: false,
             error: message,
-            hint: "请先调用 listTodayCheckIns 获取最新 checkInId 后重试；若已完善可继续下一条或提交日报。若提示无权，说明该客户非本人负责，勿重复落库。",
+            hint: "请先调用 listTodayCheckIns 获取最新 checkInId 后重试；若已完善可继续下一条或提交日报。若提示无权，说明该客户非本人负责，勿重复写入；对销售用白话说明。",
           };
         }
       },

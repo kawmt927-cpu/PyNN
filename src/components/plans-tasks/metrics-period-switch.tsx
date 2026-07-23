@@ -7,15 +7,18 @@ import { metricsYearOptions } from "@/lib/plans-tasks/metrics-scope";
 
 type SalesUser = { id: string; name: string };
 
-function buildPlansTasksUrl(params: {
+function buildMetricsNavUrl(params: {
   period: MetricsPeriod;
   subject?: AnnualSubject;
   monthlyUserId?: string;
   year?: number;
   month?: number;
 }) {
+  const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
-  search.set("tab", "dashboard");
+  if (path.startsWith("/plans-tasks")) {
+    search.set("tab", "dashboard");
+  }
   search.set("period", params.period);
   if (params.period === "annual") {
     if (params.subject && params.subject !== "team") {
@@ -35,7 +38,7 @@ function buildPlansTasksUrl(params: {
   if (params.period === "monthly" && params.month != null) {
     search.set("month", String(params.month));
   }
-  return `/plans-tasks?${search.toString()}`;
+  return `${path}?${search.toString()}`;
 }
 
 function readYearMonthFromSearch(search: URLSearchParams) {
@@ -57,7 +60,7 @@ export function MetricsPeriodSwitch({ period }: { period: MetricsPeriod }) {
     const year = Number.parseInt(search.get("year") ?? "", 10);
     const month = Number.parseInt(search.get("month") ?? "", 10);
     router.replace(
-      buildPlansTasksUrl({
+      buildMetricsNavUrl({
         period: next,
         subject: next === "annual" ? subject : undefined,
         monthlyUserId,
@@ -119,26 +122,35 @@ export function MetricsTimeSelect({
   month,
   nowYear,
   nowMonth,
+  recentYearsOnly = false,
 }: {
   period: MetricsPeriod;
   year: number;
   month: number;
   nowYear: number;
   nowMonth: number;
+  /** 手机端：仅今年与去年 */
+  recentYearsOnly?: boolean;
 }) {
   const router = useRouter();
-  const yearOptions = metricsYearOptions(new Date(nowYear, nowMonth - 1, 1));
+  const yearOptions = recentYearsOnly
+    ? [nowYear, nowYear - 1]
+    : metricsYearOptions(new Date(nowYear, nowMonth - 1, 1));
+  const effectiveYear = yearOptions.includes(year) ? year : nowYear;
 
   function navigate(nextYear: number, nextMonth: number) {
+    const path = window.location.pathname;
     const search = new URLSearchParams(window.location.search);
-    search.set("tab", "dashboard");
+    if (path.startsWith("/plans-tasks")) {
+      search.set("tab", "dashboard");
+    }
     search.set("year", String(nextYear));
     if (period === "monthly") {
       search.set("month", String(nextMonth));
     } else {
       search.delete("month");
     }
-    router.replace(`/plans-tasks?${search.toString()}`, { scroll: false });
+    router.replace(`${path}?${search.toString()}`, { scroll: false });
   }
 
   function handleYearChange(nextYear: number) {
@@ -153,7 +165,7 @@ export function MetricsTimeSelect({
     period === "monthly"
       ? MONTH_LABELS.map((label, index) => {
           const value = index + 1;
-          const disabled = year === nowYear && value > nowMonth;
+          const disabled = effectiveYear === nowYear && value > nowMonth;
           return { value, label, disabled };
         })
       : [];
@@ -162,7 +174,7 @@ export function MetricsTimeSelect({
     <div className="flex flex-wrap items-center gap-2">
       <select
         id="metrics-year"
-        value={year}
+        value={effectiveYear}
         aria-label="年份"
         onChange={(e) => handleYearChange(Number.parseInt(e.target.value, 10))}
         className="flex h-10 min-w-[6.5rem] rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -178,7 +190,7 @@ export function MetricsTimeSelect({
           id="metrics-month"
           value={month}
           aria-label="月份"
-          onChange={(e) => navigate(year, Number.parseInt(e.target.value, 10))}
+          onChange={(e) => navigate(effectiveYear, Number.parseInt(e.target.value, 10))}
           className="flex h-10 min-w-[5.5rem] rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
           {monthOptions.map((option) => (
@@ -198,11 +210,13 @@ export function SalesMetricsTimeSelect({
   month,
   nowYear,
   nowMonth,
+  recentYearsOnly = false,
 }: {
   year: number;
   month: number;
   nowYear: number;
   nowMonth: number;
+  recentYearsOnly?: boolean;
 }) {
   return (
     <MetricsTimeSelect
@@ -211,38 +225,40 @@ export function SalesMetricsTimeSelect({
       month={month}
       nowYear={nowYear}
       nowMonth={nowMonth}
+      recentYearsOnly={recentYearsOnly}
     />
   );
 }
 
 export function AnnualSubjectSelect({
   value,
-  salesUsers,
+  regularSalesUsers,
+  showOthers = false,
   onChange,
 }: {
   value: AnnualSubject;
-  salesUsers: SalesUser[];
+  /** 仅普通销售（逐人查看） */
+  regularSalesUsers: SalesUser[];
+  /** 是否显示「其他」（非普通销售合计） */
+  showOthers?: boolean;
   onChange: (subject: AnnualSubject) => void;
 }) {
   return (
-    <div className="space-y-2 min-w-[160px]">
-      <label htmlFor="annual-subject" className="text-sm font-medium leading-none">
-        查看对象
-      </label>
-      <select
-        id="annual-subject"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-      >
-        <option value="team">团队汇总</option>
-        {salesUsers.map((user) => (
-          <option key={user.id} value={user.id}>
-            {user.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    <select
+      id="annual-subject"
+      aria-label="查看对象"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="flex h-10 min-w-[160px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+    >
+      <option value="team">团队汇总</option>
+      {regularSalesUsers.map((user) => (
+        <option key={user.id} value={user.id}>
+          {user.name}
+        </option>
+      ))}
+      {showOthers ? <option value="others">其他</option> : null}
+    </select>
   );
 }
 
@@ -254,29 +270,26 @@ export function PersonSelect({
   onChange,
 }: {
   id: string;
-  label: string;
+  /** 可见标签；不传则仅用 aria-label */
+  label?: string;
   value: string;
   salesUsers: SalesUser[];
   onChange: (userId: string) => void;
 }) {
   return (
-    <div className="space-y-2 max-w-xs">
-      <label htmlFor={id} className="text-sm font-medium leading-none">
-        {label}
-      </label>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-      >
-        {salesUsers.map((user) => (
-          <option key={user.id} value={user.id}>
-            {user.name}
-          </option>
-        ))}
-      </select>
-    </div>
+    <select
+      id={id}
+      aria-label={label ?? "查看销售"}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="flex h-10 min-w-[160px] max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+    >
+      {salesUsers.map((user) => (
+        <option key={user.id} value={user.id}>
+          {user.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -288,7 +301,7 @@ export function useMetricsNavigation() {
     const monthlyUserId = search.get("monthlyUserId") ?? undefined;
     const { year, month } = readYearMonthFromSearch(search);
     router.replace(
-      buildPlansTasksUrl({ period: "annual", subject, monthlyUserId, year, month }),
+      buildMetricsNavUrl({ period: "annual", subject, monthlyUserId, year, month }),
       { scroll: false }
     );
   }
@@ -297,7 +310,7 @@ export function useMetricsNavigation() {
     const search = new URLSearchParams(window.location.search);
     const { year, month } = readYearMonthFromSearch(search);
     router.replace(
-      buildPlansTasksUrl({ period: "monthly", monthlyUserId, year, month }),
+      buildMetricsNavUrl({ period: "monthly", monthlyUserId, year, month }),
       { scroll: false }
     );
   }

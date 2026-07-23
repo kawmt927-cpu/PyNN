@@ -32,10 +32,15 @@ import {
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/opportunities/status";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
-import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
+import { assertCustomerGrade } from "@/lib/customers/grade";
+import {
+  enforceCustomerTypeForCategory,
+  requireCustomerGradeForType,
+} from "@/lib/customers/customer-type-grade";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -82,24 +87,37 @@ function parseCustomerForm(formData: FormData) {
 }
 
 async function validateCustomerConfigFields(data: {
+  category: string;
   source?: string | null;
   customerType?: string | null;
   customerGrade?: string | null;
 }) {
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  if (!data.customerType?.trim()) {
+  const { CONFIG_CATEGORY, assertConfigValue, getConfigOptions } = await import(
+    "@/lib/config-options"
+  );
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+  const enforcedType = enforceCustomerTypeForCategory(
+    data.category,
+    data.customerType,
+    typeOptions
+  );
+  if (!enforcedType) {
     throw new Error("请选择关系类型");
   }
+  const customerType = await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, enforcedType);
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
-    customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: requireCustomerGrade(data.customerGrade),
+    customerType,
+    customerGrade: requireCustomerGradeForType(customerType, data.customerGrade, typeOptions),
   };
 }
 
-function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
+async function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
   if (role === "SALES") return userId;
-  if (canManageOpportunityOwner(role) && ownerId) return ownerId;
+  if (canManageOpportunityOwner(role) && ownerId) {
+    await assertSelectableSalesOwner(role, userId, ownerId);
+    return ownerId;
+  }
   return userId;
 }
 
@@ -128,7 +146,7 @@ async function resolveCustomerId(
 
   const data = parseCustomerForm(formData);
   const configFields = await validateCustomerConfigFields(data);
-  const ownerId = resolveOwnerId(role, userId, data.ownerId);
+  const ownerId = await resolveOwnerId(role, userId, data.ownerId);
 
   await assertCustomerNameAvailable(data.name);
 
@@ -178,7 +196,7 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
     if (!stage) throw new Error("请选择商机阶段");
 
     const customerId = await resolveCustomerId(formData, session.user.role, session.user.id);
-    const ownerId = resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
+    const ownerId = await resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
 
     const opportunity = await prisma.$transaction(async (tx) => {
       const created = await tx.opportunity.create({
@@ -208,6 +226,18 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
 
     revalidatePath("/opportunities");
     revalidatePath("/customers");
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: opportunity.id,
+      userId: session.user.id,
+      action: "创建",
+      summary: `创建商机「${opportunity.title}」`,
+    });
+
     return { redirectTo: `/opportunities/${opportunity.id}` };
   } catch (error) {
     return formatActionError(error);
@@ -233,7 +263,7 @@ export async function updateOpportunity(id: string, formData: FormData): Promise
     const stage = await assertConfigValue(CONFIG_CATEGORY.OPPORTUNITY_STAGE, parsed.stage);
     if (!stage) throw new Error("请选择商机阶段");
 
-    const ownerId = resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
+    const ownerId = await resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
     const stageLabels = (await getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]))[
       CONFIG_CATEGORY.OPPORTUNITY_STAGE
     ] ?? {};
@@ -291,6 +321,21 @@ export async function updateOpportunity(id: string, formData: FormData): Promise
 
     revalidatePath("/opportunities");
     revalidatePath(`/opportunities/${id}`);
+
+    if (changes.length > 0) {
+      const { recordEntityOperation, ENTITY_TYPES } = await import(
+        "@/lib/audit/entity-operation-log"
+      );
+      await recordEntityOperation({
+        entityType: ENTITY_TYPES.OPPORTUNITY,
+        entityId: id,
+        userId: session.user.id,
+        action: "更新",
+        summary: `更新商机「${parsed.title.trim()}」`,
+        detail: changes.join("；"),
+      });
+    }
+
     return { redirectTo: `/opportunities/${id}` };
   } catch (error) {
     return formatActionError(error);

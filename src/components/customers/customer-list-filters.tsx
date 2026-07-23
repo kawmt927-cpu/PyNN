@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CUSTOMER_CATEGORY_LABELS } from "@/lib/permissions";
+import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissions";
 import {
   buildCustomerListHref,
   hasActiveCustomerListFilters,
@@ -16,9 +16,9 @@ import { withReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getCustomerGradeOptions } from "@/lib/customers/grade";
 import { CustomerTagFilterSelect } from "@/components/customers/customer-tag-filter-select";
 import { CustomerRegionFilter } from "@/components/customers/customer-region-filter";
+import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 
 type SalesOption = { id: string; name: string };
 
@@ -28,6 +28,7 @@ type Props = {
   view: CustomerListView;
   filters: CustomerListFilters;
   typeOptions: ConfigOptionItem[];
+  gradeOptions?: ConfigOptionItem[];
   tagOptions?: CustomerTagDefinition[];
   showOwnerFilter?: boolean;
   salesUsers?: SalesOption[];
@@ -41,6 +42,7 @@ const EMPTY_FILTERS: CustomerListFilters = {
   category: "",
   customerType: "",
   customerGrade: "",
+  hospitalLevel: "",
   ownerId: "",
   tags: [],
   province: "",
@@ -89,6 +91,7 @@ function buildSuggestQuery(view: CustomerListView, filters: CustomerListFilters)
   if (filters.category) params.set("category", filters.category);
   if (filters.customerType) params.set("type", filters.customerType);
   if (filters.customerGrade) params.set("grade", filters.customerGrade);
+  if (filters.hospitalLevel) params.set("hospitalLevel", filters.hospitalLevel);
   if (filters.ownerId) params.set("ownerId", filters.ownerId);
   if (filters.tags.length) params.set("tags", filters.tags.join(","));
   return params.toString();
@@ -98,6 +101,7 @@ export function CustomerListFilters({
   view,
   filters,
   typeOptions,
+  gradeOptions = [],
   tagOptions = [],
   showOwnerFilter = false,
   salesUsers = [],
@@ -197,7 +201,10 @@ export function CustomerListFilters({
     ...Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
   ];
   const typeFilterOptions = [{ value: "", label: "全部关系类型" }, ...typeOptions];
-  const gradeFilterOptions = [{ value: "", label: "全部等级" }, ...getCustomerGradeOptions()];
+  const hospitalLevelOptions = [
+    { value: "", label: "全部医院等级" },
+    ...Object.entries(HOSPITAL_LEVEL_LABELS).map(([value, label]) => ({ value, label })),
+  ];
   const ownerOptions = [
     { value: "", label: "全部负责人" },
     { value: "pool", label: "公海池" },
@@ -205,6 +212,7 @@ export function CustomerListFilters({
   ];
 
   const showDropdown = suggestOpen && q.trim().length > 0;
+  const showHospitalLevelFilter = filters.category === "HOSPITAL";
 
   return (
     <div ref={rootRef} className="space-y-3 border-b pb-4">
@@ -249,13 +257,6 @@ export function CustomerListFilters({
           )}
         </div>
         <FilterSelect
-          id="customer-category"
-          label="类别"
-          value={filters.category}
-          onChange={(category) => applyFilters(withLocalQ({ category }))}
-          options={categoryOptions}
-        />
-        <FilterSelect
           id="customer-type"
           label="关系类型"
           value={filters.customerType}
@@ -263,11 +264,37 @@ export function CustomerListFilters({
           options={typeFilterOptions}
         />
         <FilterSelect
+          id="customer-category"
+          label="类别"
+          value={filters.category}
+          onChange={(category) =>
+            applyFilters(
+              withLocalQ({
+                category,
+                hospitalLevel: category === "HOSPITAL" ? filters.hospitalLevel : "",
+              })
+            )
+          }
+          options={categoryOptions}
+        />
+        {showHospitalLevelFilter ? (
+          <FilterSelect
+            id="customer-hospital-level"
+            label="医院等级"
+            value={filters.hospitalLevel}
+            onChange={(hospitalLevel) => applyFilters(withLocalQ({ hospitalLevel }))}
+            options={hospitalLevelOptions}
+          />
+        ) : null}
+        <CustomerGradeSelect
           id="customer-grade"
+          name=""
           label="等级"
           value={filters.customerGrade}
-          onChange={(customerGrade) => applyFilters(withLocalQ({ customerGrade }))}
-          options={gradeFilterOptions}
+          onValueChange={(customerGrade) => applyFilters(withLocalQ({ customerGrade }))}
+          allowEmpty
+          emptyLabel="全部等级"
+          options={gradeOptions}
         />
         <CustomerTagFilterSelect
           id="customer-tags"

@@ -1,6 +1,5 @@
 import { requireRole } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
-import { canManageCustomerOwner } from "@/lib/customers/access";
+import { canManageCustomerOwner, listCustomerAssignableUsers } from "@/lib/customers/access";
 import { loadCustomerFormOptions } from "@/lib/config-options";
 import { CustomerForm } from "@/components/customers/customer-form";
 import { BackLink } from "@/components/navigation/back-link";
@@ -18,17 +17,11 @@ export default async function CustomersNewPage({ searchParams }: Props) {
 
   const salesUsers =
     showOwnerSelect || session.user.role === "SALES"
-      ? await prisma.user.findMany({
-          where: {
-            role: { in: ["SALES", "SALES_MANAGER"] },
-            personnelProfile: { enabled: true },
-          },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
+      ? await listCustomerAssignableUsers()
       : [];
 
-  const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
+  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions } =
+    await loadCustomerFormOptions();
 
   return (
     <div className="space-y-6">
@@ -45,6 +38,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
+        channelGradeOptions={channelGradeOptions}
         tagOptions={tagOptions}
       />
     </div>

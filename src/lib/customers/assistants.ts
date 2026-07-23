@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { CUSTOMER_ASSIGNABLE_ROLES } from "@/lib/customers/access";
+import { enabledSalesTeamMemberWhere } from "@/lib/sales/selectable-users";
 
 export async function replaceCustomerAssistants(
   customerId: string,
@@ -11,13 +13,12 @@ export async function replaceCustomerAssistants(
     const users = await prisma.user.findMany({
       where: {
         id: { in: uniqueIds },
-        role: { in: ["SALES", "SALES_MANAGER"] },
-        personnelProfile: { enabled: true },
+        ...enabledSalesTeamMemberWhere(CUSTOMER_ASSIGNABLE_ROLES),
       },
       select: { id: true },
     });
     if (users.length !== uniqueIds.length) {
-      throw new Error("协助负责人无效");
+      throw new Error("协助负责人无效或已停用");
     }
   }
 

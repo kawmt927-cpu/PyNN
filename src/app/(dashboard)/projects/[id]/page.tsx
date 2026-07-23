@@ -8,23 +8,26 @@ import { BackLink } from "@/components/navigation/back-link";
 import { ProjectTabs } from "@/components/projects/project-tabs";
 import { CostSummaryCards } from "@/components/projects/cost-summary-cards";
 import { ProjectOverviewForm } from "@/components/projects/project-overview-form";
-import { PhaseListPanel } from "@/components/projects/phase-list-panel";
+import { ProjectPlanPanel } from "@/components/projects/project-plan-panel";
 import { canManageProject, buildProjectListWhere } from "@/lib/projects/access";
 import { getProjectCostSummary } from "@/lib/projects/cost-summary";
+import { clearActualStartIfNoAllocations } from "@/lib/projects/project-actual-dates";
 import { buildScheduleModuleHref } from "@/lib/projects/timeline";
 import { PROJECT_STATUS_LABELS, ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { PROJECT_TABS, parseProjectTab } from "@/lib/validations/project";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { formatLocalDateInput } from "@/lib/dates/local-date";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; taskId?: string }>;
 };
 
 export default async function ProjectDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { tab: rawTab } = await searchParams;
+  const { tab: rawTab, taskId: rawTaskId } = await searchParams;
   const activeTab = parseProjectTab(rawTab);
+  const initialTaskId = rawTaskId?.trim() || null;
 
   const session = await requireRole([
     "PROJECT_ADMIN",
@@ -39,24 +42,151 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
       customer: { select: { id: true, name: true } },
       projectManager: { select: { name: true } },
       contract: { select: { id: true, title: true, totalAmount: true } },
-      phases: { orderBy: { sortOrder: "asc" } },
+      phases: {
+        orderBy: { sortOrder: "asc" },
+        include: {
+          projectTasks: {
+            orderBy: { sortOrder: "asc" },
+            include: { assignee: { select: { id: true, name: true } } },
+          },
+        },
+      },
     },
   });
 
   if (!project) notFound();
 
   const canEdit = canManageProject(session.user.role, session.user.id, project);
-  const costSummary = await getProjectCostSummary(project.id);
+  // 无人力投入时不应保留实际开始（历史误填常等于计划开始）
+  if (project.actualStartAt) {
+    const cleared = await clearActualStartIfNoAllocations(project.id);
+    if (cleared) project.actualStartAt = null;
+  }
+  const [costSummary, projectModels, allocationUsers, sourceModelPhases] = await Promise.all([
+    getProjectCostSummary(project.id),
+    activeTab === "plan"
+      ? prisma.projectModel.findMany({
+          where: { enabled: true },
+          orderBy: { name: "asc" },
+          select: {
+            id: true,
+            name: true,
+            totalDurationDays: true,
+            _count: { select: { phases: true } },
+          },
+        })
+      : Promise.resolve([]),
+    activeTab === "plan"
+      ? prisma.projectStaffAllocation.findMany({
+          where: { projectId: project.id },
+          distinct: ["userId"],
+          select: {
+            user: { select: { id: true, name: true } },
+          },
+        })
+      : Promise.resolve([]),
+    activeTab === "plan" && project.sourceModelId
+      ? prisma.projectModelPhase.findMany({
+          where: { modelId: project.sourceModelId },
+          select: {
+            id: true,
+            tasks: {
+              orderBy: { sortOrder: "asc" },
+              select: { id: true, name: true, durationDays: true },
+            },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
 
   const scheduleHref = buildScheduleModuleHref({
     view: "detail",
     project: project.id,
   });
 
+  const templateTasksByPhaseId: Record<
+    string,
+    Array<{ id: string; name: string; durationDays: number }>
+  > = {};
+  for (const modelPhase of sourceModelPhases) {
+    templateTasksByPhaseId[modelPhase.id] = modelPhase.tasks;
+  }
+
+  const assignees = allocationUsers.map((row) => row.user);
+
   const tabs = PROJECT_TABS.map((tab) => ({
     ...tab,
     href: `/projects/${project.id}?tab=${tab.id}`,
   }));
+
+  if (activeTab === "plan") {
+    return (
+      <div className="flex h-screen flex-col">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
+          <div className="flex min-w-0 items-center gap-4">
+            <Button variant="outline" size="sm" className="h-8 shrink-0" asChild>
+              <Link href={`/projects/${project.id}?tab=overview`}>返回概览</Link>
+            </Button>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold">项目计划 · {project.name}</h1>
+              <p className="truncate text-xs text-muted-foreground">
+                {project.customer?.name ?? "内部项目"}
+                {project.plannedStartAt && project.plannedEndAt
+                  ? ` · ${formatLocalDateInput(project.plannedStartAt)} ~ ${formatLocalDateInput(project.plannedEndAt)}`
+                  : " · 未设置计划起止"}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8" asChild>
+              <Link href="/projects">项目列表</Link>
+            </Button>
+          </div>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col p-3">
+          <ProjectPlanPanel
+            projectId={project.id}
+            canEdit={canEdit}
+            plannedStartAt={project.plannedStartAt}
+            plannedEndAt={project.plannedEndAt}
+            scheduleHref={scheduleHref}
+            initialTaskId={initialTaskId}
+            assignees={assignees}
+            templateTasksByPhaseId={templateTasksByPhaseId}
+            projectModels={projectModels.map((model) => ({
+              id: model.id,
+              name: model.name,
+              phaseCount: model._count.phases,
+              totalDurationDays: model.totalDurationDays,
+            }))}
+            phases={project.phases.map((phase) => ({
+              id: phase.id,
+              name: phase.name,
+              sortOrder: phase.sortOrder,
+              progressWeight: phase.progressWeight,
+              status: phase.status,
+              plannedStartAt: phase.plannedStartAt,
+              plannedEndAt: phase.plannedEndAt,
+              sourceModelPhaseId: phase.sourceModelPhaseId,
+              tasks: phase.projectTasks.map((task) => ({
+                id: task.id,
+                name: task.name,
+                description: task.description,
+                status: task.status,
+                plannedStartAt: task.plannedStartAt,
+                plannedEndAt: task.plannedEndAt,
+                actualCompletedAt: task.actualCompletedAt,
+                cancelledNote: task.cancelledNote,
+                sortOrder: task.sortOrder,
+                assigneeId: task.assigneeId,
+                assigneeName: task.assignee?.name ?? null,
+              })),
+            }))}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -66,9 +196,13 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
           <h1 className="text-2xl font-bold">{project.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             客户：
-            <Link href={`/customers/${project.customer.id}`} className="hover:underline">
-              {project.customer.name}
-            </Link>
+            {project.customer ? (
+              <Link href={`/customers/${project.customer.id}`} className="hover:underline">
+                {project.customer.name}
+              </Link>
+            ) : (
+              <span>内部/独立项目</span>
+            )}
             {project.projectManager ? ` · 项目经理：${project.projectManager.name}` : ""}
             {` · ${PROJECT_STATUS_LABELS[project.status]}`}
           </p>
@@ -97,6 +231,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
               <ProjectOverviewForm
                 projectId={project.id}
                 canEdit={canEdit}
+                phaseCount={project.phases.length}
                 defaultValues={{
                   status: project.status,
                   progressPercent: project.progressPercent,
@@ -147,30 +282,6 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
             </CardContent>
           </Card>
         </div>
-      ) : null}
-
-      {activeTab === "phases" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">项目阶段</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <PhaseListPanel
-              projectId={project.id}
-              canEdit={canEdit}
-              phases={project.phases.map((phase) => ({
-                id: phase.id,
-                name: phase.name,
-                sortOrder: phase.sortOrder,
-                parallelGroup: phase.parallelGroup,
-                status: phase.status,
-                plannedAt: phase.plannedAt,
-                completedAt: phase.completedAt,
-                sourceProduct: phase.sourceProduct,
-              }))}
-            />
-          </CardContent>
-        </Card>
       ) : null}
 
       {activeTab === "schedule" ? (

@@ -26,6 +26,8 @@ type Props = {
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
+  /** 仅医院客户显示科室/部门 */
+  showDepartment?: boolean;
   embedded?: boolean;
 };
 
@@ -37,6 +39,7 @@ export function ContactForm({
   titleOptions,
   departmentOptions,
   roleOptions,
+  showDepartment = true,
   embedded = false,
 }: Props) {
   const router = useRouter();
@@ -91,14 +94,18 @@ export function ContactForm({
           defaultValue={contact?.title ?? ""}
           placeholder="选择或输入职务"
         />
-        <ComboboxField
-          id="contact-dept"
-          label="科室/部门"
-          name="department"
-          options={departmentOptions}
-          defaultValue={contact?.department ?? ""}
-          placeholder="选择或输入科室/部门"
-        />
+        {showDepartment ? (
+          <ComboboxField
+            id="contact-dept"
+            label="科室/部门"
+            name="department"
+            options={departmentOptions}
+            defaultValue={contact?.department ?? ""}
+            placeholder="选择或输入科室/部门"
+          />
+        ) : (
+          <input type="hidden" name="department" value="" />
+        )}
         <div className="space-y-2">
           <Label htmlFor="contact-phone" className={fieldLabelClass}>
             手机

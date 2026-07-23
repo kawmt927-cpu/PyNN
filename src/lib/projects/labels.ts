@@ -1,4 +1,4 @@
-import { AllocationMode, PersonnelType, PhaseStatus, ProjectStatus } from "@prisma/client";
+import { AllocationMode, PersonnelType, PhaseStatus, ProjectStatus, ProjectTaskStatus } from "@prisma/client";
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   PENDING_START: "待启动",
@@ -13,6 +13,12 @@ export const PHASE_STATUS_LABELS: Record<PhaseStatus, string> = {
   IN_PROGRESS: "进行中",
   COMPLETED: "已完成",
   BLOCKED: "阻塞",
+};
+
+export const PROJECT_TASK_STATUS_LABELS: Record<ProjectTaskStatus, string> = {
+  NOT_STARTED: "未开始",
+  IN_PROGRESS: "进行中",
+  COMPLETED: "已完成",
 };
 
 export const PERSONNEL_TYPE_LABELS: Record<PersonnelType, string> = {

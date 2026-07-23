@@ -6,6 +6,7 @@ import {
   getCustomerGradeLabel,
   normalizeCustomerGrade,
 } from "@/lib/customers/grade";
+import type { CustomerGradeTone } from "@/lib/customers/customer-type-grade";
 
 type Props = {
   grade: string | null | undefined;
@@ -16,13 +17,28 @@ type Props = {
   description?: string | null;
   /** 批量传入配置描述，便于列表页 */
   labelMap?: Record<string, string>;
+  /** 直接客户琥珀星 / 渠道蓝星 */
+  tone?: CustomerGradeTone;
 };
 
-export function GradeStars({ count, size }: { count: number; size: "sm" | "md" }) {
+const TONE_STAR_CLASS: Record<CustomerGradeTone, string> = {
+  amber: "text-amber-500",
+  blue: "text-blue-500",
+};
+
+export function GradeStars({
+  count,
+  size,
+  tone = "amber",
+}: {
+  count: number;
+  size: "sm" | "md";
+  tone?: CustomerGradeTone;
+}) {
   const iconClass = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
 
   return (
-    <span className="inline-flex items-center gap-0.5 text-amber-500" aria-hidden>
+    <span className={cn("inline-flex items-center gap-0.5", TONE_STAR_CLASS[tone])} aria-hidden>
       {Array.from({ length: count }).map((_, index) => (
         <Star key={index} className={cn(iconClass, "fill-current")} />
       ))}
@@ -30,10 +46,17 @@ export function GradeStars({ count, size }: { count: number; size: "sm" | "md" }
   );
 }
 
-export function GradeUnrated({ size }: { size: "sm" | "md" }) {
+export function GradeUnrated({
+  size,
+  tone = "amber",
+}: {
+  size: "sm" | "md";
+  tone?: CustomerGradeTone;
+}) {
   const iconClass = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
+  const emptyClass = tone === "blue" ? "text-blue-300" : "text-muted-foreground";
 
-  return <Star className={cn(iconClass, "text-muted-foreground")} aria-hidden />;
+  return <Star className={cn(iconClass, emptyClass)} aria-hidden />;
 }
 
 /** 仅星级图形，不含文字标签 */
@@ -41,10 +64,12 @@ export function CustomerGradeVisual({
   grade,
   size = "md",
   className,
+  tone = "amber",
 }: {
   grade: string | null | undefined;
   size?: "sm" | "md";
   className?: string;
+  tone?: CustomerGradeTone;
 }) {
   const normalized = normalizeCustomerGrade(grade);
   if (!normalized) return null;
@@ -54,9 +79,9 @@ export function CustomerGradeVisual({
   return (
     <span className={cn("inline-flex items-center", className)}>
       {normalized === CUSTOMER_GRADE.NONE ? (
-        <GradeUnrated size={size} />
+        <GradeUnrated size={size} tone={tone} />
       ) : option?.starCount ? (
-        <GradeStars count={option.starCount} size={size} />
+        <GradeStars count={option.starCount} size={size} tone={tone} />
       ) : null}
     </span>
   );
@@ -78,12 +103,14 @@ export function CustomerGradeDisplay({
   labelMap,
   size = "md",
   className,
+  tone = "amber",
 }: {
   grade: string | null | undefined;
   description?: string | null;
   labelMap?: Record<string, string>;
   size?: "sm" | "md";
   className?: string;
+  tone?: CustomerGradeTone;
 }) {
   const normalized = normalizeCustomerGrade(grade);
   if (!normalized) return null;
@@ -92,7 +119,7 @@ export function CustomerGradeDisplay({
 
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>
-      <CustomerGradeVisual grade={normalized} size={size} />
+      <CustomerGradeVisual grade={normalized} size={size} tone={tone} />
       {text ? <span className="truncate text-sm text-muted-foreground">{text}</span> : null}
     </span>
   );
@@ -105,6 +132,7 @@ export function CustomerGradeIcon({
   className,
   description,
   labelMap,
+  tone = "amber",
 }: Props) {
   const normalized = normalizeCustomerGrade(grade);
   if (!normalized) {
@@ -118,7 +146,7 @@ export function CustomerGradeIcon({
       className={cn("group/grade relative inline-flex items-center gap-1.5", className)}
       aria-label={text ?? "客户等级"}
     >
-      <CustomerGradeVisual grade={normalized} size={size} />
+      <CustomerGradeVisual grade={normalized} size={size} tone={tone} />
       {showLabel && text ? (
         <span className="text-sm text-muted-foreground">{text}</span>
       ) : text ? (

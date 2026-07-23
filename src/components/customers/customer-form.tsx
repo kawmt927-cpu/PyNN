@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,8 +15,21 @@ import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissio
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { createCustomer, updateCustomer } from "@/app/(dashboard)/customers/actions";
 import type { ConfigOptionItem } from "@/lib/config-options";
-import type { ActionResult } from "@/lib/action-result";
+import {
+  asUserFacingError,
+  toUserFacingActionError,
+  type ActionResult,
+  type UserFacingActionError,
+} from "@/lib/action-result";
+import { ActionErrorDisplay } from "@/components/ui/action-error-display";
 import type { CustomerCategory, HospitalLevel } from "@prisma/client";
+import {
+  categoryLocksToDirectCustomer,
+  customerTypeRequiresGrade,
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveDirectCustomerTypeValue,
+} from "@/lib/customers/customer-type-grade";
 import { cn } from "@/lib/utils";
 import {
   applyCustomerKimiEnrich,
@@ -54,6 +67,7 @@ type Props = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   initialTagValues?: string[];
 };
@@ -88,12 +102,15 @@ export function CustomerForm({
   sourceOptions,
   typeOptions,
   gradeOptions,
+  channelGradeOptions = [],
   tagOptions,
   initialTagValues = [],
 }: Props) {
   const router = useRouter();
   const isCreate = mode === "create";
   const [category, setCategory] = useState<CustomerCategory>(initial?.category ?? "HOSPITAL");
+  const [customerType, setCustomerType] = useState(initial?.customerType ?? "");
+  const [customerGrade, setCustomerGrade] = useState(initial?.customerGrade ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [province, setProvince] = useState(initial?.province ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
@@ -104,7 +121,7 @@ export function CustomerForm({
   const [bedCount, setBedCount] = useState(
     initial?.bedCount != null ? String(initial.bedCount) : ""
   );
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserFacingActionError | null>(null);
   const [enrichHint, setEnrichHint] = useState<string | null>(null);
   const [nameCorrected, setNameCorrected] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -115,15 +132,33 @@ export function CustomerForm({
       : initial.ownerId
   );
 
+  const relationTypeLocked = categoryLocksToDirectCustomer(category);
+  const directTypeValue = resolveDirectCustomerTypeValue(typeOptions);
+  const showGrade = customerTypeRequiresGrade(customerType, typeOptions);
+  const activeGradeOptions = isChannelCustomerType(customerType, typeOptions)
+    ? channelGradeOptions
+    : gradeOptions;
+  const gradeTone = gradeToneForCustomerType(customerType, typeOptions);
+  const gradeLabel = isChannelCustomerType(customerType, typeOptions)
+    ? "渠道等级"
+    : "客户等级";
+
+  useEffect(() => {
+    if (!relationTypeLocked) return;
+    if (customerType === directTypeValue) return;
+    setCustomerType(directTypeValue);
+    setCustomerGrade("");
+  }, [relationTypeLocked, directTypeValue, customerType]);
+
   const canEnrich = isCreate && canUseCustomerKimiEnrich(category);
 
   function handleKimiEnrich() {
     if (!name.trim()) {
-      setError("请先填写客户名称");
+      setError(asUserFacingError("请先填写客户名称"));
       return;
     }
     if (!canEnrich) {
-      setError("仅医院或公司客户支持 Kimi 检索");
+      setError(asUserFacingError("仅医院或公司客户支持 Kimi 检索"));
       return;
     }
     setError(null);
@@ -134,9 +169,6 @@ export function CustomerForm({
         const data = await fetchCustomerKimiEnrich({
           name,
           category,
-          province,
-          city,
-          district,
         });
         const result = applyCustomerKimiEnrich(data, {
           name,
@@ -151,7 +183,7 @@ export function CustomerForm({
         setEnrichHint(result.hints);
         setNameCorrected(result.nameCorrected);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Kimi 检索失败，请稍后重试");
+        setError(toUserFacingActionError(err, "Kimi 检索失败，请稍后重试"));
       }
     });
   }
@@ -165,7 +197,7 @@ export function CustomerForm({
             ? await createCustomer(formData)
             : await updateCustomer(customerId!, formData);
         if (result.error) {
-          setError(result.error);
+          setError(asUserFacingError(result.error));
           return;
         }
         if (result.redirectTo) {
@@ -173,12 +205,7 @@ export function CustomerForm({
           router.refresh();
         }
       } catch (e) {
-        const message = e instanceof Error ? e.message : "";
-        if (message.includes("was not found on the server")) {
-          setError("页面已过期，请刷新后重试");
-          return;
-        }
-        setError(message || "提交失败，请重试");
+        setError(toUserFacingActionError(e));
       }
     });
   }
@@ -190,6 +217,7 @@ export function CustomerForm({
       {isCreate ? (
         <p className="text-sm text-muted-foreground">
           医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。
+          「Kimi 智能填充」仅根据当前客户名称检索，不使用表单中已填地址。
         </p>
       ) : null}
       <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
@@ -232,7 +260,14 @@ export function CustomerForm({
             name="category"
             required
             value={category}
-            onChange={(e) => setCategory(e.target.value as CustomerCategory)}
+            onChange={(e) => {
+              const next = e.target.value as CustomerCategory;
+              setCategory(next);
+              if (categoryLocksToDirectCustomer(next)) {
+                setCustomerType(resolveDirectCustomerTypeValue(typeOptions));
+                setCustomerGrade("");
+              }
+            }}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {categoryOptions.map((opt) => (
@@ -248,19 +283,35 @@ export function CustomerForm({
           label="关系类型 *"
           name="customerType"
           options={withEmptyOption(typeOptions)}
-          defaultValue={initial?.customerType ?? ""}
+          value={customerType}
+          onValueChange={(value) => {
+            if (relationTypeLocked) return;
+            setCustomerType(value);
+            setCustomerGrade("");
+          }}
           required
+          disabled={relationTypeLocked}
+          description={
+            relationTypeLocked ? "医院客户关系类型固定为直接客户" : undefined
+          }
           className={FORM_GRID_CELL}
           labelClassName={FORM_GRID_LABEL}
         />
 
-        <CustomerGradeSelect
-          defaultValue={initial?.customerGrade ?? ""}
-          options={gradeOptions}
-          required
-          className={FORM_GRID_CELL}
-          labelClassName={FORM_GRID_LABEL}
-        />
+        {showGrade ? (
+          <CustomerGradeSelect
+            value={customerGrade}
+            onValueChange={setCustomerGrade}
+            options={activeGradeOptions}
+            required
+            label={gradeLabel}
+            tone={gradeTone}
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
+          />
+        ) : (
+          <input type="hidden" name="customerGrade" value="" />
+        )}
 
         <CustomerTagSelect
           options={tagOptions}
@@ -440,7 +491,7 @@ export function CustomerForm({
           {enrichHint}
         </p>
       ) : null}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <ActionErrorDisplay error={error} />
 
       <Button type="submit" disabled={pending}>
         {pending ? "提交中…" : submitLabel}

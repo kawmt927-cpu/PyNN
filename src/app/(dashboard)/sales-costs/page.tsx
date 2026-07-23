@@ -6,11 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SalesCostListFilters } from "@/components/sales-costs/sales-cost-list-filters";
 import { SalesCostListTable } from "@/components/sales-costs/sales-cost-list-table";
+import { SalesCostMonthlySummary } from "@/components/sales-costs/sales-cost-monthly-summary";
 import { serializeSalesCostForList } from "@/lib/sales-costs/serialize";
 import {
   buildSalesCostListWhere,
   parseSalesCostListFilters,
 } from "@/lib/sales-costs/list-filters";
+import { buildSalesCostMonthlyStats } from "@/lib/sales-costs/monthly-stats";
 import { deleteSalesCostById } from "./actions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 
@@ -24,7 +26,13 @@ export default async function SalesCostsPage({ searchParams }: Props) {
   const filters = parseSalesCostListFilters(params);
   const where = buildSalesCostListWhere(filters);
 
-  const [costs, salesUsers, aggregate] = await Promise.all([
+  // 月度统计：同年（可按销售/类型筛），不限制月份，便于看全年各月
+  const monthlyWhere = buildSalesCostListWhere({
+    ...filters,
+    month: undefined,
+  });
+
+  const [costs, salesUsers, aggregate, monthlyRows] = await Promise.all([
     prisma.salesCost.findMany({
       where,
       orderBy: { costDate: "desc" },
@@ -42,10 +50,23 @@ export default async function SalesCostsPage({ searchParams }: Props) {
       orderBy: { name: "asc" },
     }),
     prisma.salesCost.aggregate({ where, _sum: { totalAmount: true } }),
+    prisma.salesCost.findMany({
+      where: monthlyWhere,
+      select: {
+        costDate: true,
+        costType: true,
+        totalAmount: true,
+      },
+    }),
   ]);
 
   const total = Number(aggregate._sum.totalAmount ?? 0);
   const listItems = costs.map(serializeSalesCostForList);
+  const monthlyStats = buildSalesCostMonthlyStats(monthlyRows);
+  const travelTotal = monthlyStats.reduce((sum, row) => {
+    if (filters.month && row.month !== filters.month) return sum;
+    return sum + (row.byType.PERSONAL_TRAVEL ?? 0);
+  }, 0);
 
   return (
     <div className="space-y-6">
@@ -66,6 +87,13 @@ export default async function SalesCostsPage({ searchParams }: Props) {
           </Suspense>
         </CardContent>
       </Card>
+
+      <SalesCostMonthlySummary
+        year={filters.year ?? new Date().getFullYear()}
+        month={filters.month}
+        rows={monthlyStats}
+        travelTotal={travelTotal}
+      />
 
       <Card>
         <CardHeader>

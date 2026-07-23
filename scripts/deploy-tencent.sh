@@ -19,6 +19,8 @@ EXCLUDES=(
   --exclude node_modules
   --exclude .next
   --exclude .git
+  --exclude .tmp
+  --exclude backups
   --exclude dev.db
   --exclude '*.db-journal'
   --exclude .env
@@ -53,19 +55,28 @@ ENV
   echo "已生成 .env.production（请后续补 LLM / 企微 / 域名）"
 fi
 
-sudo docker compose -p hospital-crm -f docker-compose.tencent.yml build app
-sudo docker compose -p hospital-crm -f docker-compose.tencent.yml --profile migrate run --rm migrate
-sudo docker compose -p hospital-crm -f docker-compose.tencent.yml up -d app
+# 同时构建 app（runner）与 migrate（builder），避免 migrate 镜像过旧漏跑迁移
+sudo docker compose -p hospital-crm -f docker-compose.tencent.yml build app migrate
+# -T + 关闭 stdin：避免在 ssh bash -s heredoc 下吞掉后续 up/健康检查命令
+sudo docker compose -p hospital-crm -f docker-compose.tencent.yml --profile migrate run --rm -T migrate </dev/null
+# latest 镜像更新后必须 force-recreate，否则仍跑旧容器
+sudo docker compose -p hospital-crm -f docker-compose.tencent.yml up -d --force-recreate --no-build app
+echo "→ 容器已用最新镜像重建"
 
 echo "→ 等待服务就绪..."
+ready=0
 for i in $(seq 1 30); do
   if curl -sf http://127.0.0.1:3001/login >/dev/null 2>&1; then
     echo "✓ CRM 已就绪: http://122.51.86.223:3001"
-    exit 0
+    ready=1
+    break
   fi
   sleep 3
 done
 
-echo "构建完成，但健康检查未通过，请查看日志:"
-sudo docker compose -p hospital-crm logs --tail=80 app
+if [[ "$ready" -ne 1 ]]; then
+  echo "构建完成，但健康检查未通过，请查看日志:"
+  sudo docker compose -p hospital-crm logs --tail=80 app
+  exit 1
+fi
 REMOTE

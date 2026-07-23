@@ -1,9 +1,9 @@
 import { requireRole } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
 import {
   canManageOpportunityOwner,
 } from "@/lib/opportunities/access";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { CONFIG_CATEGORY, getConfigOptions, loadCustomerFormOptions } from "@/lib/config-options";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 import { BackLink } from "@/components/navigation/back-link";
@@ -27,13 +27,10 @@ export default async function NewOpportunityPage({ searchParams }: Props) {
   const [stageOptions, customerFormOptions, salesUsers] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
     loadCustomerFormOptions(),
-    showOwnerSelect
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+    }),
   ]);
 
   return (
@@ -51,6 +48,7 @@ export default async function NewOpportunityPage({ searchParams }: Props) {
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}
+        channelGradeOptions={customerFormOptions.channelGradeOptions}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
         initial={presetCustomer ? { customerId: presetCustomer.id } : undefined}

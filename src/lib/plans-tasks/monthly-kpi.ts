@@ -86,22 +86,61 @@ async function countChannelDevelopment(
   return withFollowUp.length;
 }
 
-/** 单次阶段变更计分：仅往前推进计 1；一次跨多级（跳两步及以上）也仅计 1，不按跨度累加 */
-function scoreForwardStageAdvance(fromOrder: number, toOrder: number): number {
-  return toOrder > fromOrder ? 1 : 0;
+/** 单次阶段变更是否算「往前推进」候选（供人工核算勾选） */
+function isForwardStageAdvance(
+  fromStage: string | null,
+  toStage: string,
+  stageOrder: Map<string, number>
+): boolean {
+  if (!fromStage) return false;
+  const fromOrder = stageOrder.get(fromStage);
+  const toOrder = stageOrder.get(toStage);
+  if (fromOrder == null || toOrder == null) return false;
+  return toOrder > fromOrder;
 }
 
-/** 项目开发：当月每条「阶段往前推进」的变更记录计 1 次（同一商机可多次累计） */
+/** 项目开发：仅统计人工核算为计入的阶段推进记录 */
 async function countProjectDevelopment(
   userId: string,
   start: Date,
   end: Date
 ): Promise<number> {
+  return prisma.opportunityStageLog.count({
+    where: {
+      createdAt: { gte: start, lt: end },
+      fromStage: { not: null },
+      countedAsProjectDev: true,
+      opportunity: { ownerId: userId },
+    },
+  });
+}
+
+export type ProjectDevSettlementItem = {
+  id: string;
+  opportunityId: string;
+  opportunityTitle: string;
+  customerName: string;
+  fromStage: string;
+  toStage: string;
+  fromStageLabel: string;
+  toStageLabel: string;
+  createdAt: string;
+  countedAsProjectDev: boolean | null;
+};
+
+/** 列出当月该销售名下所有「阶段往前推进」记录，供核算勾选 */
+export async function listProjectDevSettlementItems(
+  userId: string,
+  year: number,
+  month: number
+): Promise<ProjectDevSettlementItem[]> {
+  const { start, end } = monthRange(year, month);
   const stageOptions = await prisma.configOption.findMany({
     where: { category: "opportunity_stage", enabled: true },
-    select: { value: true, sortOrder: true },
+    select: { value: true, label: true, sortOrder: true },
   });
   const stageOrder = new Map(stageOptions.map((stage) => [stage.value, stage.sortOrder]));
+  const stageLabel = new Map(stageOptions.map((stage) => [stage.value, stage.label]));
 
   const logs = await prisma.opportunityStageLog.findMany({
     where: {
@@ -109,19 +148,37 @@ async function countProjectDevelopment(
       fromStage: { not: null },
       opportunity: { ownerId: userId },
     },
-    select: { fromStage: true, toStage: true },
+    select: {
+      id: true,
+      fromStage: true,
+      toStage: true,
+      createdAt: true,
+      countedAsProjectDev: true,
+      opportunity: {
+        select: {
+          id: true,
+          title: true,
+          customer: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
   });
 
-  let count = 0;
-  for (const log of logs) {
-    if (!log.fromStage) continue;
-    const fromOrder = stageOrder.get(log.fromStage);
-    const toOrder = stageOrder.get(log.toStage);
-    if (fromOrder == null || toOrder == null) continue;
-    count += scoreForwardStageAdvance(fromOrder, toOrder);
-  }
-
-  return count;
+  return logs
+    .filter((log) => isForwardStageAdvance(log.fromStage, log.toStage, stageOrder))
+    .map((log) => ({
+      id: log.id,
+      opportunityId: log.opportunity.id,
+      opportunityTitle: log.opportunity.title,
+      customerName: log.opportunity.customer.name,
+      fromStage: log.fromStage!,
+      toStage: log.toStage,
+      fromStageLabel: stageLabel.get(log.fromStage!) ?? log.fromStage!,
+      toStageLabel: stageLabel.get(log.toStage) ?? log.toStage,
+      createdAt: log.createdAt.toISOString(),
+      countedAsProjectDev: log.countedAsProjectDev,
+    }));
 }
 
 async function sumPaymentCollection(userId: string, start: Date, end: Date): Promise<number> {

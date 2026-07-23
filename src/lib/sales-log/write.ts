@@ -7,10 +7,16 @@ import {
 } from "@prisma/client";
 import { canManageCustomerOwner, getCustomerForUser, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
 import { findDuplicateCustomerByName } from "@/lib/customers/duplicate-name";
-import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
+import { assertCustomerGrade } from "@/lib/customers/grade";
+import {
+  enforceCustomerTypeForCategory,
+  requireCustomerGradeForType,
+} from "@/lib/customers/customer-type-grade";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { prisma } from "@/lib/prisma";
+import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
+import { CUSTOMER_ASSIGNABLE_ROLES } from "@/lib/customers/access";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
 import {
   resolveTomorrowPlanForSubmit,
@@ -25,32 +31,45 @@ export type AgentWriteContext = {
   dailyLogId: string;
 };
 
-function assertSalesLogRole(role: UserRole) {
+export function assertSalesLogRole(role: UserRole) {
   if (!SALES_LOG_ROLES.includes(role)) {
     throw new Error("当前角色无权写入销售日志");
   }
 }
 
-function resolveOwnerId(role: UserRole, userId: string, ownerId?: string | null) {
+async function resolveOwnerId(role: UserRole, userId: string, ownerId?: string | null) {
   if (role === "SALES") return userId;
-  if (canManageCustomerOwner(role) && ownerId) return ownerId;
+  if (canManageCustomerOwner(role) && ownerId) {
+    await assertSelectableSalesOwner(role, userId, ownerId, CUSTOMER_ASSIGNABLE_ROLES);
+    return ownerId;
+  }
   if (canManageCustomerOwner(role)) return null;
   return userId;
 }
 
 async function validateCustomerConfigFields(data: {
+  category: string;
   source?: string | null;
   customerType?: string | null;
   customerGrade?: string | null;
 }) {
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  if (!data.customerType?.trim()) {
+  const { CONFIG_CATEGORY, assertConfigValue, getConfigOptions } = await import(
+    "@/lib/config-options"
+  );
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+  const enforcedType = enforceCustomerTypeForCategory(
+    data.category,
+    data.customerType,
+    typeOptions
+  );
+  if (!enforcedType) {
     throw new Error("请选择关系类型");
   }
+  const customerType = await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, enforcedType);
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
-    customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: requireCustomerGrade(data.customerGrade),
+    customerType,
+    customerGrade: requireCustomerGradeForType(customerType, data.customerGrade, typeOptions),
   };
 }
 
@@ -69,16 +88,39 @@ async function resolveCustomerId(
   const name = customerName?.trim();
   if (!name) throw new Error("请提供 customerId 或 customerName");
 
-  const rows = await searchCustomersForUser(ctx.role, ctx.userId, name);
+  const rows = await searchCustomersForUser(ctx.role, ctx.userId, name, {
+    markWritable: true,
+  });
   const exact = rows.filter((row) => row.name === name);
   const matches = exact.length > 0 ? exact : rows;
 
   if (matches.length === 0) {
     throw new Error(`未找到客户「${name}」，请先使用 createCustomer 新建`);
   }
+  // 精确同名优先；多条精确同名时取可写的
+  if (exact.length > 1) {
+    const writableExact = exact.filter((row) => row.writable);
+    if (writableExact.length === 1) return writableExact[0].id;
+    throw new Error(
+      `客户「${name}」存在 ${exact.length} 条同名记录，请使用 customerId 指定`
+    );
+  }
+  if (exact.length === 1) {
+    if (!exact[0].writable) {
+      throw new Error(
+        `客户「${name}」已存在但非本人负责（负责人：${exact[0].ownerName ?? "无"}），无法代录往来`
+      );
+    }
+    return exact[0].id;
+  }
   if (matches.length > 1) {
     throw new Error(
-      `客户「${name}」存在 ${matches.length} 条匹配，请使用 customerId 指定`
+      `客户「${name}」存在 ${matches.length} 条相似匹配，请使用 customerId 指定`
+    );
+  }
+  if (!matches[0].writable) {
+    throw new Error(
+      `客户「${matches[0].name}」非本人负责（负责人：${matches[0].ownerName ?? "无"}），无法代录往来`
     );
   }
   return matches[0].id;
@@ -138,7 +180,7 @@ export async function createCustomerFromAgent(
         customerType: configFields.customerType,
         customerGrade: configFields.customerGrade,
         notes: input.notes?.trim() || null,
-        ownerId: resolveOwnerId(ctx.role, ctx.userId),
+        ownerId: await resolveOwnerId(ctx.role, ctx.userId),
       },
     });
 

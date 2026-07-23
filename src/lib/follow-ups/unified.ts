@@ -104,6 +104,8 @@ function buildCustomerPendingFollowUpWhere(
     nextFollowUpAt: nextFollowUpTimeFilter(mode, now, withinDays),
     customer: customerFilter,
     OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
+    // 指派任务会同时创建 FollowUp，待完成指派只展示「指派」一条，避免重复
+    NOT: { weeklyAssignment: { status: "PENDING" } },
   };
 }
 
@@ -130,7 +132,11 @@ export async function getCustomerFollowUpHistory(
 
   const [customerFollowUps, opportunityFollowUps] = await Promise.all([
     db.followUp.findMany({
-      where: { customerId },
+      where: {
+        customerId,
+        // 指派任务锚点跟进不进入往来时间线，避免与「指派」重复
+        weeklyAssignment: null,
+      },
       include: {
         user: { select: { name: true } },
         contact: { select: { id: true, name: true } },

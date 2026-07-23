@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Mic } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   pickAudioRecorderMimeType,
   transcribeRecordedAudio,
@@ -14,9 +15,13 @@ type Props = {
   inWeCom?: boolean;
   onStartWeComRecord: () => void | Promise<void>;
   onStopWeComRecord: () => Promise<string>;
+  /** 仅成功识别的文本；失败不要写入输入框 */
   onTranscript: (text: string) => void;
   onStatus?: (text: string | null) => void;
+  className?: string;
 };
+
+const MIN_HOLD_MS = 700;
 
 function prefersHoldToTalk() {
   if (typeof window === "undefined") return false;
@@ -46,9 +51,11 @@ export function VoiceInputButton({
   onStopWeComRecord,
   onTranscript,
   onStatus,
+  className,
 }: Props) {
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
+  const startedAtRef = useRef(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -58,15 +65,16 @@ export function VoiceInputButton({
   function setRecordingState(active: boolean) {
     recordingRef.current = active;
     setRecording(active);
+    if (active) startedAtRef.current = Date.now();
   }
 
-  function reportTranscript(text: string) {
+  function reportStatus(text: string) {
+    onStatus?.(text);
+  }
+
+  function reportSuccess(text: string) {
     onTranscript(text);
-    if (text.startsWith("[")) {
-      onStatus?.(text.slice(1, -1));
-    } else {
-      onStatus?.("语音识别已插入输入框");
-    }
+    onStatus?.("语音已填入输入框，可修改后发送");
   }
 
   function cleanupMediaStream() {
@@ -76,9 +84,13 @@ export function VoiceInputButton({
     audioChunksRef.current = [];
   }
 
+  function isHoldTooShort() {
+    return Date.now() - startedAtRef.current < MIN_HOLD_MS;
+  }
+
   async function startWeComRecording() {
     if (!wecomReady) {
-      reportTranscript("[企业微信 SDK 未就绪，请稍后重试或检查企微配置]");
+      reportStatus("企业微信 SDK 未就绪，请稍后重试");
       return;
     }
     try {
@@ -86,34 +98,44 @@ export function VoiceInputButton({
       await onStartWeComRecord();
       setRecordingState(true);
     } catch (e) {
-      reportTranscript(`[开始录音失败: ${e instanceof Error ? e.message : "请重试"}]`);
+      reportStatus(`开始录音失败：${e instanceof Error ? e.message : "请重试"}`);
     }
   }
 
   async function stopWeComRecording() {
     if (!recordingRef.current) return;
+    const tooShort = isHoldTooShort();
     setRecordingState(false);
+    if (tooShort) {
+      try {
+        await onStopWeComRecord();
+      } catch {
+        // 短按结束时识别常失败，忽略
+      }
+      reportStatus("按住时间过短，请重新长按说话");
+      return;
+    }
     onStatus?.("正在识别语音…");
     try {
       const text = await onStopWeComRecord();
       if (text.trim()) {
-        reportTranscript(text.trim());
+        reportSuccess(text.trim());
       } else {
-        reportTranscript("[未识别到语音，请按住说话后再松开]");
+        reportStatus("未识别到有效语音，请重新长按说话");
       }
-    } catch (e) {
-      reportTranscript(`[语音识别失败: ${e instanceof Error ? e.message : "请重试"}]`);
+    } catch {
+      reportStatus("语音识别失败，请重新长按说话");
     }
   }
 
   async function startBrowserRecording() {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      reportTranscript("[当前浏览器不支持录音，请使用 Chrome/Safari 或企业微信内打开]");
+      reportStatus("当前浏览器不支持录音，请使用 Chrome/Safari 或企业微信内打开");
       return;
     }
 
     if (typeof MediaRecorder === "undefined") {
-      reportTranscript("[当前浏览器不支持录音功能]");
+      reportStatus("当前浏览器不支持录音功能");
       return;
     }
 
@@ -122,10 +144,7 @@ export function VoiceInputButton({
       mediaStreamRef.current = stream;
 
       const mimeType = pickAudioRecorderMimeType();
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType ? { mimeType } : undefined
-      );
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
       audioChunksRef.current = [];
       recorder.ondataavailable = (event) => {
@@ -140,7 +159,7 @@ export function VoiceInputButton({
       onStatus?.(holdMode ? "正在录音，松开后识别…" : "正在录音，再次点击结束…");
     } catch (e) {
       cleanupMediaStream();
-      reportTranscript(`[${microphoneErrorMessage(e)}]`);
+      reportStatus(microphoneErrorMessage(e));
     }
   }
 
@@ -152,8 +171,8 @@ export function VoiceInputButton({
       return;
     }
 
+    const tooShort = isHoldTooShort();
     setRecordingState(false);
-    onStatus?.("正在识别语音…");
 
     const blob = await new Promise<Blob>((resolve, reject) => {
       recorder.onstop = () => {
@@ -166,15 +185,16 @@ export function VoiceInputButton({
       cleanupMediaStream();
     });
 
-    if (blob.size === 0) {
-      reportTranscript("[未录到有效音频，请重试]");
+    if (tooShort || blob.size === 0) {
+      reportStatus("按住时间过短，请重新长按说话");
       return;
     }
 
+    onStatus?.("正在识别语音…");
     try {
-      reportTranscript(await transcribeRecordedAudio(blob));
-    } catch (e) {
-      reportTranscript(`[${e instanceof Error ? e.message : "语音识别失败"}]`);
+      reportSuccess(await transcribeRecordedAudio(blob));
+    } catch {
+      reportStatus("语音识别失败，请重新长按说话");
     }
   }
 
@@ -225,10 +245,13 @@ export function VoiceInputButton({
   return (
     <Button
       type="button"
-      variant={recording ? "default" : "outline"}
-      size="icon"
+      variant={recording ? "default" : "secondary"}
       disabled={disabled}
-      className="touch-none select-none"
+      className={cn(
+        "h-14 min-w-[7.5rem] touch-none select-none gap-2 rounded-2xl px-5 text-base shadow-sm",
+        recording && "ring-2 ring-primary/40",
+        className
+      )}
       style={{ touchAction: "none" }}
       onClick={handleClick}
       onPointerDown={handlePointerDown}
@@ -239,7 +262,8 @@ export function VoiceInputButton({
       aria-label="语音输入"
       aria-pressed={recording}
     >
-      <Mic className={`h-4 w-4 ${recording ? "animate-pulse" : ""}`} />
+      <Mic className={`h-6 w-6 shrink-0 ${recording ? "animate-pulse" : ""}`} />
+      <span className="font-medium">{recording ? "松开结束" : holdMode ? "按住说话" : "点击说话"}</span>
     </Button>
   );
 }

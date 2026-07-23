@@ -71,7 +71,7 @@ export function MonthlyKpiTargetSettingsDialog({
             {year} 年 {month} 月 KPI 目标
           </DialogTitle>
           <DialogDescription>
-            每位销售单独设定月度 KPI 目标；项目开发达标规则请在系统配置 → KPI 设置中维护。
+            每位销售单独设定月度 KPI 目标；项目开发需在指标卡片上由销售管理/管理员「核算」后计入。
           </DialogDescription>
         </DialogHeader>
 

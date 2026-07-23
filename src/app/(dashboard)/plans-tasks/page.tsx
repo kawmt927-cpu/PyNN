@@ -22,6 +22,7 @@ import {
   resolveMonthlyUserId,
 } from "@/lib/plans-tasks/metrics-scope";
 import { SalesMetricsTimeSelect } from "@/components/plans-tasks/metrics-period-switch";
+import { teamPerformanceMemberWhere, monthlyAssessmentMemberWhere } from "@/lib/sales/team-performance";
 
 type Props = {
   searchParams: Promise<{
@@ -46,45 +47,67 @@ export default async function PlansTasksPage({ searchParams }: Props) {
   const month = parseMetricsMonth(query, year, now);
   const canManage = canManageWeeklyAssignments(session.user.role);
 
-  const salesUsers = canManage
-    ? await prisma.user.findMany({
-        where: { role: { in: ["SALES", "SALES_MANAGER"] }, personnelProfile: { enabled: true } },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      })
-    : [];
+  const [salesUsers, monthlyUsers] = canManage
+    ? await Promise.all([
+        prisma.user.findMany({
+          where: teamPerformanceMemberWhere(),
+          select: { id: true, name: true, role: true },
+          orderBy: { name: "asc" },
+        }),
+        prisma.user.findMany({
+          where: monthlyAssessmentMemberWhere(),
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+      ])
+    : [[], []];
 
+  const regularSalesUsers = salesUsers.filter((u) => u.role === "SALES");
+  const otherTeamUsers = salesUsers.filter((u) => u.role !== "SALES");
   const salesUserIds = salesUsers.map((u) => u.id);
+  const regularSalesUserIds = regularSalesUsers.map((u) => u.id);
+  const otherTeamUserIds = otherTeamUsers.map((u) => u.id);
+  const monthlyUserIds = monthlyUsers.map((u) => u.id);
   const period = parseMetricsPeriod(query, canManage);
-  const annualSubject = parseAnnualSubject(query, salesUserIds);
+  const annualSubject = parseAnnualSubject(query, regularSalesUserIds, {
+    hasOthers: otherTeamUserIds.length > 0,
+  });
   const monthlyUserId = canManage
-    ? resolveMonthlyUserId(query, salesUserIds, session.user.id)
+    ? resolveMonthlyUserId(query, monthlyUserIds, session.user.id)
     : session.user.id;
 
   const subjectName =
     annualSubject === "team"
       ? "团队汇总"
-      : salesUsers.find((u) => u.id === annualSubject)?.name ?? session.user.name;
+      : annualSubject === "others"
+        ? "其他"
+        : regularSalesUsers.find((u) => u.id === annualSubject)?.name ?? session.user.name;
   const monthlyUserName =
-    salesUsers.find((u) => u.id === monthlyUserId)?.name ?? session.user.name;
+    monthlyUsers.find((u) => u.id === monthlyUserId)?.name ?? session.user.name;
 
   const dashboardData =
     tab === "dashboard"
       ? await (async () => {
-          if (canManage && salesUsers.length > 0) {
+          if (canManage && (salesUsers.length > 0 || monthlyUsers.length > 0)) {
             const viewPersonId =
-              annualSubject === "team" ? salesUserIds[0] : annualSubject;
+              annualSubject === "team" || annualSubject === "others"
+                ? (regularSalesUserIds[0] ?? salesUserIds[0] ?? session.user.id)
+                : annualSubject;
 
             const [
               teamAnnual,
+              othersAnnual,
               personMetrics,
               monthlyKpi,
               personBundles,
               monthlyBundles,
             ] = await Promise.all([
               getTeamAnnualMetrics(salesUserIds, year),
+              getTeamAnnualMetrics(otherTeamUserIds, year),
               getTargetMetricsBundle(viewPersonId, year, month),
-              getMonthlyKpiBundle(monthlyUserId, year, month, now),
+              monthlyUserIds.length > 0
+                ? getMonthlyKpiBundle(monthlyUserId, year, month, now)
+                : getMonthlyKpiBundle(session.user.id, year, month, now),
               Promise.all(
                 salesUsers.map(async (user) => ({
                   userId: user.id,
@@ -92,7 +115,7 @@ export default async function PlansTasksPage({ searchParams }: Props) {
                 }))
               ),
               Promise.all(
-                salesUsers.map(async (user) => ({
+                monthlyUsers.map(async (user) => ({
                   userId: user.id,
                   targets: (await getMonthlyKpiBundle(user.id, year, month, now)).targets,
                 }))
@@ -100,17 +123,11 @@ export default async function PlansTasksPage({ searchParams }: Props) {
             ]);
 
             const teamMetrics = toAnnualMetricsBundle(year, month, teamAnnual);
+            const othersMetrics = toAnnualMetricsBundle(year, month, othersAnnual);
             const displayPersonMetrics =
-              annualSubject === "team"
+              annualSubject === "team" || annualSubject === "others"
                 ? personMetrics
                 : await getTargetMetricsBundle(annualSubject, year, month);
-
-            const personTargetsByUserId = Object.fromEntries(
-              personBundles.map((row) => [row.userId, row.target])
-            ) as Record<string, (typeof personBundles)[0]["target"]>;
-            const monthlyTargetsByUserId = Object.fromEntries(
-              monthlyBundles.map((row) => [row.userId, row.targets])
-            ) as Record<string, (typeof monthlyBundles)[0]["targets"]>;
 
             return {
               manager: {
@@ -118,15 +135,27 @@ export default async function PlansTasksPage({ searchParams }: Props) {
                 teamSize: salesUsers.length,
                 annualSubject,
                 subjectName:
-                  annualSubject === "team" ? "团队汇总" : subjectName,
+                  annualSubject === "team"
+                    ? "团队汇总"
+                    : annualSubject === "others"
+                      ? "其他"
+                      : subjectName,
                 monthlyUserId,
                 monthlyUserName,
                 teamMetrics,
                 personMetrics: displayPersonMetrics,
-                personTargetsByUserId,
+                othersMetrics,
+                otherTeamUsers: otherTeamUsers.map(({ id, name }) => ({ id, name })),
+                personTargetsByUserId: Object.fromEntries(
+                  personBundles.map((row) => [row.userId, row.target])
+                ) as Record<string, (typeof personBundles)[0]["target"]>,
                 monthlyKpi,
-                monthlyTargetsByUserId,
-                salesUsers,
+                monthlyTargetsByUserId: Object.fromEntries(
+                  monthlyBundles.map((row) => [row.userId, row.targets])
+                ) as Record<string, (typeof monthlyBundles)[0]["targets"]>,
+                salesUsers: salesUsers.map(({ id, name }) => ({ id, name })),
+                regularSalesUsers: regularSalesUsers.map(({ id, name }) => ({ id, name })),
+                monthlyUsers,
               },
             };
           }
@@ -164,10 +193,14 @@ export default async function PlansTasksPage({ searchParams }: Props) {
           monthlyUserName={dashboardData.manager.monthlyUserName}
           teamMetrics={dashboardData.manager.teamMetrics}
           personMetrics={dashboardData.manager.personMetrics}
+          othersMetrics={dashboardData.manager.othersMetrics}
+          otherTeamUsers={dashboardData.manager.otherTeamUsers}
           personTargetsByUserId={dashboardData.manager.personTargetsByUserId}
           monthlyKpi={dashboardData.manager.monthlyKpi}
           monthlyTargetsByUserId={dashboardData.manager.monthlyTargetsByUserId}
           salesUsers={dashboardData.manager.salesUsers}
+          regularSalesUsers={dashboardData.manager.regularSalesUsers}
+          monthlyUsers={dashboardData.manager.monthlyUsers}
           nowYear={nowYear}
           nowMonth={nowMonth}
         />

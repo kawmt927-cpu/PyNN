@@ -14,31 +14,43 @@ import { WeComLoginSection } from "@/components/auth/wecom-login-section";
 
 type Props = {
   returnTo: string;
+  forceMobileUi?: boolean;
   wecomError?: string | null;
 };
 
-export function LoginForm({ returnTo, wecomError = null }: Props) {
+export function LoginForm({ returnTo, forceMobileUi = false, wecomError = null }: Props) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
-  const [selectedSalesEmail, setSelectedSalesEmail] = useState<string | null>(null);
+  const [selectedSalesPhone, setSelectedSalesPhone] = useState<string | null>(null);
   const demoEnabled = isDemoLoginEnabled();
 
-  async function doLogin(loginEmail: string, loginPassword: string) {
+  async function doLogin(loginPhone: string, loginPassword: string) {
     setLoading(true);
     setError("");
     const res = await signIn("credentials", {
-      email: loginEmail,
+      phone: loginPhone,
       password: loginPassword,
       redirect: false,
     });
     setLoading(false);
     if (res?.error) {
-      setError("邮箱或密码错误");
+      setError("手机号或密码错误，或账号尚未激活");
       return false;
+    }
+    if (forceMobileUi) {
+      try {
+        await fetch("/api/ui-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "mobile" }),
+        });
+      } catch {
+        // 忽略；中间件仍会按 UA 纠偏
+      }
     }
     router.push(returnTo);
     router.refresh();
@@ -47,25 +59,15 @@ export function LoginForm({ returnTo, wecomError = null }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    await doLogin(email, password);
+    await doLogin(phone, password);
   }
 
-  async function handleSalesQuickLogin(salesEmail: string, salesPassword: string) {
+  async function handleSalesQuickLogin(salesPhone: string, salesPassword: string) {
     setSelectedRole(null);
-    setSelectedSalesEmail(salesEmail);
-    setEmail(salesEmail);
+    setSelectedSalesPhone(salesPhone);
+    setPhone(salesPhone);
     setPassword(salesPassword);
-    await doLogin(salesEmail, salesPassword);
-  }
-
-  async function handleDemoLogin(role: UserRole) {
-    const account = DEMO_ACCOUNTS.find((a) => a.role === role);
-    if (!account) return;
-    setSelectedSalesEmail(null);
-    setSelectedRole(role);
-    setEmail(account.email);
-    setPassword(account.password);
-    await doLogin(account.email, account.password);
+    await doLogin(salesPhone, salesPassword);
   }
 
   return (
@@ -78,19 +80,20 @@ export function LoginForm({ returnTo, wecomError = null }: Props) {
         <CardContent className="space-y-6">
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
             <div className="space-y-2">
-              <Label htmlFor="email">邮箱</Label>
+              <Label htmlFor="phone">手机号</Label>
               <Input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                value={email}
+                id="phone"
+                name="phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="username"
+                value={phone}
                 onChange={(e) => {
-                  setEmail(e.target.value);
+                  setPhone(e.target.value);
                   setSelectedRole(null);
-                  setSelectedSalesEmail(null);
+                  setSelectedSalesPhone(null);
                 }}
-                placeholder="admin@example.com"
+                placeholder="11 位手机号"
                 required
               />
             </div>
@@ -105,7 +108,7 @@ export function LoginForm({ returnTo, wecomError = null }: Props) {
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setSelectedRole(null);
-                  setSelectedSalesEmail(null);
+                  setSelectedSalesPhone(null);
                 }}
                 required
               />
@@ -118,38 +121,36 @@ export function LoginForm({ returnTo, wecomError = null }: Props) {
 
           {demoEnabled && (
             <>
-              <div className="space-y-3 border-t pt-4">
-                <p className="text-sm font-medium text-muted-foreground">销售快捷登录（演示）</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {SALES_QUICK_LOGIN.map((account) => (
-                    <Button
-                      key={account.email}
-                      type="button"
-                      variant={selectedSalesEmail === account.email ? "default" : "outline"}
-                      className="h-auto flex-col gap-0.5 py-3 text-sm"
-                      disabled={loading}
-                      onClick={() => handleSalesQuickLogin(account.email, account.password)}
-                    >
-                      <span className="font-medium">{account.label}</span>
-                      <span className="text-xs font-normal opacity-80">sales123</span>
-                    </Button>
-                  ))}
+              {SALES_QUICK_LOGIN.length > 0 ? (
+                <div className="space-y-3 border-t pt-4">
+                  <p className="text-sm font-medium text-muted-foreground">销售快捷登录（演示）</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {SALES_QUICK_LOGIN.map((account) => (
+                      <Button
+                        key={account.phone}
+                        type="button"
+                        variant={selectedSalesPhone === account.phone ? "default" : "outline"}
+                        className="h-auto flex-col gap-0.5 py-3 text-sm"
+                        disabled={loading}
+                        onClick={() => handleSalesQuickLogin(account.phone, account.password)}
+                      >
+                        <span className="font-medium">{account.label}</span>
+                        <span className="text-xs font-normal opacity-80">sales123</span>
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  演示客户 / 商机 / 合同已分别归属三位销售；请用上方按钮登录，勿使用旧账号
-                  sales@example.com。
-                </p>
-              </div>
+              ) : null}
 
               <div className="space-y-3 border-t pt-4">
-                <p className="text-sm font-medium text-muted-foreground">其他测试角色</p>
+                <p className="text-sm font-medium text-muted-foreground">管理员快捷登录（开发）</p>
                 <div className="space-y-2">
                   {DEMO_ACCOUNTS.map((account) => (
                     <label
-                      key={account.role}
+                      key={account.phone}
                       className={cn(
                         "flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors",
-                        selectedRole === account.role
+                        selectedSalesPhone === account.phone
                           ? "border-primary bg-primary/5"
                           : "hover:bg-muted/50",
                         loading && "pointer-events-none opacity-60"
@@ -158,20 +159,25 @@ export function LoginForm({ returnTo, wecomError = null }: Props) {
                       <input
                         type="radio"
                         name="demo-role"
-                        value={account.role}
-                        checked={selectedRole === account.role}
-                        onChange={() => handleDemoLogin(account.role)}
+                        value={account.phone}
+                        checked={selectedSalesPhone === account.phone}
+                        onChange={() => {
+                          setSelectedRole(account.role);
+                          void handleSalesQuickLogin(account.phone, account.password);
+                        }}
                         className="h-4 w-4 accent-primary"
                         disabled={loading}
                       />
                       <span className="flex-1 text-sm">
                         <span className="font-medium">{account.label}</span>
-                        <span className="ml-2 text-muted-foreground">{account.email}</span>
+                        <span className="ml-2 text-muted-foreground">{account.phone}</span>
                       </span>
                     </label>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">勾选角色后将自动登录（仅开发环境显示）</p>
+                <p className="text-xs text-muted-foreground">
+                  其余人员为企微待激活账号；勾选后将自动登录（仅开发环境显示）
+                </p>
               </div>
             </>
           )}

@@ -1,7 +1,9 @@
 import { requireRole } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
 import { canManageOpportunityOwner } from "@/lib/opportunities/access";
+import { canEditContract } from "@/lib/contracts/access";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { resolveBackNavigation } from "@/lib/navigation/return-to";
@@ -15,6 +17,9 @@ export default async function NewContractPage({ searchParams }: Props) {
   const query = await searchParams;
   const { backHref, backLabel } = resolveBackNavigation(query, "/contracts");
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+  if (!canEditContract(session.user.role)) {
+    redirect("/contracts");
+  }
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
   const presetCustomerId = query.customerId?.trim();
@@ -22,13 +27,14 @@ export default async function NewContractPage({ searchParams }: Props) {
     ? await getCustomerForUser(presetCustomerId, session.user.role, session.user.id)
     : null;
 
-  const [salesUsers, paymentMethods] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
+  const [salesUsers, paymentMethods, internalCostNames, externalCostNames] = await Promise.all([
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
     }),
     getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
+    getConfigOptions(CONFIG_CATEGORY.INTERNAL_COST_PRODUCT),
+    getConfigOptions(CONFIG_CATEGORY.EXTERNAL_COST_PRODUCT),
   ]);
 
   return (
@@ -39,7 +45,7 @@ export default async function NewContractPage({ searchParams }: Props) {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        销售提交后需销售管理审核；销售管理/管理员提交后直接签署并创建项目。
+        销售管理/管理员创建合同后直接签署。项目由管理员或项目管理员在「项目管理」中手动创建。
       </p>
 
       <ContractForm
@@ -47,6 +53,8 @@ export default async function NewContractPage({ searchParams }: Props) {
         salesUsers={salesUsers}
         currentUserId={session.user.id}
         paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
+        internalCostNameOptions={internalCostNames.map((o) => ({ value: o.value, label: o.label }))}
+        externalCostNameOptions={externalCostNames.map((o) => ({ value: o.value, label: o.label }))}
         submitLabel="提交销售合同"
         defaultValues={
           presetCustomer

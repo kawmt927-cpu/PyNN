@@ -21,6 +21,8 @@ type Props = {
   markedDates?: string[];
   showUserFilter?: boolean;
   salesUsers?: SalesOption[];
+  /** 默认 /daily-reports；手机端传 /mobile/reports */
+  basePath?: string;
 };
 
 const selectClassName =
@@ -37,11 +39,12 @@ export function DailyReportDayNav({
   markedDates = [],
   showUserFilter,
   salesUsers = [],
+  basePath = "/daily-reports",
 }: Props) {
   const router = useRouter();
 
   function navigate(next: { date: string; userId: string }) {
-    router.push(buildDailyReportDayHref(next));
+    router.push(buildDailyReportDayHref(next, basePath));
   }
 
   return (

@@ -79,6 +79,7 @@ export async function searchCustomersForUser(
     category: "",
     customerType: "",
     customerGrade: "",
+    hospitalLevel: "",
     ownerId: "",
     tags: [],
     province: "",

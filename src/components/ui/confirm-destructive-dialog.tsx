@@ -15,17 +15,20 @@ type Props = {
   message: string;
   confirmLabel?: string;
   pending?: boolean;
+  /** destructive 用于关闭等不可逆操作 */
+  variant?: "default" | "destructive";
   onCancel: () => void;
   onConfirm: () => void;
 };
 
-/** 破坏性操作确认（不依赖 window.confirm，避免被弹层/WebView 拦截） */
+/** 操作确认（不依赖 window.confirm，避免被弹层/WebView 拦截） */
 export function ConfirmDestructiveDialog({
   open,
   title = "确认操作",
   message,
   confirmLabel = "确定",
   pending = false,
+  variant = "destructive",
   onCancel,
   onConfirm,
 }: Props) {
@@ -45,7 +48,12 @@ export function ConfirmDestructiveDialog({
           <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
             取消
           </Button>
-          <Button type="button" variant="destructive" disabled={pending} onClick={onConfirm}>
+          <Button
+            type="button"
+            variant={variant === "destructive" ? "destructive" : "default"}
+            disabled={pending}
+            onClick={onConfirm}
+          >
             {pending ? "处理中…" : confirmLabel}
           </Button>
         </div>

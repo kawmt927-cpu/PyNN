@@ -27,10 +27,13 @@ export function parseDailyReportDayParams(params: {
   };
 }
 
-export function buildDailyReportDayHref(params: DailyReportDayParams) {
+export function buildDailyReportDayHref(
+  params: DailyReportDayParams,
+  basePath = "/daily-reports"
+) {
   const qs = new URLSearchParams({ date: params.date });
   if (params.userId) qs.set("userId", params.userId);
-  return `/daily-reports?${qs.toString()}`;
+  return `${basePath}?${qs.toString()}`;
 }
 
 export function shiftDailyReportDay(dateStr: string, days: number) {

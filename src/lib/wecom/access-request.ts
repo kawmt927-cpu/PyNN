@@ -2,7 +2,12 @@ import { StaffCategory, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export function staffCategoryForRole(role: UserRole): StaffCategory {
-  if (role === UserRole.SALES || role === UserRole.SALES_MANAGER) {
+  if (
+    role === UserRole.SALES ||
+    role === UserRole.SALES_MANAGER ||
+    role === UserRole.ADMIN ||
+    role === UserRole.HR
+  ) {
     return StaffCategory.SALES;
   }
   return StaffCategory.IMPLEMENTATION;

@@ -28,6 +28,12 @@ import {
 } from "@/lib/opportunities/access";
 import { canSignOpportunity } from "@/lib/opportunities/status";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
+import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
+import { replaceContractProducts } from "@/lib/contracts/replace-products";
+import {
+  externalCostInstallmentsUpdateSchema,
+  externalCostPayoutRecordSchema,
+} from "@/lib/validations/contract";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -35,9 +41,12 @@ function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   return value;
 }
 
-function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
+async function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
   if (role === "SALES") return userId;
-  if (canManageOpportunityOwner(role) && ownerId) return ownerId;
+  if (canManageOpportunityOwner(role) && ownerId) {
+    await assertSelectableSalesOwner(role, userId, ownerId);
+    return ownerId;
+  }
   return userId;
 }
 
@@ -87,7 +96,7 @@ async function validateSignContact(signCustomerId: string, signContactId: string
   const contact = await prisma.contact.findFirst({
     where: { id: signContactId, customerId: signCustomerId },
   });
-  if (!contact) throw new Error("甲方代表须为签约客户的联系人");
+  if (!contact) throw new Error("对方代表须为签约客户的联系人");
 }
 
 async function createContractCore(
@@ -95,7 +104,7 @@ async function createContractCore(
   parsed: ReturnType<typeof contractFormSchema.parse>,
   contractId?: string
 ): Promise<ActionResult & { contractId?: string }> {
-  const ownerId = resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
+  const ownerId = await resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
   await validateSignContact(parsed.signCustomerId, parsed.signContactId);
 
   if (parsed.opportunityId) {
@@ -142,21 +151,19 @@ async function createContractCore(
       : await tx.contract.create({ data });
 
     if (contractId) {
+      const payoutCount = await tx.externalCostPayoutRecord.count({
+        where: { contractId },
+      });
+      if (payoutCount > 0) {
+        throw new Error(
+          "该合同已有外部成本实付记录，请先到「外部成本」页删除实付后再改产品，或单独维护付款计划"
+        );
+      }
       await tx.contractProduct.deleteMany({ where: { contractId } });
       await tx.paymentInstallment.deleteMany({ where: { contractId } });
     }
 
-    await tx.contractProduct.createMany({
-      data: parsed.products.map((row) => ({
-        contractId: created.id,
-        productServiceId: row.productServiceId || undefined,
-        productName: row.productName.trim(),
-        costAmount: row.costAmount,
-        actualCostPrice: row.costAmount,
-        baselineCostPrice: row.costAmount,
-        salesAmount: 0,
-      })),
-    });
+    await replaceContractProducts(tx, created.id, parsed.products);
 
     await tx.paymentInstallment.createMany({
       data: parsed.installments.map((row) => ({
@@ -184,6 +191,19 @@ async function createContractCore(
   revalidatePath("/opportunities");
   revalidatePath("/projects");
 
+  const { recordEntityOperation, ENTITY_TYPES } = await import(
+    "@/lib/audit/entity-operation-log"
+  );
+  await recordEntityOperation({
+    entityType: ENTITY_TYPES.CONTRACT,
+    entityId: contract.id,
+    userId: session.user.id,
+    action: contractId ? "重新提交" : "创建",
+    summary: contractId
+      ? `重新提交合同「${contract.title}」`
+      : `创建合同「${contract.title}」`,
+  });
+
   return {
     redirectTo: `/contracts/${contract.id}`,
     contractId: contract.id,
@@ -192,7 +212,10 @@ async function createContractCore(
 
 export async function createContract(formData: FormData): Promise<ActionResult> {
   try {
-    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    if (!canEditContract(session.user.role)) {
+      return { error: "无权新建合同，请联系销售管理或管理员" };
+    }
     const parsed = parseContractForm(formData);
     return await createContractCore(session, parsed);
   } catch (error) {
@@ -210,7 +233,10 @@ export async function createContractFromOpportunity(
 
 export async function resubmitContract(contractId: string, formData: FormData): Promise<ActionResult> {
   try {
-    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    if (!canEditContract(session.user.role)) {
+      return { error: "无权修改合同，请联系销售管理或管理员" };
+    }
     const contract = await getContractForUser(contractId, session.user.role, session.user.id);
     if (!contract) return { error: "合同不存在或无权访问" };
     if (contract.status !== "REJECTED") return { error: "仅已驳回合同可重新提交" };
@@ -263,6 +289,16 @@ export async function updateContract(contractId: string, formData: FormData): Pr
       }
     }
 
+    const payoutCount = await prisma.externalCostPayoutRecord.count({
+      where: { contractId },
+    });
+    if (payoutCount > 0) {
+      return {
+        error:
+          "该合同已有外部成本实付记录，请先到「外部成本」页删除实付后再改产品，或单独维护付款计划",
+      };
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.contract.update({
         where: { id: contractId },
@@ -284,20 +320,8 @@ export async function updateContract(contractId: string, formData: FormData): Pr
         },
       });
 
-      await tx.contractProduct.deleteMany({ where: { contractId } });
       await tx.paymentInstallment.deleteMany({ where: { contractId } });
-
-      await tx.contractProduct.createMany({
-        data: parsed.products.map((row) => ({
-          contractId,
-          productServiceId: row.productServiceId || undefined,
-          productName: row.productName.trim(),
-          costAmount: row.costAmount,
-          actualCostPrice: row.costAmount,
-          baselineCostPrice: row.costAmount,
-          salesAmount: 0,
-        })),
-      });
+      await replaceContractProducts(tx, contractId, parsed.products);
 
       await tx.paymentInstallment.createMany({
         data: parsed.installments.map((row) => ({
@@ -324,6 +348,17 @@ export async function updateContract(contractId: string, formData: FormData): Pr
     revalidatePath(`/contracts/${contractId}`);
     revalidatePath("/plans-tasks");
     revalidatePath("/today-work");
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: contractId,
+      userId: session.user.id,
+      action: "更新",
+      summary: `更新合同「${parsed.title.trim()}」`,
+    });
 
     return { redirectTo: `/contracts/${contractId}` };
   } catch (error) {
@@ -372,6 +407,17 @@ export async function approveContract(contractId: string): Promise<ActionResult>
     revalidatePath("/opportunities");
     revalidatePath("/projects");
 
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: contractId,
+      userId: session.user.id,
+      action: "审核通过",
+      summary: `审核通过合同「${contract.title}」`,
+    });
+
     return {};
   } catch (error) {
     return formatActionError(error);
@@ -400,6 +446,18 @@ export async function rejectContract(formData: FormData): Promise<ActionResult> 
         approvedAt: null,
         approvedById: null,
       },
+    });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: parsed.contractId,
+      userId: session.user.id,
+      action: "驳回",
+      summary: `驳回合同「${contract.title}」`,
+      detail: parsed.rejectReason.trim(),
     });
 
     revalidatePath("/contracts");
@@ -455,6 +513,18 @@ export async function addContractPaymentRecord(formData: FormData): Promise<Acti
       },
     });
 
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: parsed.contractId,
+      userId: session.user.id,
+      action: "回款",
+      summary: `登记回款 ${parsed.amount.toFixed(2)} 元（合同「${contract.title}」）`,
+      detail: parsed.notes?.trim() || undefined,
+    });
+
     revalidatePath(`/contracts/${parsed.contractId}`);
     revalidatePath("/plans-tasks");
 
@@ -470,14 +540,211 @@ export async function deleteContractPaymentRecord(recordId: string): Promise<Act
 
     const record = await prisma.contractPaymentRecord.findUnique({
       where: { id: recordId },
-      include: { contract: { select: { id: true } } },
+      include: { contract: { select: { id: true, title: true } } },
     });
     if (!record) return { error: "回款记录不存在" };
 
     await prisma.contractPaymentRecord.delete({ where: { id: recordId } });
 
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: record.contract.id,
+      userId: session.user.id,
+      action: "删除回款",
+      summary: `删除回款 ${Number(record.amount).toFixed(2)} 元（合同「${record.contract.title}」）`,
+    });
+
     revalidatePath(`/contracts/${record.contract.id}`);
     revalidatePath("/plans-tasks");
+    revalidatePath("/contracts/external-costs");
+
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function addExternalCostPayoutRecord(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    if (!canRecordContractPayment(session.user.role)) {
+      return { error: "无权登记外部成本实付" };
+    }
+
+    const parsed = externalCostPayoutRecordSchema.parse({
+      contractProductId: formData.get("contractProductId"),
+      amount: formData.get("amount"),
+      paidAt: formData.get("paidAt"),
+      notes: formData.get("notes") || undefined,
+    });
+
+    const product = await prisma.contractProduct.findUnique({
+      where: { id: parsed.contractProductId },
+      include: {
+        contract: { select: { id: true, status: true, ownerId: true } },
+        externalPayoutRecords: { select: { amount: true } },
+      },
+    });
+    if (!product || product.costType !== "EXTERNAL") {
+      return { error: "外部成本产品不存在" };
+    }
+
+    const contract = await getContractForUser(
+      product.contractId,
+      session.user.role,
+      session.user.id
+    );
+    if (!contract) return { error: "合同不存在或无权访问" };
+    if (!isSignedContractStatus(contract.status)) {
+      return { error: "仅已签署合同可登记外部成本实付" };
+    }
+
+    const totalPaid = sumPaymentRecords(product.externalPayoutRecords);
+    const totalAmount = Number(product.costAmount);
+    const amountError = validateContractPaymentAmount(totalAmount, totalPaid, parsed.amount);
+    if (amountError) {
+      return { error: amountError.replace("回款", "实付").replace("合同金额", "应付总额") };
+    }
+
+    await prisma.externalCostPayoutRecord.create({
+      data: {
+        contractId: product.contractId,
+        contractProductId: product.id,
+        amount: parsed.amount,
+        paidAt: new Date(parsed.paidAt),
+        notes: parsed.notes?.trim() || undefined,
+        recordedById: session.user.id,
+      },
+    });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: product.contractId,
+      userId: session.user.id,
+      action: "外部实付",
+      summary: `登记外部成本「${product.productName}」实付 ${parsed.amount.toFixed(2)} 元（合同「${contract.title}」）`,
+      detail: parsed.notes?.trim() || undefined,
+    });
+
+    revalidatePath(`/contracts/${product.contractId}`);
+    revalidatePath("/contracts/external-costs");
+    revalidatePath("/plans-tasks");
+
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function deleteExternalCostPayoutRecord(recordId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+
+    const record = await prisma.externalCostPayoutRecord.findUnique({
+      where: { id: recordId },
+      include: {
+        contract: { select: { id: true, title: true } },
+        contractProduct: { select: { productName: true } },
+      },
+    });
+    if (!record) return { error: "实付记录不存在" };
+
+    await prisma.externalCostPayoutRecord.delete({ where: { id: recordId } });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: record.contractId,
+      userId: session.user.id,
+      action: "删除外部实付",
+      summary: `删除外部成本「${record.contractProduct.productName}」实付 ${Number(record.amount).toFixed(2)} 元（合同「${record.contract.title}」）`,
+    });
+
+    revalidatePath(`/contracts/${record.contractId}`);
+    revalidatePath("/contracts/external-costs");
+    revalidatePath("/plans-tasks");
+
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function updateExternalCostPlan(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const installments = parseJsonField(formData.get("installmentsJson"), "付款计划");
+
+    const product = await prisma.contractProduct.findUnique({
+      where: { id: String(formData.get("contractProductId") || "") },
+      include: {
+        externalPayoutRecords: { select: { amount: true } },
+        contract: { select: { id: true, title: true, ownerId: true } },
+      },
+    });
+    if (!product || product.costType !== "EXTERNAL") {
+      return { error: "外部成本产品不存在" };
+    }
+
+    const lockedCostAmount = Number(product.costAmount || product.actualCostPrice);
+    const parsed = externalCostInstallmentsUpdateSchema.parse({
+      contractProductId: product.id,
+      costAmount: lockedCostAmount,
+      installments,
+    });
+
+    const contract = await getContractForUser(
+      product.contractId,
+      session.user.role,
+      session.user.id
+    );
+    if (!contract) return { error: "合同不存在或无权访问" };
+
+    const canEditPlan =
+      canEditContract(session.user.role) || contract.ownerId === session.user.id;
+    if (!canEditPlan) return { error: "无权修改外部付款计划" };
+
+    const totalPaid = sumPaymentRecords(product.externalPayoutRecords);
+    if (lockedCostAmount + 0.01 < totalPaid) {
+      return { error: `应付总额不能低于已实付 ${totalPaid.toFixed(2)} 元` };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.externalCostInstallment.deleteMany({
+        where: { contractProductId: product.id },
+      });
+      await tx.externalCostInstallment.createMany({
+        data: parsed.installments.map((row) => ({
+          contractProductId: product.id,
+          periodNumber: row.periodNumber,
+          amount: row.amount,
+          condition: row.condition?.trim() || undefined,
+          dueAt: row.dueAt ? new Date(row.dueAt) : undefined,
+        })),
+      });
+    });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: product.contractId,
+      userId: session.user.id,
+      action: "调整外部计划",
+      summary: `调整外部成本「${product.productName}」付款计划（合同「${contract.title}」）`,
+    });
+
+    revalidatePath(`/contracts/${product.contractId}`);
+    revalidatePath("/contracts/external-costs");
 
     return {};
   } catch (error) {

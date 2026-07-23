@@ -11,6 +11,7 @@ export type ContactOption = {
   department: string | null;
   phone: string | null;
   wechat: string | null;
+  role: string;
   isPrimary: boolean;
 };
 

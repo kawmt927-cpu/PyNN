@@ -16,13 +16,15 @@ export function parseSalesCostListFilters(
     ["PERSONAL_TRAVEL", "PRESALES", "BUSINESS"].includes(params.costType)
       ? (params.costType as SalesCostType)
       : undefined;
-  const year = params.year ? Number(params.year) : undefined;
+  const yearRaw = params.year ? Number(params.year) : undefined;
   const month = params.month ? Number(params.month) : undefined;
+  const year =
+    yearRaw && !Number.isNaN(yearRaw) ? yearRaw : new Date().getFullYear();
 
   return {
     salesUserId: salesUserId || undefined,
     costType,
-    year: year && !Number.isNaN(year) ? year : undefined,
+    year,
     month: month && month >= 1 && month <= 12 ? month : undefined,
   };
 }

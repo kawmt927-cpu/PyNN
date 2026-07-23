@@ -1,15 +1,17 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   canManageOpportunityOwner,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
+import { canEditContract } from "@/lib/contracts/access";
 import { canSignOpportunity } from "@/lib/opportunities/status";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { selfReturnPath } from "@/lib/navigation/return-to";
 import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -20,6 +22,9 @@ export default async function CreateContractFromOpportunityPage({ params, search
   const { id } = await params;
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+  if (!canEditContract(session.user.role)) {
+    redirect(`/opportunities/${id}`);
+  }
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
 
@@ -31,13 +36,15 @@ export default async function CreateContractFromOpportunityPage({ params, search
 
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [salesUsers, paymentMethods] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
+  const [salesUsers, paymentMethods, internalCostNames, externalCostNames] = await Promise.all([
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+      includeUserIds: [full.ownerId],
     }),
     getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
+    getConfigOptions(CONFIG_CATEGORY.INTERNAL_COST_PRODUCT),
+    getConfigOptions(CONFIG_CATEGORY.EXTERNAL_COST_PRODUCT),
   ]);
 
   const detailHref = selfReturnPath(`/opportunities/${id}`, query);
@@ -64,6 +71,8 @@ export default async function CreateContractFromOpportunityPage({ params, search
         salesUsers={salesUsers}
         currentUserId={session.user.id}
         paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
+        internalCostNameOptions={internalCostNames.map((o) => ({ value: o.value, label: o.label }))}
+        externalCostNameOptions={externalCostNames.map((o) => ({ value: o.value, label: o.label }))}
         defaultValues={{
           title: full.title,
           totalAmount: Number(full.expectedAmount),

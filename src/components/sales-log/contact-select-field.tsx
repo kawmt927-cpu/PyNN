@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { SelectClearButton } from "@/components/ui/select-clear-button";
-import { QuickContactDialog } from "@/components/sales-log/quick-contact-dialog";
+import {
+  QuickContactDialog,
+  contactOptionToQuickDraft,
+  type QuickContactDraft,
+} from "@/components/sales-log/quick-contact-dialog";
 import type { ContactOption } from "@/components/sales-log/contact-select";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +89,7 @@ export function ContactSelectField(props: Props) {
   const [canWriteContent, setCanWriteContent] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
+  const [editingContact, setEditingContact] = useState<QuickContactDraft | null>(null);
 
   const loadContacts = useCallback(async () => {
     if (!customerId) {
@@ -95,7 +100,12 @@ export function ContactSelectField(props: Props) {
     try {
       const res = await fetch(`/api/customers/${customerId}/contacts`, { credentials: "include" });
       const data = (await res.json()) as { items: ContactOption[]; canWriteContent?: boolean };
-      setContacts(data.items ?? []);
+      setContacts(
+        (data.items ?? []).map((item) => ({
+          ...item,
+          role: item.role || "OTHER",
+        }))
+      );
       setCanWriteContent(Boolean(data.canWriteContent));
     } catch {
       setContacts([]);
@@ -126,7 +136,14 @@ export function ContactSelectField(props: Props) {
   }, [customerId, multiple]);
 
   function openCreateContact(name = "") {
+    setEditingContact(null);
     setNewContactName(name);
+    setDialogOpen(true);
+  }
+
+  function openEditContact(contact: ContactOption) {
+    setNewContactName("");
+    setEditingContact(contactOptionToQuickDraft(contact));
     setDialogOpen(true);
   }
 
@@ -165,7 +182,7 @@ export function ContactSelectField(props: Props) {
   return (
     <>
       <div className={cn("space-y-2", className)}>
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Label htmlFor={multiple ? undefined : id}>
             联系人{required ? " *" : ""}
             {multiple ? <span className="ml-1 font-normal text-muted-foreground">（可多选）</span> : null}
@@ -185,22 +202,35 @@ export function ContactSelectField(props: Props) {
           contacts.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无联系人</p>
           ) : (
-            <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <div className="divide-y divide-border/60 rounded-md border bg-background/60">
               {contacts.map((c) => {
                 const checked = props.value.includes(c.id);
                 return (
-                  <label
+                  <div
                     key={c.id}
-                    className="inline-flex cursor-pointer items-center gap-2 text-sm leading-none"
+                    className="flex items-center justify-between gap-2 px-2.5 py-1.5"
                   >
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 shrink-0 rounded border-input"
-                      checked={checked}
-                      onChange={() => toggleContact(c.id)}
-                    />
-                    <ContactNameLabel contact={c} />
-                  </label>
+                    <label className="inline-flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-sm leading-none">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 rounded border-input"
+                        checked={checked}
+                        onChange={() => toggleContact(c.id)}
+                      />
+                      <ContactNameLabel contact={c} />
+                    </label>
+                    {canWriteContent ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-xs text-muted-foreground"
+                        onClick={() => openEditContact(c)}
+                      >
+                        编辑
+                      </Button>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -254,11 +284,16 @@ export function ContactSelectField(props: Props) {
       {canWriteContent ? (
         <QuickContactDialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={(open) => {
+            setDialogOpen(open);
+            if (!open) setEditingContact(null);
+          }}
           customerId={customerId}
+          contact={editingContact}
           initialName={newContactName || initialName}
-          onCreated={(contact) => {
+          onSaved={(contact) => {
             void loadContacts().then(() => {
+              if (editingContact) return;
               if (multiple) {
                 const current = props.value;
                 if (!current.includes(contact.id)) {

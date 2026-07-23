@@ -46,6 +46,13 @@ export function canManageCustomerOwner(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
 }
 
+/** 可作为客户负责人 / 协助负责人的角色（含管理员） */
+export const CUSTOMER_ASSIGNABLE_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
+
+export function isCustomerAssignableRole(role: UserRole) {
+  return CUSTOMER_ASSIGNABLE_ROLES.includes(role);
+}
+
 export function isCustomerResponsible(
   userId: string,
   customer: { ownerId: string | null; assistantOwners?: { userId: string }[] }
@@ -170,4 +177,16 @@ export async function assertCustomerContentWriteAccess(
   if (!canEditCustomerContent(role, userId, customer)) {
     throw new Error("无权编辑该客户");
   }
+}
+
+/** 客户负责人/协助负责人候选人（销售、销管、管理员；仅启用） */
+export async function listCustomerAssignableUsers(options?: {
+  /** 编辑时强制保留当前人选（即使已停用） */
+  includeUserIds?: string[];
+}) {
+  const { listSalesUsersForSelect } = await import("@/lib/sales/selectable-users");
+  return listSalesUsersForSelect({
+    roles: CUSTOMER_ASSIGNABLE_ROLES,
+    includeUserIds: options?.includeUserIds,
+  });
 }

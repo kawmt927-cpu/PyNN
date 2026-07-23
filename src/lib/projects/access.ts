@@ -38,3 +38,8 @@ export function canManageProject(
   if (role === "PROJECT_MANAGER") return project.projectManagerId === userId;
   return false;
 }
+
+/** 手动新建项目：管理员、项目管理员 */
+export function canCreateProject(role: UserRole): boolean {
+  return role === "ADMIN" || role === "PROJECT_ADMIN";
+}

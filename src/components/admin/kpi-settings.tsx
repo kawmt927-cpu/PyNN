@@ -12,17 +12,18 @@ export function KpiSettings() {
         </div>
         <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
           <li>
-            统计当月内，<strong className="font-medium text-foreground">你负责的商机</strong>
-            每一次阶段<strong className="font-medium text-foreground">往前推进</strong>
-            （按系统配置中商机阶段的排序，新阶段排在后面）计 <strong className="font-medium text-foreground">1 次</strong>。
+            <strong className="font-medium text-foreground">不再自动计次</strong>
+            。当月该销售负责的商机发生阶段往前推进后，会出现在「项目开发 → 核算」列表中。
           </li>
           <li>
-            一次操作里<strong className="font-medium text-foreground">跨多级</strong>
-            （例如从「初访」直接调到「方案演示」，中间跳过一级）也<strong className="font-medium text-foreground">只计 1 次</strong>，不会按跳了几级重复累加。
+            由<strong className="font-medium text-foreground">销售管理或管理员</strong>
+            手动勾选是否计入；勾选保存后计 1 次。
           </li>
-          <li>分多次、每次往前推一级，则<strong className="font-medium text-foreground">每次各计 1 次</strong>（同一商机可累计）。</li>
-          <li>阶段不变、往后退、或新建商机时的首次阶段，均不计入。</li>
-          <li>签约本身不计入，除非编辑商机时阶段确实往前变更并留下变更记录。</li>
+          <li>
+            一次操作跨多级推进在列表中仍为一条记录，勾选后也
+            <strong className="font-medium text-foreground">只计 1 次</strong>。
+          </li>
+          <li>阶段不变、往后退、或新建商机时的首次阶段，不会进入核算列表。</li>
         </ul>
       </section>
     </div>

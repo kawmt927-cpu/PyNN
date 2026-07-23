@@ -24,6 +24,7 @@ type Props = {
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
+  showDepartment?: boolean;
   addOpen?: boolean;
   onAddOpenChange?: (open: boolean) => void;
 };
@@ -35,6 +36,7 @@ export function ContactList({
   titleOptions,
   departmentOptions,
   roleOptions,
+  showDepartment = true,
   addOpen: addOpenProp,
   onAddOpenChange,
 }: Props) {
@@ -166,6 +168,7 @@ export function ContactList({
             titleOptions={titleOptions}
             departmentOptions={departmentOptions}
             roleOptions={roleOptions}
+            showDepartment={showDepartment}
             onCancel={() => setAddOpen(false)}
             onSuccess={closeDialogs}
           />
@@ -186,6 +189,7 @@ export function ContactList({
               titleOptions={titleOptions}
               departmentOptions={departmentOptions}
               roleOptions={roleOptions}
+              showDepartment={showDepartment}
               onCancel={() => setEditingContact(null)}
               onSuccess={closeDialogs}
             />

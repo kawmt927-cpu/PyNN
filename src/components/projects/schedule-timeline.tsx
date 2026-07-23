@@ -4,7 +4,11 @@ import { useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
-import { staffColorClass } from "@/lib/projects/timeline-colors";
+import {
+  scheduleYearBandClass,
+  scheduleYearBandMutedClass,
+  staffColorClass,
+} from "@/lib/projects/timeline-colors";
 import {
   barStyleForRange,
   formatPersonDays,
@@ -14,6 +18,58 @@ import type { ScheduleBar } from "@/lib/projects/schedule-serialize";
 import { getDailyShares, type AllocationRecord } from "@/lib/projects/allocation-split";
 import { parseDateOnlyInput } from "@/lib/validations/project";
 import { toDateOnly } from "@/lib/projects/workdays";
+
+type TimelineBand = {
+  key: string;
+  label: string;
+  startIndex: number;
+  dayCount: number;
+  year: number;
+  month?: number;
+};
+
+function buildYearBands(days: TimelineDay[]): TimelineBand[] {
+  const bands: TimelineBand[] = [];
+  for (let i = 0; i < days.length; i++) {
+    const year = days[i].date.getFullYear();
+    const last = bands[bands.length - 1];
+    if (last && last.year === year) {
+      last.dayCount += 1;
+    } else {
+      bands.push({
+        key: `y-${year}-${i}`,
+        label: String(year),
+        startIndex: i,
+        dayCount: 1,
+        year,
+      });
+    }
+  }
+  return bands;
+}
+
+function buildMonthBands(days: TimelineDay[]): TimelineBand[] {
+  const bands: TimelineBand[] = [];
+  for (let i = 0; i < days.length; i++) {
+    const date = days[i].date;
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const last = bands[bands.length - 1];
+    if (last && last.year === year && last.month === month) {
+      last.dayCount += 1;
+    } else {
+      bands.push({
+        key: `y${year}-m${month}`,
+        label: `${month}月`,
+        startIndex: i,
+        dayCount: 1,
+        year,
+        month,
+      });
+    }
+  }
+  return bands;
+}
 
 function fillHeightPct(share: number): number {
   return Math.max(share * 100, share > 0 ? 6 : 0);
@@ -108,16 +164,29 @@ export function ScheduleTimelineHeader({
   rowLabel,
   dayWidth,
   rowLabelWidth = 160,
+  secondaryLabel,
+  secondaryLabelWidth = 0,
 }: {
   days: TimelineDay[];
   rowLabel: string;
   dayWidth: number;
   rowLabelWidth?: number;
+  secondaryLabel?: string;
+  secondaryLabelWidth?: number;
 }) {
+  // 窄列不能用 p-1：padding 会把列撑宽，表头与投入条像素轴错位
+  const narrow = dayWidth < 16;
+  // 「1月」等文字放不下时，改为年份色带 + 上方月份行
+  const useBandHeader = dayWidth < 22;
+  const trackWidth = days.length * dayWidth;
+  const sideWidth = rowLabelWidth + (secondaryLabel ? secondaryLabelWidth : 0);
+  const yearBands = useMemo(() => buildYearBands(days), [days]);
+  const monthBands = useMemo(() => buildMonthBands(days), [days]);
+
   return (
     <div
       className="sticky top-0 z-10 flex border-b bg-muted/80 backdrop-blur text-xs text-muted-foreground"
-      style={{ minWidth: days.length * dayWidth + rowLabelWidth }}
+      style={{ width: trackWidth + sideWidth, minWidth: trackWidth + sideWidth }}
     >
       <div
         className="shrink-0 border-r p-2 font-medium flex items-center"
@@ -125,20 +194,97 @@ export function ScheduleTimelineHeader({
       >
         {rowLabel}
       </div>
-      <div className="flex">
-        {days.map((day) => (
-          <div
-            key={day.dateKey}
-            className={cn(
-              "border-r p-1 text-center flex items-center justify-center",
-              day.isWeekend && "bg-muted/60"
-            )}
-            style={{ width: dayWidth, minHeight: 40, fontSize: dayWidth < 16 ? 9 : undefined }}
-          >
-            {day.label}
+      {secondaryLabel ? (
+        <div
+          className="shrink-0 border-r p-2 font-medium flex items-center"
+          style={{ width: secondaryLabelWidth }}
+        >
+          {secondaryLabel}
+        </div>
+      ) : null}
+
+      {useBandHeader ? (
+        <div className="flex shrink-0 flex-col" style={{ width: trackWidth }}>
+          <div className="relative flex h-5 border-b border-border/60 text-[10px] font-semibold leading-none">
+            {yearBands.map((band) => (
+              <div
+                key={band.key}
+                className={cn(
+                  "box-border flex shrink-0 items-center overflow-hidden border-r border-border/50 px-1",
+                  scheduleYearBandClass(band.year)
+                )}
+                style={{
+                  width: band.dayCount * dayWidth,
+                  minWidth: band.dayCount * dayWidth,
+                  maxWidth: band.dayCount * dayWidth,
+                }}
+                title={`${band.year}年`}
+              >
+                <span className="whitespace-nowrap">{band.label}</span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+          <div className="relative h-5 border-b border-border/40">
+            {monthBands.map((band) => (
+              <div
+                key={band.key}
+                className={cn(
+                  "absolute top-0 bottom-0 box-border border-r border-border/30",
+                  scheduleYearBandMutedClass(band.year)
+                )}
+                style={{
+                  left: band.startIndex * dayWidth,
+                  width: band.dayCount * dayWidth,
+                }}
+                title={`${band.year}年${band.label}`}
+              >
+                <span className="absolute left-0.5 top-1/2 z-[1] -translate-y-1/2 whitespace-nowrap text-[10px] font-medium leading-none text-foreground/80">
+                  {band.label}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex h-2">
+            {days.map((day) => (
+              <div
+                key={day.dateKey}
+                className={cn(
+                  "box-border shrink-0 border-r border-border/20",
+                  scheduleYearBandMutedClass(day.date.getFullYear()),
+                  day.isWeekend && "opacity-70"
+                )}
+                style={{
+                  width: dayWidth,
+                  minWidth: dayWidth,
+                  maxWidth: dayWidth,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex shrink-0" style={{ width: trackWidth }}>
+          {days.map((day) => (
+            <div
+              key={day.dateKey}
+              className={cn(
+                "box-border shrink-0 border-r text-center flex items-center justify-center overflow-hidden",
+                !narrow && "p-1",
+                day.isWeekend && "bg-muted/60"
+              )}
+              style={{
+                width: dayWidth,
+                minWidth: dayWidth,
+                maxWidth: dayWidth,
+                minHeight: 40,
+                fontSize: narrow ? 9 : undefined,
+              }}
+            >
+              {day.label}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -147,6 +293,7 @@ export function ScheduleTimelineBar({
   bar,
   periodStart,
   days,
+  dayWidth,
   showProject,
   peerRecords = [],
   dimmed,
@@ -156,6 +303,7 @@ export function ScheduleTimelineBar({
   bar: ScheduleBar;
   periodStart: Date;
   days: TimelineDay[];
+  dayWidth: number;
   showProject: boolean;
   peerRecords?: AllocationRecord[];
   dimmed?: boolean;
@@ -166,7 +314,8 @@ export function ScheduleTimelineBar({
     parseDateOnlyInput(bar.startDate),
     parseDateOnlyInput(bar.endDate),
     periodStart,
-    days.length
+    days.length,
+    dayWidth
   );
   const fills = useMemo(
     () => dayFillsForBar(bar, days, periodStart, peerRecords),
@@ -244,6 +393,8 @@ export function ScheduleTimelineRow({
   rowLabelWidth,
   label,
   sublabel,
+  secondaryLabel,
+  secondaryLabelWidth,
   bars,
   showProject,
   peerRecords = [],
@@ -261,6 +412,8 @@ export function ScheduleTimelineRow({
   rowLabelWidth: number;
   label: string;
   sublabel?: string;
+  secondaryLabel?: string;
+  secondaryLabelWidth?: number;
   bars: ScheduleBar[];
   showProject: boolean;
   peerRecords?: AllocationRecord[];
@@ -296,23 +449,33 @@ export function ScheduleTimelineRow({
           <p className="text-muted-foreground truncate">{sublabel}</p>
         ) : null}
       </div>
+      {secondaryLabel != null && secondaryLabelWidth != null ? (
+        <div
+          className="shrink-0 border-r p-2 text-xs"
+          style={{ width: secondaryLabelWidth }}
+          title={secondaryLabel}
+        >
+          <p className="font-medium truncate">{secondaryLabel}</p>
+        </div>
+      ) : null}
       <div
         ref={setNodeRef}
         className={cn(
-          "relative flex-1 min-h-[56px]",
+          "relative shrink-0 min-h-[56px]",
           isOver && canDrop && "bg-primary/10 ring-1 ring-inset ring-primary/40"
         )}
-        style={{ minWidth: days.length * dayWidth }}
+        style={{ width: days.length * dayWidth }}
       >
         <div className="absolute inset-0 flex pointer-events-none">
           {days.map((day) => (
             <div
               key={day.dateKey}
               className={cn(
-                "border-r border-dashed border-border/50 h-full",
+                "box-border shrink-0 border-r border-dashed border-border/50 h-full",
+                dayWidth < 22 && scheduleYearBandMutedClass(day.date.getFullYear()),
                 day.isWeekend && "bg-muted/30"
               )}
-              style={{ width: dayWidth }}
+              style={{ width: dayWidth, minWidth: dayWidth, maxWidth: dayWidth }}
             />
           ))}
         </div>
@@ -323,6 +486,7 @@ export function ScheduleTimelineRow({
               bar={bar}
               periodStart={periodStart}
               days={days}
+              dayWidth={dayWidth}
               showProject={showProject}
               peerRecords={peerRecords}
               highlighted={highlightUserIds != null && highlightUserIds.includes(bar.userId)}
@@ -342,6 +506,9 @@ export function ScheduleTimelineAddRow({
   dayWidth,
   rowLabelWidth,
   canDrop,
+  secondaryLabelWidth,
+  label = "添加投入",
+  hint = "",
 }: {
   rowId: string;
   projectId: string;
@@ -349,6 +516,9 @@ export function ScheduleTimelineAddRow({
   dayWidth: number;
   rowLabelWidth: number;
   canDrop: boolean;
+  secondaryLabelWidth?: number;
+  label?: string;
+  hint?: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: rowId,
@@ -361,18 +531,25 @@ export function ScheduleTimelineAddRow({
       <div
         className="shrink-0 border-r p-2 text-xs text-muted-foreground"
         style={{ width: rowLabelWidth }}
+        title={label}
       >
-        添加投入
+        <p className="truncate">{label}</p>
       </div>
+      {secondaryLabelWidth != null && secondaryLabelWidth > 0 ? (
+        <div
+          className="shrink-0 border-r p-2 text-xs text-muted-foreground"
+          style={{ width: secondaryLabelWidth }}
+        />
+      ) : null}
       <div
         ref={setNodeRef}
         className={cn(
-          "relative flex-1 min-h-[44px] flex items-center justify-center text-xs text-muted-foreground",
+          "relative shrink-0 min-h-[40px] flex items-center justify-center text-xs text-muted-foreground",
           isOver && canDrop && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40"
         )}
-        style={{ minWidth: days.length * dayWidth }}
+        style={{ width: days.length * dayWidth }}
       >
-        将左侧人员拖入此处
+        {hint}
       </div>
     </div>
   );

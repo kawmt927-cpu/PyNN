@@ -10,11 +10,13 @@ import {
 import {
   CONFIG_CATEGORY,
   getConfigOptionMaps,
+  getConfigOptions,
   labelForConfig,
 } from "@/lib/config-options";
 import { OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { MobileSearchForm } from "@/components/mobile/mobile-search-form";
+import { MobileCreateOpportunityButton } from "@/components/mobile/mobile-create-opportunity-button";
 import { scoreNameMatch } from "@/lib/search/fuzzy-text";
 
 type Props = {
@@ -30,7 +32,7 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
 
   const where: Prisma.OpportunityWhereInput = accessWhere;
 
-  const [raw, labelMaps] = await Promise.all([
+  const [raw, labelMaps, stageOptions] = await Promise.all([
     prisma.opportunity.findMany({
       where,
       orderBy: { updatedAt: "desc" },
@@ -41,6 +43,7 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
       take: q ? 120 : 50,
     }),
     getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]),
+    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
   ]);
 
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
@@ -58,25 +61,28 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="shrink-0 space-y-2 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold">商机</h1>
-          <Link href="/mobile/more" className="text-xs text-primary">
+      <header className="shrink-0 space-y-3 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/mobile/more"
+            className="shrink-0 text-sm text-muted-foreground active:text-foreground"
+          >
             返回
           </Link>
+          <h1 className="min-w-0 flex-1 text-lg font-bold">商机</h1>
         </div>
-        <p className="text-xs text-muted-foreground">未签约商机查阅</p>
         <MobileSearchForm
           action="/mobile/opportunities"
           placeholder="搜索商机或客户"
           defaultValue={q}
+          trailing={<MobileCreateOpportunityButton stageOptions={stageOptions} />}
         />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8">
         {opportunities.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            {q ? "未找到匹配商机" : "暂无未签约商机"}
+            {q ? "未找到匹配商机" : "暂无未签约商机，可点右上角新增"}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -101,9 +107,7 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
             ))}
           </ul>
         )}
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          签约 / 放弃请在电脑端操作
-        </p>
+        <p className="mt-4 text-center text-xs text-muted-foreground">签约 / 放弃请在电脑端操作</p>
       </div>
     </div>
   );

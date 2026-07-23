@@ -7,6 +7,7 @@ import {
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
 import { CONFIG_CATEGORY, getConfigOptions, loadCustomerFormOptions } from "@/lib/config-options";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { selfReturnPath } from "@/lib/navigation/return-to";
@@ -39,13 +40,11 @@ export default async function EditOpportunityPage({ params, searchParams }: Prop
   const [stageOptions, customerFormOptions, salesUsers] = await Promise.all([
     getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
     loadCustomerFormOptions(),
-    showOwnerSelect
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+      includeUserIds: [full.ownerId],
+    }),
   ]);
 
   const detailHref = selfReturnPath(`/opportunities/${id}`, query);
@@ -70,6 +69,7 @@ export default async function EditOpportunityPage({ params, searchParams }: Prop
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}
+        channelGradeOptions={customerFormOptions.channelGradeOptions}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
         initial={{

@@ -195,10 +195,17 @@ export function ConfigFieldsSettings({
           options={activeOptions}
           onDirtyChange={setIsDirty}
         />
-      ) : activeField.category === CONFIG_CATEGORY.CUSTOMER_GRADE ? (
+      ) : activeField.category === CONFIG_CATEGORY.CUSTOMER_GRADE ||
+        activeField.category === CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE ? (
         <CustomerGradeOptionsPanel
           key={`${activeModule.id}-${activeField.category}`}
           options={activeOptions}
+          category={activeField.category}
+          tone={
+            activeField.category === CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE
+              ? "blue"
+              : "amber"
+          }
           onDirtyChange={setIsDirty}
         />
       ) : (

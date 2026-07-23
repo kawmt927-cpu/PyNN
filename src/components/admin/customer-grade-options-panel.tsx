@@ -17,6 +17,8 @@ type GradeDraft = DraftConfigOption & { followUpIntervalDays: number; value?: st
 
 type Props = {
   options: ConfigOptionRow[];
+  category?: string;
+  tone?: "amber" | "blue";
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -43,7 +45,12 @@ function draftSnapshot(items: GradeDraft[]) {
   }));
 }
 
-export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
+export function CustomerGradeOptionsPanel({
+  options,
+  category = "customer_grade",
+  tone = "amber",
+  onDirtyChange,
+}: Props) {
   const router = useRouter();
   const [baseline, setBaseline] = useState(() => optionsToDraft(options));
   const [draft, setDraft] = useState(() => optionsToDraft(options));
@@ -98,7 +105,8 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
             label: item.label,
             enabled: item.enabled,
             followUpIntervalDays: item.followUpIntervalDays,
-          }))
+          })),
+          category
         );
         setSaveError(null);
         router.refresh();
@@ -123,7 +131,7 @@ export function CustomerGradeOptionsPanel({ options, onDirtyChange }: Props) {
           const value = valueById.get(item.id);
           return value ? (
             <span className="inline-flex justify-center">
-              <CustomerGradeVisual grade={value} size="sm" />
+              <CustomerGradeVisual grade={value} size="sm" tone={tone} />
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">—</span>

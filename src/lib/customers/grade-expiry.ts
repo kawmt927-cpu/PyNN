@@ -3,15 +3,22 @@ import type { UserRole } from "@prisma/client";
 import {
   addDays,
   computeGradeFollowUpDueAt,
-  getCustomerGradeIntervalMap,
+  getGradeIntervalMaps,
+  pickGradeIntervalMap,
   resolveGradeIntervalDays,
 } from "@/lib/customers/grade-intervals";
+import {
+  customerTypeRequiresGrade,
+  isChannelCustomerType,
+} from "@/lib/customers/customer-type-grade";
+import { CONFIG_CATEGORY } from "@/lib/config-options";
 
 export type GradeExpiryPendingItem = {
   kind: "grade_expiry";
   customerId: string;
   customerName: string;
   customerGrade: string | null;
+  customerType?: string | null;
   owner: { id: string; name: string };
   dueAt: Date;
   lastInteractionAt: Date;
@@ -28,8 +35,21 @@ export async function getCustomerGradeFollowUpSchedule(input: {
   customerId: string;
   customerGrade: string | null;
   customerCreatedAt: Date;
+  customerType?: string | null;
 }): Promise<CustomerGradeFollowUpSchedule | null> {
-  const intervalMap = await getCustomerGradeIntervalMap();
+  const { getConfigOptions } = await import("@/lib/config-options");
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+  if (
+    input.customerType != null &&
+    !customerTypeRequiresGrade(input.customerType, typeOptions)
+  ) {
+    return null;
+  }
+  const maps = await getGradeIntervalMaps();
+  const intervalMap = pickGradeIntervalMap(
+    isChannelCustomerType(input.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
+    maps
+  );
   const intervalDays = resolveGradeIntervalDays(input.customerGrade, intervalMap);
   if (!intervalDays) return null;
 
@@ -94,13 +114,16 @@ async function listGradeFollowUpScheduleItems(
   userId: string,
   now: Date
 ): Promise<GradeExpiryPendingItem[]> {
-  const intervalMap = await getCustomerGradeIntervalMap();
+  const maps = await getGradeIntervalMaps();
+  const { getConfigOptions } = await import("@/lib/config-options");
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
   const customers = await prisma.customer.findMany({
     where: customerOwnerFilter(role, userId),
     select: {
       id: true,
       name: true,
       customerGrade: true,
+      customerType: true,
       createdAt: true,
       owner: { select: { id: true, name: true } },
     },
@@ -111,6 +134,11 @@ async function listGradeFollowUpScheduleItems(
   const items: GradeExpiryPendingItem[] = [];
 
   for (const customer of customers) {
+    if (!customerTypeRequiresGrade(customer.customerType, typeOptions)) continue;
+    const intervalMap = pickGradeIntervalMap(
+      isChannelCustomerType(customer.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
+      maps
+    );
     const intervalDays = resolveGradeIntervalDays(customer.customerGrade, intervalMap);
     if (!intervalDays) continue;
 
@@ -122,6 +150,7 @@ async function listGradeFollowUpScheduleItems(
       customerId: customer.id,
       customerName: customer.name,
       customerGrade: customer.customerGrade,
+      customerType: customer.customerType,
       owner: customer.owner ?? { id: "", name: "未分配" },
       dueAt,
       lastInteractionAt,
@@ -171,6 +200,7 @@ export async function getCustomerGradeExpiryPending(
       id: true,
       name: true,
       customerGrade: true,
+      customerType: true,
       createdAt: true,
       owner: { select: { id: true, name: true } },
     },
@@ -181,6 +211,7 @@ export async function getCustomerGradeExpiryPending(
     customerId: customer.id,
     customerGrade: customer.customerGrade,
     customerCreatedAt: customer.createdAt,
+    customerType: customer.customerType,
   });
   if (!schedule || schedule.dueAt > now) return null;
 
@@ -189,6 +220,7 @@ export async function getCustomerGradeExpiryPending(
     customerId: customer.id,
     customerName: customer.name,
     customerGrade: customer.customerGrade,
+    customerType: customer.customerType,
     owner: customer.owner ?? { id: "", name: "未分配" },
     dueAt: schedule.dueAt,
     lastInteractionAt: schedule.lastInteractionAt,

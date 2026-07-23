@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -90,7 +90,7 @@ function StaffCard({
     >
       <p className="font-medium">{staff.name}</p>
       <p className="text-muted-foreground">
-        {staff.dailyRate != null ? `${formatAmount(staff.dailyRate)}/天` : "未设日单价"}
+        {staff.dailyRate != null ? `${formatAmount(staff.dailyRate)}/天` : "未设月成本"}
       </p>
       <p className="text-muted-foreground">
         本周 {staff.weekEffectiveDays} 人天 · {staff.parallelProjects} 项目
@@ -194,6 +194,7 @@ function TimelineBar({
   bar,
   weekStart,
   days,
+  dayWidth,
   showProject,
   peerRecords = [],
   onSelect,
@@ -201,6 +202,7 @@ function TimelineBar({
   bar: ScheduleBar;
   weekStart: Date;
   days: TimelineDay[];
+  dayWidth: number;
   showProject: boolean;
   peerRecords?: AllocationRecord[];
   onSelect: () => void;
@@ -209,7 +211,8 @@ function TimelineBar({
     parseDateOnlyInput(bar.startDate),
     parseDateOnlyInput(bar.endDate),
     weekStart,
-    days.length
+    days.length,
+    dayWidth
   );
   const fills = useMemo(
     () => dayFillsForBar(bar, days, weekStart, peerRecords),
@@ -314,10 +317,10 @@ function DropTimelineRow({
       <div
         ref={setNodeRef}
         className={cn(
-          "relative flex-1 min-h-[52px]",
+          "relative shrink-0 min-h-[52px]",
           isOver && canDrop && "bg-primary/5 ring-1 ring-inset ring-primary/30"
         )}
-        style={{ minWidth: days.length * DAY_COLUMN_WIDTH }}
+        style={{ width: days.length * DAY_COLUMN_WIDTH }}
       >
         <div className="absolute inset-0 flex pointer-events-none">
           {days.map((day) => (
@@ -337,6 +340,7 @@ function DropTimelineRow({
               key={bar.id}
               bar={bar}
               weekStart={weekStart}
+              dayWidth={DAY_COLUMN_WIDTH}
               days={days}
               showProject={showProject}
               peerRecords={peerRecordsByUser[bar.userId] ?? []}
@@ -375,6 +379,7 @@ export function ResourceTimelineScheduler({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
+  const dndContextId = useId();
 
   const activeStaff = staff.find((s) => s.id === activeStaffId);
 
@@ -465,6 +470,7 @@ export function ResourceTimelineScheduler({
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <DndContext
+        id={dndContextId}
         sensors={sensors}
         onDragStart={(e) => {
           if (String(e.active.id).startsWith("staff-")) {

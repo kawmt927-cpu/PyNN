@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   DndContext,
   DragEndEvent,
@@ -14,12 +14,13 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SelectField } from "@/components/ui/select-field";
 import {
   SCHEDULE_CUSTOM_MAX_DAYS,
   buildScheduleModuleHref,
   buildTimelineDays,
-  datesFromPeriodDrop,
+  customRangeFromProjectDates,
+  defaultAllocationDates,
+  fitScheduleDayWidth,
   formatAllocationPersonDaysSummary,
   formatPeriodLabel,
   formatPersonDays,
@@ -27,11 +28,11 @@ import {
   periodRangeSwitchEnd,
   periodRangeSwitchStart,
   periodStartKey,
-  scheduleDayWidth,
   shiftPeriod,
+  type ScheduleDetailAxis,
   type ScheduleModuleView,
   type SchedulePeriod,
-  type ScheduleProjectScope,
+  type ScheduleProjectIds,
 } from "@/lib/projects/timeline";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
 import { parseDateOnlyInput } from "@/lib/validations/project";
@@ -44,6 +45,7 @@ import { buildDraftScheduleBar } from "@/lib/projects/schedule-serialize";
 import type { AllocationRecord } from "@/lib/projects/allocation-split";
 import { ScheduleStaffPanel } from "@/components/projects/schedule-staff-panel";
 import { ScheduleProjectCards } from "@/components/projects/schedule-project-cards";
+import { ScheduleProjectMultiSelect } from "@/components/projects/schedule-project-multi-select";
 import {
   ScheduleTimelineHeader,
   ScheduleTimelineRow,
@@ -51,15 +53,17 @@ import {
 } from "@/components/projects/schedule-timeline";
 import { AllocationEditDialog } from "@/components/projects/allocation-edit-dialog";
 import { findOverlappingSegment } from "@/lib/projects/allocation-overlap";
+import { peekScheduleReturn, saveScheduleReturn } from "@/lib/projects/task-form-draft";
 
 const ROW_LABEL_WIDTH = 160;
-const ALL_PROJECTS = "all";
+const PROJECT_COL_WIDTH = 168;
 
 type Props = {
   data: ScheduleModuleData;
   canEdit: boolean;
   view: ScheduleModuleView;
-  projectScope: ScheduleProjectScope;
+  axis: ScheduleDetailAxis;
+  selectedProjectIds: ScheduleProjectIds;
   lockedPersonIds: string[];
   peerRecordsByUser: Record<string, AllocationRecord[]>;
 };
@@ -68,17 +72,35 @@ export function ScheduleModule({
   data,
   canEdit,
   view,
-  projectScope,
+  axis,
+  selectedProjectIds,
   lockedPersonIds,
   peerRecordsByUser,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTaskFromUrl = searchParams.get("returnTask")?.trim() || null;
+  const [returnTask, setReturnTask] = useState(returnTaskFromUrl);
   const [error, setError] = useState<string | null>(null);
   const [activeStaff, setActiveStaff] = useState<ScheduleStaff | null>(null);
   const [selectedBar, setSelectedBar] = useState<ScheduleBar | null>(null);
   const [draftSegment, setDraftSegment] = useState<{ startDate: string; endDate: string } | null>(
     null
   );
+
+  useEffect(() => {
+    const projectId =
+      selectedProjectIds.length === 1 ? selectedProjectIds[0] : null;
+    if (returnTaskFromUrl) {
+      setReturnTask(returnTaskFromUrl);
+      if (projectId) saveScheduleReturn(projectId, returnTaskFromUrl);
+      return;
+    }
+    if (projectId) {
+      const stored = peekScheduleReturn(projectId);
+      if (stored) setReturnTask(stored);
+    }
+  }, [returnTaskFromUrl, selectedProjectIds]);
 
   const period: SchedulePeriod = useMemo(
     () => ({
@@ -91,7 +113,26 @@ export function ScheduleModule({
 
   const periodKey = periodStartKey(period);
   const days = useMemo(() => buildTimelineDays(period), [period]);
-  const dayWidth = scheduleDayWidth(period);
+  const timelinePaneRef = useRef<HTMLDivElement>(null);
+  const [timelinePaneWidth, setTimelinePaneWidth] = useState(0);
+  const sideLabelWidth = axis === "person" ? PROJECT_COL_WIDTH : ROW_LABEL_WIDTH;
+
+  useEffect(() => {
+    const el = timelinePaneRef.current;
+    if (!el) return;
+    const update = () => setTimelinePaneWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
+
+  const dayWidth = fitScheduleDayWidth({
+    period,
+    dayCount: days.length,
+    containerWidth: timelinePaneWidth,
+    sideLabelWidth,
+  });
   const periodLabel =
     period.mode === "month" ? "本月" : period.mode === "week" ? "本周" : "本周期";
   const hasLocks = lockedPersonIds.length > 0;
@@ -108,10 +149,32 @@ export function ScheduleModule({
     return map;
   }, [data.allBars, hasLocks, lockedSet]);
 
+  const barsByUser = useMemo(() => {
+    const map = new Map<string, ScheduleBar[]>();
+    for (const bar of data.allBars) {
+      if (hasLocks && !lockedSet.has(bar.userId)) continue;
+      const list = map.get(bar.userId) ?? [];
+      list.push(bar);
+      map.set(bar.userId, list);
+    }
+    return map;
+  }, [data.allBars, hasLocks, lockedSet]);
+
+  const selectedProjectSet = useMemo(
+    () => new Set(selectedProjectIds),
+    [selectedProjectIds]
+  );
+  const isAllProjects = selectedProjectIds.length === 0;
+
   const visibleProjects = useMemo(() => {
     if (!hasLocks) return data.projects;
-    return data.projects.filter((p) => (barsByProject.get(p.id)?.length ?? 0) > 0);
-  }, [data.projects, barsByProject, hasLocks]);
+    const withBars = data.projects.filter((p) => (barsByProject.get(p.id)?.length ?? 0) > 0);
+    // 当前选中的项目即使尚无锁定人员投入也保留，便于继续拖入排班
+    const extras = data.projects.filter(
+      (p) => selectedProjectSet.has(p.id) && !withBars.some((w) => w.id === p.id)
+    );
+    return [...withBars, ...extras];
+  }, [data.projects, barsByProject, hasLocks, selectedProjectSet]);
 
   const projectsForDisplay = useMemo(() => {
     if (!hasLocks) return visibleProjects;
@@ -132,29 +195,45 @@ export function ScheduleModule({
   }, [visibleProjects, barsByProject, hasLocks]);
 
   const detailProjects = useMemo(() => {
-    if (projectScope === ALL_PROJECTS) return visibleProjects;
-    const project = visibleProjects.find((p) => p.id === projectScope);
-    return project ? [project] : visibleProjects;
-  }, [visibleProjects, projectScope]);
+    if (isAllProjects) return visibleProjects;
+    const fromVisible = visibleProjects.filter((p) => selectedProjectSet.has(p.id));
+    const missing = data.projects.filter(
+      (p) => selectedProjectSet.has(p.id) && !fromVisible.some((v) => v.id === p.id)
+    );
+    return [...fromVisible, ...missing];
+  }, [visibleProjects, isAllProjects, selectedProjectSet, data.projects]);
+
+  const detailProjectIdSet = useMemo(
+    () => new Set(detailProjects.map((p) => p.id)),
+    [detailProjects]
+  );
+
+  const detailPeople = useMemo(() => {
+    if (hasLocks) return data.staff.filter((s) => lockedSet.has(s.id));
+    return data.staff.filter((s) => {
+      const bars = barsByUser.get(s.id) ?? [];
+      return bars.some((b) => detailProjectIdSet.has(b.projectId));
+    });
+  }, [data.staff, barsByUser, hasLocks, lockedSet, detailProjectIdSet]);
 
   const projectOptions = useMemo(
-    () => [
-      { value: ALL_PROJECTS, label: "全部项目" },
-      ...visibleProjects.map((p) => ({
+    () =>
+      data.projects.map((p) => ({
         value: p.id,
         label: `${p.name}（${p.customerName}）`,
       })),
-    ],
-    [visibleProjects]
+    [data.projects]
   );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
+  const dndContextId = useId();
 
   function hrefFor(overrides: {
     view?: ScheduleModuleView;
-    project?: ScheduleProjectScope | null;
+    axis?: ScheduleDetailAxis;
+    project?: ScheduleProjectIds | null;
     lock?: string[] | null;
     range?: SchedulePeriod["mode"];
     start?: string;
@@ -166,14 +245,15 @@ export function ScheduleModule({
 
     const nextPeriod = overrides.period ?? period;
     const nextRange = overrides.range ?? nextPeriod.mode;
+    const nextAxis = overrides.axis ?? axis;
 
-    let nextProject: ScheduleProjectScope | undefined;
+    let nextProject: ScheduleProjectIds | undefined;
     if (overrides.project === null) {
-      nextProject = undefined;
+      nextProject = [];
     } else if (overrides.project !== undefined) {
       nextProject = overrides.project;
     } else if ((overrides.view ?? view) === "detail") {
-      nextProject = projectScope;
+      nextProject = selectedProjectIds;
     }
 
     return buildScheduleModuleHref({
@@ -184,13 +264,78 @@ export function ScheduleModule({
           ? overrides.end ?? periodEndKey(nextPeriod)
           : undefined,
       view: overrides.view ?? view,
+      axis: nextAxis,
       project: nextProject,
       lock: nextLock,
+      returnTask,
     });
   }
 
   function navigate(params: Parameters<typeof hrefFor>[0]) {
     router.push(hrefFor(params));
+  }
+
+  function applyProjectFilter(ids: ScheduleProjectIds) {
+    const next: Parameters<typeof hrefFor>[0] = {
+      project: ids,
+      axis,
+    };
+
+    // 仅选中一个项目且当前为自定义周期时，按该项目起止拉长区间
+    if (ids.length === 1 && period.mode === "custom") {
+      const project = data.projects.find((p) => p.id === ids[0]);
+      const span = project
+        ? customRangeFromProjectDates({
+            plannedStartAt: project.plannedStartAt,
+            plannedEndAt: project.plannedEndAt,
+            actualStartAt: project.actualStartAt,
+            actualEndAt: project.actualEndAt,
+          })
+        : null;
+      if (span) {
+        next.range = "custom";
+        next.start = span.start;
+        next.end = span.end;
+        setError(null);
+      }
+    }
+
+    navigate(next);
+  }
+
+  /** 从总览卡片进入某一项目明细 */
+  function navigateToProject(
+    projectId: string,
+    extras: Parameters<typeof hrefFor>[0] = {}
+  ) {
+    const next: Parameters<typeof hrefFor>[0] = {
+      ...extras,
+      project: [projectId],
+      view: extras.view ?? "detail",
+    };
+
+    const useCustom =
+      (extras.range ?? period.mode) === "custom" || extras.view === "detail";
+
+    if (useCustom) {
+      const project = data.projects.find((p) => p.id === projectId);
+      const span = project
+        ? customRangeFromProjectDates({
+            plannedStartAt: project.plannedStartAt,
+            plannedEndAt: project.plannedEndAt,
+            actualStartAt: project.actualStartAt,
+            actualEndAt: project.actualEndAt,
+          })
+        : null;
+      if (span) {
+        next.range = "custom";
+        next.start = span.start;
+        next.end = span.end;
+        setError(null);
+      }
+    }
+
+    navigate(next);
   }
 
   function applyCustomRange(nextStart: string, nextEnd: string) {
@@ -212,7 +357,7 @@ export function ScheduleModule({
       const capped = parseDateOnlyInput(start);
       capped.setDate(capped.getDate() + SCHEDULE_CUSTOM_MAX_DAYS - 1);
       end = formatLocalDateInput(capped);
-      setError(`自定义周期最长约 18 个月（${SCHEDULE_CUSTOM_MAX_DAYS} 天），已自动截断`);
+      setError(`自定义周期最长约 3 年（${SCHEDULE_CUSTOM_MAX_DAYS} 天），已自动截断`);
     } else {
       setError(null);
     }
@@ -222,12 +367,17 @@ export function ScheduleModule({
   function handleDragEnd(event: DragEndEvent) {
     setActiveStaff(null);
     const { active, over } = event;
-    if (!over || !canEdit || view !== "detail") return;
+    if (!over || !canEdit || view !== "detail" || axis !== "project") return;
 
     const userId =
       active.data.current?.type === "staff"
         ? (active.data.current.userId as string)
         : String(active.id).replace("staff-", "");
+
+    if (hasLocks && !lockedSet.has(userId)) {
+      setError("当前已锁定人员，请先解除锁定或只拖动已锁定人员");
+      return;
+    }
 
     const dropType = over.data.current?.type;
     let targetProjectId: string | undefined;
@@ -248,8 +398,18 @@ export function ScheduleModule({
 
     if (!targetProjectId) return;
 
-    const { startDate, endDate } = datesFromPeriodDrop(period);
-    const projectBars = data.allBars.filter(
+    const project = data.projects.find((item) => item.id === targetProjectId);
+    const { startDate, endDate } = defaultAllocationDates(
+      project
+        ? {
+            plannedStartAt: project.plannedStartAt,
+            plannedEndAt: project.plannedEndAt,
+            actualStartAt: project.actualStartAt,
+            actualEndAt: project.actualEndAt,
+          }
+        : null
+    );
+    const projectBars = data.allocationSegments.filter(
       (bar) => bar.userId === userId && bar.projectId === targetProjectId
     );
 
@@ -269,7 +429,6 @@ export function ScheduleModule({
     }
 
     const staffMember = data.staff.find((member) => member.id === userId);
-    const project = data.projects.find((item) => item.id === targetProjectId);
     if (!staffMember || !project) {
       setError("无法打开排班编辑器");
       return;
@@ -298,15 +457,16 @@ export function ScheduleModule({
   function renderProjectGantt(project: (typeof data.projects)[number]) {
     const projectBars = barsByProject.get(project.id) ?? [];
     const staffRows = data.staff.filter((member) => {
-      const hasBars = projectBars.some((b) => b.userId === member.id);
-      if (!hasBars) return false;
-      if (hasLocks) return lockedSet.has(member.id);
-      return true;
+      if (hasLocks) {
+        // 锁定人员即使本项目尚无投入也显示空行，便于拖入
+        return lockedSet.has(member.id);
+      }
+      return projectBars.some((b) => b.userId === member.id);
     });
 
     return (
       <div key={project.id} className="border-b-2 border-muted">
-        {projectScope === ALL_PROJECTS ? (
+        {isAllProjects || selectedProjectIds.length > 1 ? (
           <div
             className="sticky left-0 z-10 flex border-b bg-muted/50 px-4 py-2 text-sm"
             style={{ minWidth: days.length * dayWidth + ROW_LABEL_WIDTH }}
@@ -361,8 +521,76 @@ export function ScheduleModule({
             dayWidth={dayWidth}
             rowLabelWidth={ROW_LABEL_WIDTH}
             canDrop={canEdit}
+            hint=""
           />
         ) : null}
+      </div>
+    );
+  }
+
+  function renderPersonGantt(member: ScheduleStaff) {
+    const userBars = barsByUser.get(member.id) ?? [];
+    const projectIdsWithBars = new Set(userBars.map((b) => b.projectId));
+    // 人员维度只读展示已有投入，不提供拖入空行
+    const projectRows = detailProjects.filter((p) => projectIdsWithBars.has(p.id));
+
+    return (
+      <div key={member.id} className="border-b-2 border-muted">
+        <div
+          className="sticky left-0 z-10 flex border-b bg-muted/50 px-4 py-2 text-sm"
+          style={{ minWidth: days.length * dayWidth + PROJECT_COL_WIDTH }}
+        >
+          <p className="font-semibold">{member.name}</p>
+          {userBars.length > 0 ? (
+            <span className="ml-auto text-xs text-muted-foreground">
+              {formatPersonDays(
+                userBars
+                  .filter((b) => detailProjectIdSet.has(b.projectId))
+                  .reduce((sum, bar) => sum + bar.effectiveDays, 0)
+              )}{" "}
+              人天 ·{" "}
+              {
+                new Set(
+                  userBars
+                    .filter((b) => detailProjectIdSet.has(b.projectId))
+                    .map((b) => b.projectId)
+                ).size
+              }{" "}
+              项目
+            </span>
+          ) : null}
+        </div>
+
+        {projectRows.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-muted-foreground">该时段暂无投入</p>
+        ) : (
+          projectRows.map((project) => {
+            const bars = userBars.filter((b) => b.projectId === project.id);
+            return (
+              <ScheduleTimelineRow
+                key={`${member.id}-${project.id}`}
+                rowId={`person-row-${member.id}-${project.id}`}
+                periodStart={period.from}
+                days={days}
+                dayWidth={dayWidth}
+                rowLabelWidth={PROJECT_COL_WIDTH}
+                label={project.name}
+                sublabel={formatAllocationPersonDaysSummary(bars, period)}
+                bars={bars}
+                showProject={false}
+                peerRecords={peerRecordsByUser[member.id] ?? []}
+                canDrop={false}
+                highlighted={lockedSet.has(member.id)}
+                highlightUserIds={hasLocks ? lockedPersonIds : undefined}
+                onSelectBar={(bar) => {
+                  setDraftSegment(null);
+                  setSelectedBar(bar);
+                }}
+                dropTarget={{ projectId: project.id, userId: member.id }}
+              />
+            );
+          })
+        )}
       </div>
     );
   }
@@ -381,7 +609,7 @@ export function ScheduleModule({
   const lockNoticeSlot = (
     <p
       className={cn(
-        "min-w-0 max-w-[75%] shrink text-xs leading-[18px] rounded-md border px-3 py-1.5 truncate",
+        "min-w-0 max-w-[70%] shrink text-[11px] leading-[16px] rounded border px-2 py-1 truncate",
         hasLocks
           ? "text-muted-foreground border-primary/20 bg-primary/5"
           : "opacity-0 border-transparent pointer-events-none"
@@ -389,17 +617,15 @@ export function ScheduleModule({
       title={hasLocks ? `已锁定 ${lockedPersonIds.length} 人：${lockedNames}，仅显示其相关排班` : undefined}
       aria-hidden={!hasLocks}
     >
-      {hasLocks
-        ? `已锁定 ${lockedPersonIds.length} 人：${lockedNames}，仅显示其相关排班`
-        : "已锁定 0 人，仅显示其相关排班"}
+      {hasLocks ? `已锁定 ${lockedPersonIds.length} 人：${lockedNames}` : null}
     </p>
   );
 
   return (
-    <div className="flex h-full flex-col gap-3 px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
+    <div className="flex h-full flex-col gap-2 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="outline" size="sm" className="h-8" asChild>
             <Link href={hrefFor({ period: prevPeriod })}>
               {period.mode === "month"
                 ? "上一月"
@@ -409,19 +635,19 @@ export function ScheduleModule({
             </Link>
           </Button>
           {period.mode === "custom" ? (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <Input
                 type="date"
-                className="h-8 w-[140px]"
+                className="h-8 w-[132px]"
                 value={formatLocalDateInput(period.from)}
                 onChange={(e) =>
                   applyCustomRange(e.target.value, formatLocalDateInput(period.to))
                 }
               />
-              <span className="text-sm text-muted-foreground">至</span>
+              <span className="text-xs text-muted-foreground">至</span>
               <Input
                 type="date"
-                className="h-8 w-[140px]"
+                className="h-8 w-[132px]"
                 value={formatLocalDateInput(period.to)}
                 onChange={(e) =>
                   applyCustomRange(formatLocalDateInput(period.from), e.target.value)
@@ -433,7 +659,7 @@ export function ScheduleModule({
               {formatPeriodLabel(period)}
             </span>
           )}
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="outline" size="sm" className="h-8" asChild>
             <Link href={hrefFor({ period: nextPeriod })}>
               {period.mode === "month"
                 ? "下一月"
@@ -444,15 +670,59 @@ export function ScheduleModule({
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border p-1 gap-1">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
+          {view === "detail" ? (
+            <>
+              <div className="min-w-[160px] max-w-[280px] flex-1">
+                <ScheduleProjectMultiSelect
+                  id="schedule-project"
+                  compact
+                  options={projectOptions}
+                  value={selectedProjectIds}
+                  onChange={applyProjectFilter}
+                />
+              </div>
+              <div className="flex h-8 items-center rounded-md border p-0.5 gap-0.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate({ axis: "project", project: selectedProjectIds })
+                  }
+                  className={cn(
+                    "rounded px-2 py-1 text-xs font-medium transition-colors",
+                    axis === "project"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  项目
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate({ axis: "person", project: selectedProjectIds })
+                  }
+                  className={cn(
+                    "rounded px-2 py-1 text-xs font-medium transition-colors",
+                    axis === "person"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  人员
+                </button>
+              </div>
+              {lockNoticeSlot}
+            </>
+          ) : null}
+          <div className="flex rounded-md border p-0.5 gap-0.5">
             <Link
               href={hrefFor({
                 range: "month",
                 start: periodRangeSwitchStart(period, "month"),
               })}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 period.mode === "month"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -466,7 +736,7 @@ export function ScheduleModule({
                 start: periodRangeSwitchStart(period, "week"),
               })}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 period.mode === "week"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -475,13 +745,32 @@ export function ScheduleModule({
               按周
             </Link>
             <Link
-              href={hrefFor({
-                range: "custom",
-                start: periodRangeSwitchStart(period, "custom"),
-                end: periodRangeSwitchEnd(period),
-              })}
+              href={(() => {
+                const start = periodRangeSwitchStart(period, "custom");
+                const end = periodRangeSwitchEnd(period);
+                if (selectedProjectIds.length === 1) {
+                  const project = data.projects.find((p) => p.id === selectedProjectIds[0]);
+                  const span = project
+                    ? customRangeFromProjectDates({
+                        plannedStartAt: project.plannedStartAt,
+                        plannedEndAt: project.plannedEndAt,
+                        actualStartAt: project.actualStartAt,
+                        actualEndAt: project.actualEndAt,
+                      })
+                    : null;
+                  if (span) {
+                    return hrefFor({
+                      range: "custom",
+                      start: span.start,
+                      end: span.end,
+                      project: selectedProjectIds,
+                    });
+                  }
+                }
+                return hrefFor({ range: "custom", start, end });
+              })()}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 period.mode === "custom"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -491,11 +780,11 @@ export function ScheduleModule({
             </Link>
           </div>
 
-          <div className="flex rounded-lg border p-1 gap-1">
+          <div className="flex rounded-md border p-0.5 gap-0.5">
             <Link
               href={hrefFor({ view: "global", project: null })}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 view === "global"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -504,9 +793,9 @@ export function ScheduleModule({
               全局总览
             </Link>
             <Link
-              href={hrefFor({ view: "detail", project: projectScope })}
+              href={hrefFor({ view: "detail", project: selectedProjectIds })}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 view === "detail"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -521,6 +810,7 @@ export function ScheduleModule({
       {error ? <p className="text-sm text-destructive shrink-0">{error}</p> : null}
 
       <DndContext
+        id={dndContextId}
         sensors={sensors}
         onDragStart={(e) => {
           const id = String(e.active.id).replace("staff-", "");
@@ -536,7 +826,12 @@ export function ScheduleModule({
               lockedPersonIds={lockedPersonIds}
               onToggleLock={toggleLock}
               onClearLocks={() => navigate({ lock: [] })}
-              canDrag={canEdit && view === "detail" && detailProjects.length > 0}
+              canDrag={
+                canEdit &&
+                view === "detail" &&
+                axis === "project" &&
+                detailProjects.length > 0
+              }
               periodLabel={periodLabel}
             />
           </div>
@@ -557,52 +852,48 @@ export function ScheduleModule({
                   projects={projectsForDisplay}
                   periodLabel={periodLabel}
                   onSelectProject={(projectId) =>
-                    navigate({ view: "detail", project: projectId })
+                    navigateToProject(projectId, { view: "detail" })
                   }
                 />
               </div>
             ) : (
-              <>
-                <div className="shrink-0 border-b p-4">
-                  <div className="mb-3 flex min-h-[34px] items-center justify-between gap-3">
-                    <p className="shrink-0 text-sm font-medium">资源明细</p>
-                    {lockNoticeSlot}
-                  </div>
-                  {visibleProjects.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">暂无可见项目</p>
-                  ) : (
-                    <SelectField
-                      id="schedule-project"
-                      name="project"
-                      label="项目范围"
-                      value={projectScope === ALL_PROJECTS ? ALL_PROJECTS : projectScope}
-                      onValueChange={(id) => navigate({ project: id })}
-                      options={projectOptions}
-                    />
-                  )}
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    仅显示已有投入的人员；新人员请拖到各行下方的「添加投入」区域
-                    {period.mode === "week" ? "" : "（默认落在当前可见周内工作日）"}
-                  </p>
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto">
-                  {detailProjects.length === 0 ? (
+              <div ref={timelinePaneRef} className="min-h-0 flex-1 overflow-auto">
+                  {axis === "project" ? (
+                    detailProjects.length === 0 ? (
+                      <p className="p-8 text-center text-sm text-muted-foreground">
+                        暂无可见项目
+                      </p>
+                    ) : (
+                      <>
+                        <ScheduleTimelineHeader
+                          days={days}
+                          rowLabel="人员"
+                          dayWidth={dayWidth}
+                          rowLabelWidth={ROW_LABEL_WIDTH}
+                        />
+                        {detailProjects.map((project) => renderProjectGantt(project))}
+                      </>
+                    )
+                  ) : detailProjects.length === 0 ? (
                     <p className="p-8 text-center text-sm text-muted-foreground">
                       暂无可见项目
+                    </p>
+                  ) : detailPeople.length === 0 ? (
+                    <p className="p-8 text-center text-sm text-muted-foreground">
+                      暂无可见人员（可用左侧锁定筛选）
                     </p>
                   ) : (
                     <>
                       <ScheduleTimelineHeader
                         days={days}
-                        rowLabel="人员"
+                        rowLabel="项目"
                         dayWidth={dayWidth}
-                        rowLabelWidth={ROW_LABEL_WIDTH}
+                        rowLabelWidth={PROJECT_COL_WIDTH}
                       />
-                      {detailProjects.map((project) => renderProjectGantt(project))}
+                      {detailPeople.map((member) => renderPersonGantt(member))}
                     </>
                   )}
-                </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -620,12 +911,15 @@ export function ScheduleModule({
         <AllocationEditDialog
           key={`${selectedBar.id}-${draftSegment?.startDate ?? "view"}`}
           bar={selectedBar}
-          projectSegments={data.allBars.filter(
+          projectSegments={data.allocationSegments.filter(
             (b) => b.userId === selectedBar.userId && b.projectId === selectedBar.projectId
           )}
           canEdit={canEdit}
           peerRecords={peerRecordsForSelected}
           draftSegment={draftSegment}
+          projectDates={
+            data.projects.find((p) => p.id === selectedBar.projectId) ?? null
+          }
           onClose={() => {
             setDraftSegment(null);
             setSelectedBar(null);

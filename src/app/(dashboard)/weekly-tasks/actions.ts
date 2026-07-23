@@ -56,6 +56,7 @@ export async function createWeeklyAssignment(formData: FormData): Promise<Action
     revalidatePath("/today-work");
     revalidatePath("/plans-tasks");
     revalidatePath("/follow-ups");
+    revalidatePath("/customers");
     return {};
   } catch (error) {
     if (error instanceof z.ZodError) {

@@ -21,6 +21,7 @@ export function canUseCustomerKimiEnrich(category: CustomerCategory) {
 export async function fetchCustomerKimiEnrich(input: {
   name: string;
   category: CustomerCategory;
+  /** @deprecated 智能填充不再传定位，避免连续填写被上次地址/GPS 带偏 */
   province?: string;
   city?: string;
   district?: string;
@@ -29,7 +30,11 @@ export async function fetchCustomerKimiEnrich(input: {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      name: input.name,
+      category: input.category,
+      // 刻意不传省市区：每次只按名称检索
+    }),
   });
   const data = (await res.json()) as KimiEnrichApplyPayload & { error?: string };
   if (!res.ok) {

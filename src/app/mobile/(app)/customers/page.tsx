@@ -7,16 +7,22 @@ import {
   parseCustomerListFilters,
   normalizeCustomerListTagFilters,
 } from "@/lib/customers/list-filters";
-import { resolveCustomerListView } from "@/lib/customers/access";
+import {
+  canManageCustomerOwner,
+  listCustomerAssignableUsers,
+  resolveCustomerListView,
+} from "@/lib/customers/access";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import {
   CONFIG_CATEGORY,
   loadCustomerFieldLabelMaps,
+  loadCustomerFormOptions,
   labelForConfig,
 } from "@/lib/config-options";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { rankByNameMatch } from "@/lib/search/fuzzy-text";
 import { MobileSearchForm } from "@/components/mobile/mobile-search-form";
+import { MobileCreateCustomerButton } from "@/components/mobile/mobile-create-customer-button";
 
 type Props = {
   searchParams: Promise<{ q?: string }>;
@@ -26,18 +32,19 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
   const session = await requireRole(SALES_MOBILE_ROLES);
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
+  const role = session.user.role;
 
   const tagDefinitions = await getCustomerTagDefinitions();
   const allowedTagValues = new Set(tagDefinitions.map((item) => item.value));
-  const view = resolveCustomerListView("mine", session.user.role);
+  const view = resolveCustomerListView("mine", role);
   const parsed = parseCustomerListFilters({ q: q || undefined });
   const filters = {
     ...parsed,
     tags: normalizeCustomerListTagFilters(parsed.tags, allowedTagValues),
   };
-  const where = buildCustomerListWhere(session.user.role, session.user.id, view, filters);
+  const where = buildCustomerListWhere(role, session.user.id, view, filters);
 
-  const [rawCustomers, labelMaps] = await Promise.all([
+  const [rawCustomers, labelMaps, formOptions, salesUsers] = await Promise.all([
     prisma.customer.findMany({
       where,
       orderBy: q ? { name: "asc" } : { updatedAt: "desc" },
@@ -47,6 +54,8 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
       take: q ? 80 : 40,
     }),
     loadCustomerFieldLabelMaps(),
+    loadCustomerFormOptions(),
+    canManageCustomerOwner(role) ? listCustomerAssignableUsers() : Promise.resolve([]),
   ]);
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
@@ -56,20 +65,37 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="shrink-0 space-y-2 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold">客户</h1>
-          <Link href="/mobile/more" className="text-xs text-primary">
+      <header className="shrink-0 space-y-3 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/mobile/more"
+            className="shrink-0 text-sm text-muted-foreground active:text-foreground"
+          >
             返回
           </Link>
+          <h1 className="min-w-0 flex-1 text-lg font-bold">客户</h1>
         </div>
-        <MobileSearchForm action="/mobile/customers" placeholder="搜索客户名称" defaultValue={q} />
+        <MobileSearchForm
+          action="/mobile/customers"
+          placeholder="搜索客户名称"
+          defaultValue={q}
+          trailing={
+            <MobileCreateCustomerButton
+              sourceOptions={formOptions.sourceOptions}
+              typeOptions={formOptions.typeOptions}
+              gradeOptions={formOptions.gradeOptions}
+              tagOptions={formOptions.tagOptions}
+              showOwnerSelect={canManageCustomerOwner(role)}
+              salesUsers={salesUsers}
+            />
+          }
+        />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8">
         {customers.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            {q ? "未找到匹配客户" : "暂无客户"}
+            {q ? "未找到匹配客户" : "暂无客户，可点右上角新增"}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -92,7 +118,6 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
             ))}
           </ul>
         )}
-        <p className="mt-4 text-center text-xs text-muted-foreground">仅查阅；新建请用电脑端</p>
       </div>
     </div>
   );

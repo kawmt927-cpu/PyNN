@@ -1,68 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { WECOM_JS_SDK_URL } from "@/lib/wecom/config";
+import * as ww from "@wecom/jssdk";
 
-type SdkConfig = {
+type SdkConfigPayload = {
   corpId: string;
   agentId: number;
   corp: { nonceStr: string; timestamp: number; signature: string };
   agent: { nonceStr: string; timestamp: number; signature: string };
 };
 
-type WeixinWindow = Window & {
-  wx?: {
-    config: (opts: Record<string, unknown>) => void;
-    ready: (fn: () => void) => void;
-    error: (fn: (err: unknown) => void) => void;
-    agentConfig: (opts: Record<string, unknown>) => void;
-    getLocation: (opts: {
-      type: string;
-      success: (res: { latitude: number; longitude: number }) => void;
-      fail: (err: unknown) => void;
-    }) => void;
-    startRecord: (opts?: {
-      success?: () => void;
-      fail?: (err: unknown) => void;
-    }) => void;
-    stopRecord: (opts: {
-      success: (res: { localId: string }) => void;
-      fail: (err: unknown) => void;
-    }) => void;
-    onVoiceRecordEnd: (opts: { complete: (res: { localId: string }) => void }) => void;
-    translateVoice: (opts: {
-      localId: string;
-      isShowProgressTips?: number;
-      success: (res: { translateResult: string }) => void;
-      fail: (err: unknown) => void;
-    }) => void;
-  };
-};
+const JS_API_LIST = [
+  "getLocation",
+  "startRecord",
+  "stopRecord",
+  "onVoiceRecordEnd",
+  "translateVoice",
+] as const;
 
-function loadScript(src: string) {
-  return new Promise<void>((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve();
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("加载企业微信 JS-SDK 失败"));
-    document.body.appendChild(script);
-  });
+async function fetchJsSdkConfig(url: string): Promise<SdkConfigPayload> {
+  const res = await fetch(`/api/wecom/js-sdk-config?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? "获取 JS-SDK 配置失败");
+  }
+  return (await res.json()) as SdkConfigPayload;
 }
 
-function translateVoiceLocalId(wx: NonNullable<WeixinWindow["wx"]>, localId: string) {
-  return new Promise<string>((resolve, reject) => {
-    wx.translateVoice({
-      localId,
-      isShowProgressTips: 1,
-      success: (r) => resolve(r.translateResult ?? ""),
-      fail: reject,
-    });
-  });
+function formatSdkError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (err && typeof err === "object") {
+    const o = err as { errMsg?: string; message?: string; err_msg?: string };
+    if (o.errMsg) return o.errMsg;
+    if (o.err_msg) return o.err_msg;
+    if (o.message) return o.message;
+  }
+  return "企业微信 JS-SDK 初始化失败";
 }
 
 export function useWeComSdk(enabled: boolean) {
@@ -77,89 +50,67 @@ export function useWeComSdk(enabled: boolean) {
 
     async function init() {
       try {
-        await loadScript(WECOM_JS_SDK_URL);
-        const url = window.location.href.split("#")[0];
-        const res = await fetch(`/api/wecom/js-sdk-config?url=${encodeURIComponent(url)}`);
-        if (!res.ok) throw new Error("获取 JS-SDK 配置失败");
-        const config = (await res.json()) as SdkConfig;
-        const wx = (window as WeixinWindow).wx;
-        if (!wx) throw new Error("wx 对象不可用");
+        const pageUrl = window.location.href.split("#")[0] ?? "";
+        const bootstrap = await fetchJsSdkConfig(pageUrl);
 
-        await new Promise<void>((resolve, reject) => {
-          wx.config({
-            beta: true,
-            debug: false,
-            appId: config.corpId,
-            timestamp: config.corp.timestamp,
-            nonceStr: config.corp.nonceStr,
-            signature: config.corp.signature,
-            jsApiList: [
-              "getLocation",
-              "startRecord",
-              "stopRecord",
-              "onVoiceRecordEnd",
-              "translateVoice",
-            ],
-          });
-
-          wx.ready(() => {
-            wx.agentConfig({
-              corpid: config.corpId,
-              agentid: config.agentId,
-              timestamp: config.agent.timestamp,
-              nonceStr: config.agent.nonceStr,
-              signature: config.agent.signature,
-              jsApiList: [
-                "getLocation",
-                "startRecord",
-                "stopRecord",
-                "onVoiceRecordEnd",
-                "translateVoice",
-              ],
-              success: () => resolve(),
-              fail: (err: unknown) => reject(err),
-            });
-          });
-
-          wx.error((err: unknown) => reject(err));
-        });
-
-        wx.onVoiceRecordEnd({
-          complete: (res) => {
-            voiceEndHandlerRef.current?.(res.localId);
+        ww.register({
+          corpId: bootstrap.corpId,
+          agentId: bootstrap.agentId,
+          jsApiList: [...JS_API_LIST],
+          getConfigSignature: async (url) => {
+            const cfg = await fetchJsSdkConfig(url);
+            return {
+              timestamp: cfg.corp.timestamp,
+              nonceStr: cfg.corp.nonceStr,
+              signature: cfg.corp.signature,
+            };
+          },
+          getAgentConfigSignature: async (url) => {
+            const cfg = await fetchJsSdkConfig(url);
+            return {
+              timestamp: cfg.agent.timestamp,
+              nonceStr: cfg.agent.nonceStr,
+              signature: cfg.agent.signature,
+            };
+          },
+          onAgentConfigFail: (err) => {
+            // 定位/语音主要依赖企业 config；agentConfig 失败时仍尝试继续
+            console.warn("[wecom] agentConfig failed", err);
           },
         });
 
-        if (!cancelled) setReady(true);
+        await ww.ensureConfigReady();
+
+        ww.onVoiceRecordEnd((event) => {
+          voiceEndHandlerRef.current?.(event.localId);
+        });
+
+        if (!cancelled) {
+          setError(null);
+          setReady(true);
+        }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "企业微信 JS-SDK 初始化失败");
+          setReady(false);
+          setError(formatSdkError(e));
         }
       }
     }
 
-    init();
+    void init();
     return () => {
       cancelled = true;
     };
   }, [enabled]);
 
   const getLocation = useCallback(async () => {
-    const wx = (window as WeixinWindow).wx;
-    if (!wx || !ready) throw new Error("企业微信 SDK 未就绪");
-
-    return new Promise<{ latitude: number; longitude: number }>((resolve, reject) => {
-      wx.getLocation({
-        type: "gcj02",
-        success: resolve,
-        fail: reject,
-      });
-    });
+    if (!ready) throw new Error("企业微信 SDK 未就绪");
+    const res = await ww.getLocation({ type: ww.LocationType.gcj02 });
+    return { latitude: res.latitude, longitude: res.longitude };
   }, [ready]);
 
   const stopVoiceRecord = useCallback(async () => {
-    const wx = (window as WeixinWindow).wx;
-    if (!wx || !ready) throw new Error("企业微信 SDK 未就绪");
+    if (!ready) throw new Error("企业微信 SDK 未就绪");
 
     return new Promise<string>((resolve, reject) => {
       let settled = false;
@@ -168,33 +119,29 @@ export function useWeComSdk(enabled: boolean) {
         if (settled) return;
         settled = true;
         voiceEndHandlerRef.current = null;
-        translateVoiceLocalId(wx, localId).then(resolve).catch(reject);
+        void ww
+          .translateVoice({ localId, isShowProgressTips: true })
+          .then((r) => resolve(r.translateResult ?? ""))
+          .catch(reject);
       };
 
       voiceEndHandlerRef.current = finish;
 
-      wx.stopRecord({
-        success: (res) => finish(res.localId),
-        fail: (err) => {
+      void ww
+        .stopRecord()
+        .then((res) => finish(res.localId))
+        .catch((err) => {
           if (settled) return;
           settled = true;
           voiceEndHandlerRef.current = null;
           reject(err);
-        },
-      });
+        });
     });
   }, [ready]);
 
-  const startVoiceRecord = useCallback(() => {
-    const wx = (window as WeixinWindow).wx;
-    if (!wx || !ready) throw new Error("企业微信 SDK 未就绪");
-
-    return new Promise<void>((resolve, reject) => {
-      wx.startRecord({
-        success: () => resolve(),
-        fail: reject,
-      });
-    });
+  const startVoiceRecord = useCallback(async () => {
+    if (!ready) throw new Error("企业微信 SDK 未就绪");
+    await ww.startRecord();
   }, [ready]);
 
   return {

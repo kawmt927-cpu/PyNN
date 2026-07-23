@@ -55,6 +55,7 @@ export function isWeComUserAgent(userAgent: string) {
 
 export const WECOM_OAUTH_SCOPE = "snsapi_base";
 
+/** @deprecated 已改用 npm 包 @wecom/jssdk（ww.register），勿再单独引入 jweixin */
 export const WECOM_JS_SDK_URL =
   "https://res.wx.qq.com/open/js/jweixin-1.2.0.js";
 

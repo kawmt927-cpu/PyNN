@@ -1,11 +1,14 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { ScheduleModule } from "@/components/projects/schedule-module";
+import { SchedulePlanBackLink } from "@/components/projects/schedule-plan-back-link";
 import {
   parseSchedulePeriod,
   parseScheduleView,
-  parseScheduleProjectScope,
+  parseScheduleProjectIds,
+  parseScheduleDetailAxis,
   parseScheduleLocks,
 } from "@/lib/projects/timeline";
 import {
@@ -21,8 +24,10 @@ type Props = {
     end?: string;
     week?: string;
     view?: string;
+    axis?: string;
     project?: string;
     lock?: string;
+    returnTask?: string;
   }>;
 };
 
@@ -42,6 +47,7 @@ export default async function SchedulePage({ searchParams }: Props) {
     week: params.week,
   });
   const view = parseScheduleView(params.view);
+  const axis = parseScheduleDetailAxis(params.axis);
 
   const data = await getScheduleModuleData(
     session.user.role,
@@ -54,7 +60,7 @@ export default async function SchedulePage({ searchParams }: Props) {
     data.staff.map((s) => s.id)
   );
 
-  const projectScope = parseScheduleProjectScope(
+  const selectedProjectIds = parseScheduleProjectIds(
     params.project,
     data.projects.map((p) => p.id)
   );
@@ -73,29 +79,51 @@ export default async function SchedulePage({ searchParams }: Props) {
     session.user.role === "PROJECT_ADMIN" ||
     session.user.role === "PROJECT_MANAGER";
 
+  const planProjectId =
+    typeof params.project === "string" &&
+    params.project.length > 0 &&
+    !params.project.includes(",")
+      ? params.project
+      : selectedProjectIds.length === 1
+        ? selectedProjectIds[0]
+        : null;
+
+  const returnTaskId = params.returnTask?.trim() || null;
+
   return (
     <div className="flex h-screen flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-4 border-b px-4 py-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold">资源排班</h1>
-          <span className="hidden text-sm text-muted-foreground sm:inline">
-            全局总览看项目卡片 · 资源明细看甘特排班
-          </span>
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b px-3 py-1.5">
+        <div className="flex items-center gap-4">
+          {planProjectId ? (
+            <SchedulePlanBackLink projectId={planProjectId} returnTaskFromUrl={returnTaskId} />
+          ) : (
+            <Button variant="outline" size="sm" className="h-8" asChild>
+              <Link href="/projects">返回项目列表</Link>
+            </Button>
+          )}
+          <h1 className="text-base font-semibold">资源排班</h1>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/projects">返回项目列表</Link>
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {planProjectId ? (
+            <Button variant="outline" size="sm" className="h-8" asChild>
+              <Link href="/projects">返回项目列表</Link>
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1">
-        <ScheduleModule
-          data={data}
-          canEdit={canEdit}
-          view={view}
-          projectScope={projectScope}
-          lockedPersonIds={lockedPersonIds}
-          peerRecordsByUser={peerRecordsByUser}
-        />
+        <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">加载排班…</div>}>
+          <ScheduleModule
+            data={data}
+            canEdit={canEdit}
+            view={view}
+            axis={axis}
+            selectedProjectIds={selectedProjectIds}
+            lockedPersonIds={lockedPersonIds}
+            peerRecordsByUser={peerRecordsByUser}
+          />
+        </Suspense>
       </div>
     </div>
   );

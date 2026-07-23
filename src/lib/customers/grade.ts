@@ -14,10 +14,10 @@ export const CUSTOMER_GRADE_OPTIONS: Array<{
   label: string;
   starCount: number;
 }> = [
-  { value: CUSTOMER_GRADE.STAR_3, label: "三星", starCount: 3 },
-  { value: CUSTOMER_GRADE.STAR_2, label: "两星", starCount: 2 },
-  { value: CUSTOMER_GRADE.STAR_1, label: "一星", starCount: 1 },
-  { value: CUSTOMER_GRADE.NONE, label: "未评级", starCount: 0 },
+  { value: CUSTOMER_GRADE.STAR_3, label: "有意向或在建客户", starCount: 3 },
+  { value: CUSTOMER_GRADE.STAR_2, label: "已交付的客户", starCount: 2 },
+  { value: CUSTOMER_GRADE.STAR_1, label: "短期无意向客户", starCount: 1 },
+  { value: CUSTOMER_GRADE.NONE, label: "长期无意向客户", starCount: 0 },
 ];
 
 const LEGACY_GRADE_MAP: Record<string, CustomerGradeValue> = {

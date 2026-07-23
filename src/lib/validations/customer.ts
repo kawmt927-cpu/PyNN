@@ -3,7 +3,11 @@ import { isCustomerTagColor } from "@/lib/customers/tag-colors";
 import { SALES_LOG_METHODS } from "@/lib/sales-log/methods";
 
 export const customerFormSchema = z.object({
-  name: z.string().min(1, "请输入客户名称"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "请输入客户名称")
+    .max(100, "客户名称不超过 100 字"),
   category: z.enum(["HOSPITAL", "COMPANY", "INDIVIDUAL"]),
   hospitalLevel: z
     .enum(["GRADE_3A", "GRADE_3B", "GRADE_3", "GRADE_2A", "GRADE_2B", "GRADE_2", "OTHER"])
@@ -16,7 +20,7 @@ export const customerFormSchema = z.object({
   existingSystem: z.string().optional(),
   source: z.string().optional().nullable(),
   customerType: z.string().min(1, "请选择关系类型"),
-  customerGrade: z.string().min(1, "请选择客户等级"),
+  customerGrade: z.string().optional().nullable(),
   tagValues: z.array(z.string()).optional(),
   notes: z.string().optional(),
   ownerId: z.string().optional().nullable(),

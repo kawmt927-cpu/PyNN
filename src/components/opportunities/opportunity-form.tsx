@@ -47,6 +47,7 @@ type Props = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
   currentUser: { id: string; name: string };
   /** 普通销售只读展示；不传则使用 currentUser */
   readOnlyOwner?: { id: string; name: string };
@@ -109,6 +110,7 @@ export function OpportunityForm({
   sourceOptions = [],
   typeOptions = [],
   gradeOptions = [],
+  channelGradeOptions = [],
   currentUser,
   readOnlyOwner,
   showOwnerSelect,
@@ -219,6 +221,7 @@ export function OpportunityForm({
               sourceOptions={sourceOptions}
               typeOptions={typeOptions}
               gradeOptions={gradeOptions}
+              channelGradeOptions={channelGradeOptions}
               showOwnerSelect={showOwnerSelect}
               salesUsers={salesUsers}
             />
@@ -227,8 +230,10 @@ export function OpportunityForm({
       )}
 
       <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="title">商机名称 *</Label>
+        <div className={cn(FORM_GRID_CELL, "md:col-span-2")}>
+          <Label htmlFor="title" className={FORM_GRID_LABEL}>
+            商机名称 *
+          </Label>
           <Input
             id="title"
             name="title"
@@ -246,10 +251,14 @@ export function OpportunityForm({
             options={(salesUsers ?? []).map((u) => ({ value: u.id, label: u.name }))}
             value={form.ownerId}
             onValueChange={(ownerId) => patchForm({ ownerId })}
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
           />
         ) : (
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="ownerDisplay">负责销售</Label>
+          <div className={FORM_GRID_CELL}>
+            <Label htmlFor="ownerDisplay" className={FORM_GRID_LABEL}>
+              负责销售
+            </Label>
             <Input
               id="ownerDisplay"
               value={fixedOwner.name}
@@ -320,8 +329,22 @@ export function OpportunityForm({
           />
         </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="requirementDesc">需求描述</Label>
+        <div className={FORM_GRID_CELL}>
+          <Label htmlFor="competitor" className={FORM_GRID_LABEL}>
+            竞争对手
+          </Label>
+          <Input
+            id="competitor"
+            name="competitor"
+            value={form.competitor}
+            onChange={(e) => patchForm({ competitor: e.target.value })}
+          />
+        </div>
+
+        <div className={cn(FORM_GRID_CELL, "md:col-span-2")}>
+          <Label htmlFor="requirementDesc" className={FORM_GRID_LABEL}>
+            需求描述
+          </Label>
           <Textarea
             id="requirementDesc"
             name="requirementDesc"
@@ -332,18 +355,10 @@ export function OpportunityForm({
           />
         </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="competitor">竞争对手</Label>
-          <Input
-            id="competitor"
-            name="competitor"
-            value={form.competitor}
-            onChange={(e) => patchForm({ competitor: e.target.value })}
-          />
-        </div>
-
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="notes">备注</Label>
+        <div className={cn(FORM_GRID_CELL, "md:col-span-2")}>
+          <Label htmlFor="notes" className={FORM_GRID_LABEL}>
+            备注
+          </Label>
           <Textarea
             id="notes"
             name="notes"

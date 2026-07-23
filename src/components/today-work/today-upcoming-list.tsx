@@ -88,7 +88,14 @@ export async function TodayUpcomingList({ role, userId, returnPath }: Props) {
                       <p className="text-sm text-muted-foreground line-clamp-1">{item.subtitle}</p>
                     ) : null}
                     <p className="text-xs text-muted-foreground">
-                      {showOwner ? (
+                      {item.kind === "assignment" ? (
+                        <>
+                          <span className="font-medium text-foreground">{item.assignedBy.name}</span>
+                          {" 指派给 "}
+                          <span className="font-medium text-foreground">{item.assignee.name}</span>
+                          {" · "}
+                        </>
+                      ) : showOwner ? (
                         <>
                           <span className="font-medium text-foreground">{item.owner.name}</span>
                           {" · "}

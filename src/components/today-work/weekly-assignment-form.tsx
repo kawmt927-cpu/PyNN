@@ -25,7 +25,13 @@ const methodOptions = Object.entries(FOLLOW_UP_METHOD_LABELS).map(([value, label
   label,
 }));
 
-export function WeeklyAssignmentForm() {
+export function WeeklyAssignmentForm({
+  onSuccess,
+  formClassName,
+}: {
+  onSuccess?: () => void;
+  formClassName?: string;
+} = {}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +44,7 @@ export function WeeklyAssignmentForm() {
   const [eligibleAssignees, setEligibleAssignees] = useState<EligibleAssignee[]>([]);
   const [assigneesLoading, setAssigneesLoading] = useState(false);
   const [canAssign, setCanAssign] = useState(true);
+  const [claimOwnerOnAssign, setClaimOwnerOnAssign] = useState(false);
   const defaultDue = new Date();
   defaultDue.setDate(defaultDue.getDate() + 7);
   defaultDue.setHours(18, 0, 0, 0);
@@ -48,6 +55,7 @@ export function WeeklyAssignmentForm() {
       setEligibleAssignees([]);
       setAssigneeId("");
       setCanAssign(true);
+      setClaimOwnerOnAssign(false);
       setOpportunityId("");
       setOpportunityLabel("");
       setContactId("");
@@ -61,9 +69,11 @@ export function WeeklyAssignmentForm() {
         (data: {
           eligibleAssignees: EligibleAssignee[];
           canAssign: boolean;
+          claimOwnerOnAssign?: boolean;
         }) => {
           setEligibleAssignees(data.eligibleAssignees);
           setCanAssign(data.canAssign);
+          setClaimOwnerOnAssign(Boolean(data.claimOwnerOnAssign));
           setAssigneeId(data.eligibleAssignees[0]?.id ?? "");
         }
       )
@@ -71,6 +81,8 @@ export function WeeklyAssignmentForm() {
         setEligibleAssignees([]);
         setAssigneeId("");
         setCanAssign(false);
+        setClaimOwnerOnAssign(false);
+        setError("加载可指派销售失败，请刷新重试");
       })
       .finally(() => setAssigneesLoading(false));
   }, [customerId]);
@@ -84,6 +96,7 @@ export function WeeklyAssignmentForm() {
     setAssigneeId("");
     setEligibleAssignees([]);
     setCanAssign(true);
+    setClaimOwnerOnAssign(false);
     setDueAt(toLocalDatetimeValue(defaultDue));
   }
 
@@ -96,7 +109,7 @@ export function WeeklyAssignmentForm() {
       return;
     }
     if (!canAssign || !assigneeId) {
-      setError("该客户暂无负责人或协助负责人，无法指派");
+      setError(claimOwnerOnAssign ? "请选择指派销售" : "该客户暂无负责人或协助负责人，无法指派");
       return;
     }
 
@@ -110,9 +123,14 @@ export function WeeklyAssignmentForm() {
 
     startTransition(async () => {
       try {
-        await createWeeklyAssignment(formData);
+        const result = await createWeeklyAssignment(formData);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
         resetForm();
         router.refresh();
+        onSuccess?.();
       } catch (err) {
         setError(err instanceof Error ? err.message : "创建失败");
       }
@@ -122,7 +140,7 @@ export function WeeklyAssignmentForm() {
   const submitDisabled = pending || !customerId || !canAssign || !assigneeId;
 
   return (
-    <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
+    <form onSubmit={handleSubmit} className={formClassName ?? "grid gap-4 md:grid-cols-2"}>
       <div className="space-y-2 md:col-span-2">
         <Label htmlFor="wa-title">任务标题 *</Label>
         <Input id="wa-title" name="title" placeholder="如：本周内拜访并确认方案" required />
@@ -225,23 +243,30 @@ export function WeeklyAssignmentForm() {
           </select>
         ) : !canAssign || eligibleAssignees.length === 0 ? (
           <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-            该客户在公海池，需先指定负责人后再指派任务。
+            暂无可指派的销售人员。
           </p>
         ) : (
-          <select
-            id="wa-assignee"
-            name="assigneeId"
-            value={assigneeId}
-            onChange={(e) => setAssigneeId(e.target.value)}
-            required
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          >
-            {eligibleAssignees.map((assignee) => (
-              <option key={assignee.id} value={assignee.id}>
-                {assignee.name}
-              </option>
-            ))}
-          </select>
+          <>
+            <select
+              id="wa-assignee"
+              name="assigneeId"
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              required
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {eligibleAssignees.map((assignee) => (
+                <option key={assignee.id} value={assignee.id}>
+                  {assignee.name}
+                </option>
+              ))}
+            </select>
+            {claimOwnerOnAssign ? (
+              <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                该客户在公海池。创建任务后，所选销售将自动成为客户负责人。
+              </p>
+            ) : null}
+          </>
         )}
       </div>
 

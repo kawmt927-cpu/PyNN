@@ -265,120 +265,6 @@ export async function unbindWeComUser(formData: FormData) {
   revalidatePath("/admin/settings");
 }
 
-export async function approveWeComAccess(formData: FormData) {
-  const session = await requireWeComSettingsAccess();
-
-  const requestId = formData.get("requestId") as string;
-  const mode = (formData.get("mode") as string) || "create";
-  const role = formData.get("role") as UserRole;
-  const name = (formData.get("name") as string)?.trim();
-  const email = (formData.get("email") as string)?.trim().toLowerCase();
-  const existingUserId = (formData.get("existingUserId") as string)?.trim() || null;
-
-  if (!requestId || !name || !email || !role) {
-    throw new Error("请填写完整信息");
-  }
-
-  const request = await prisma.weComAccessRequest.findUnique({ where: { id: requestId } });
-  if (!request || request.status !== "PENDING") {
-    throw new Error("申请不存在或已处理");
-  }
-
-  const wecomTaken = await prisma.user.findUnique({ where: { wecomUserId: request.wecomUserId } });
-  if (wecomTaken) throw new Error("该企微账号已绑定其他用户");
-
-  const { staffCategoryForRole } = await import("@/lib/wecom/access-request");
-  const bcrypt = await import("bcryptjs");
-
-  await prisma.$transaction(async (tx) => {
-    let userId: string;
-
-    if (mode === "bind") {
-      if (!existingUserId) throw new Error("请选择要绑定的 CRM 用户");
-      const existing = await tx.user.findUnique({ where: { id: existingUserId } });
-      if (!existing) throw new Error("用户不存在");
-      if (existing.wecomUserId) throw new Error("该用户已绑定企微");
-
-      const emailConflict = await tx.user.findFirst({
-        where: { email, NOT: { id: existingUserId } },
-      });
-      if (emailConflict) throw new Error("邮箱已被其他账号使用");
-
-      const user = await tx.user.update({
-        where: { id: existingUserId },
-        data: {
-          wecomUserId: request.wecomUserId,
-          name,
-          email,
-          role,
-        },
-      });
-      userId = user.id;
-    } else {
-      const emailTaken = await tx.user.findUnique({ where: { email } });
-      if (emailTaken) throw new Error("邮箱已被使用，可改为「绑定到已有账号」");
-
-      const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
-      const user = await tx.user.create({
-        data: {
-          name,
-          email,
-          role,
-          passwordHash,
-          wecomUserId: request.wecomUserId,
-          personnelProfile: {
-            create: {
-              staffCategory: staffCategoryForRole(role),
-              enabled: true,
-            },
-          },
-        },
-      });
-      userId = user.id;
-    }
-
-    await tx.weComAccessRequest.update({
-      where: { id: requestId },
-      data: {
-        status: "APPROVED",
-        reviewerId: session.user.id,
-        reviewedAt: new Date(),
-        userId,
-      },
-    });
-  });
-
-  revalidatePath("/admin/settings");
-  revalidatePath("/mobile/wecom/unbound");
-}
-
-export async function rejectWeComAccess(formData: FormData) {
-  const session = await requireWeComSettingsAccess();
-
-  const requestId = formData.get("requestId") as string;
-  const reviewNote = (formData.get("reviewNote") as string)?.trim() || undefined;
-
-  if (!requestId) throw new Error("缺少申请 ID");
-
-  const request = await prisma.weComAccessRequest.findUnique({ where: { id: requestId } });
-  if (!request || request.status !== "PENDING") {
-    throw new Error("申请不存在或已处理");
-  }
-
-  await prisma.weComAccessRequest.update({
-    where: { id: requestId },
-    data: {
-      status: "REJECTED",
-      reviewerId: session.user.id,
-      reviewNote,
-      reviewedAt: new Date(),
-    },
-  });
-
-  revalidatePath("/admin/settings");
-  revalidatePath("/mobile/wecom/unbound");
-}
-
 export async function createConfigOption(formData: FormData) {
   const parsed = configOptionSchema.parse({
     category: formData.get("category"),
@@ -670,9 +556,16 @@ export async function saveCustomerGradeOptions(
     label: string;
     enabled: boolean;
     followUpIntervalDays: number;
-  }>
+  }>,
+  category: string = CONFIG_CATEGORY.CUSTOMER_GRADE
 ) {
-  const category = CONFIG_CATEGORY.CUSTOMER_GRADE;
+  const allowed = [
+    CONFIG_CATEGORY.CUSTOMER_GRADE,
+    CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
+  ] as string[];
+  if (!allowed.includes(category)) {
+    throw new Error("无效的等级配置类型");
+  }
   await requireConfigCategoryManage(category);
 
   const parsed = saveCustomerGradeOptionsSchema.parse({ items });

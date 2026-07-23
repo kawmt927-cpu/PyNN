@@ -15,12 +15,15 @@
   <div class="box">
     <p>正在进入培安 CRM…</p>
     <p style="font-size:14px;color:#6b7280">如未自动跳转，请点下方链接</p>
-    <p><a id="go" href="/api/auth/wecom?returnTo=%2Fmobile">继续登录</a></p>
+    <p><a id="go" href="/api/auth/wecom">继续登录</a></p>
     <p style="margin-top:16px;font-size:13px"><a href="/login">改用账号密码登录</a></p>
   </div>
   <script>
     (function () {
-      var target = "/api/auth/wecom?returnTo=" + encodeURIComponent("/mobile");
+      var ua = navigator.userAgent || "";
+      var onPhone = /android|iphone|ipod|ipad|mobile/i.test(ua);
+      var returnTo = onPhone ? "/mobile" : "/";
+      var target = "/api/auth/wecom?returnTo=" + encodeURIComponent(returnTo);
       document.getElementById("go").href = target;
       setTimeout(function () { window.location.replace(target); }, 50);
     })();

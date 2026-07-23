@@ -8,6 +8,7 @@ export type SettingsScope = "sales" | "project" | "system";
 export const SETTINGS_TAB = {
   FIELDS: "fields",
   PRODUCTS: "products",
+  PROJECT_MODELS: "project-models",
   KPI: "kpi",
   SALES_LOG: "sales-log",
   WECOM: "wecom",
@@ -39,6 +40,9 @@ export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
   }
   if (tab === SETTINGS_TAB.PRODUCTS) {
     return role === "ADMIN" || role === "SALES_MANAGER";
+  }
+  if (tab === SETTINGS_TAB.PROJECT_MODELS) {
+    return role === "ADMIN" || role === "PROJECT_ADMIN";
   }
   if (tab === SETTINGS_TAB.KPI) {
     return role === "ADMIN" || role === "SALES_MANAGER";
@@ -77,6 +81,9 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
   const tabs: Array<{ id: SettingsTabId; label: string }> = [];
   if (getAccessibleConfigModules(role).length > 0) {
     tabs.push({ id: SETTINGS_TAB.FIELDS, label: "字段选项" });
+  }
+  if (role === "ADMIN" || role === "PROJECT_ADMIN") {
+    tabs.push({ id: SETTINGS_TAB.PROJECT_MODELS, label: "项目模型" });
   }
   if (role === "ADMIN" || role === "SALES_MANAGER") {
     tabs.push({ id: SETTINGS_TAB.PRODUCTS, label: "产品服务" });

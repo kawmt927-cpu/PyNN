@@ -16,6 +16,8 @@ enum UserRole {
   PROJECT_MANAGER
   PROJECT_STAFF
   ADMIN
+  /** 行政人事（报销等能力后续再做） */
+  HR
 }
 
 enum StaffCategory {
@@ -89,6 +91,11 @@ enum PaymentStatus {
   PAID
 }
 
+enum ContractProductCostType {
+  INTERNAL
+  EXTERNAL
+}
+
 enum ProjectStatus {
   PENDING_START
   IMPLEMENTING
@@ -123,6 +130,13 @@ enum TaskPriority {
   HIGH
   MEDIUM
   LOW
+}
+
+/// 项目计划任务状态（与销售 CRM Task 独立）
+enum ProjectTaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
 }
 
 enum SalesCostType {
@@ -193,15 +207,23 @@ enum WeComAccessStatus {
 
 model User {
   id            String    @id @default(cuid())
-  email         String    @unique
+  /** 可选；登录主标识为手机号 */
+  email         String?   @unique
+  /** 登录账号（大陆手机号） */
+  phone         String?   @unique
   name          String
-  passwordHash  String
+  passwordHash  String?
   role          UserRole  @default(SALES)
   wecomUserId   String?   @unique
+  /** 是否计入销售团队业绩（临时配置，后续可迁到权限） */
+  includeInTeamPerformance Boolean @default(true)
+  /** 是否参与月度 KPI 考核（临时配置，后续可迁到权限） */
+  includeInMonthlyAssessment Boolean @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   personnelProfile   PersonnelProfile?
+  contractAttachmentsUploaded ContractAttachment[]
   ownedCustomers     Customer[]           @relation("CustomerOwner")
   followUps          FollowUp[]
   contracts          Contract[]           @relation("ContractOwner")
@@ -214,6 +236,7 @@ model User {
   projectMembers     ProjectMember[]
   assignedTasks      Task[]               @relation("TaskAssignee")
   createdTasks       Task[]               @relation("TaskCreator")
+  assignedProjectTasks ProjectTask[]      @relation("ProjectTaskAssignee")
   managedProjects    Project[]            @relation("ProjectManager")
   presalesAssigned   PresalesAssignment[] @relation("PresalesStaff")
   presalesCreated    PresalesAssignment[] @relation("PresalesAssigner")
@@ -221,14 +244,17 @@ model User {
   presalesSalesFor   PresalesAssignment[] @relation("PresalesSalesUser")
   projectCosts       ProjectCost[]
   staffAllocations   ProjectStaffAllocation[]
+  monthlyCostAdjustments PersonnelMonthlyCostAdjustment[]
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
   customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
   contractsAsOurRep       Contract[]             @relation("ContractOurRep")
   contractsSubmitted      Contract[]             @relation("ContractSubmitter")
   contractsApproved       Contract[]             @relation("ContractApprover")
   contractPaymentsRecorded ContractPaymentRecord[] @relation("ContractPaymentRecorder")
+  externalCostPayoutsRecorded ExternalCostPayoutRecord[] @relation("ExternalCostPayoutRecorder")
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
   opportunityStageLogs    OpportunityStageLog[]
+  projectDevReviews       OpportunityStageLog[]  @relation("ProjectDevReviewer")
   opportunityFollowUps    OpportunityFollowUp[]
   aiAgentConfigsUpdated   AiAgentConfig[]      @relation("AiAgentConfigUpdater")
   amapConfigsUpdated      AmapConfig[]         @relation("AmapConfigUpdater")
@@ -239,41 +265,82 @@ model User {
   assistedCustomers        CustomerAssistant[]      @relation("CustomerAssistant")
   wecomAccessRequestsReviewed WeComAccessRequest[] @relation("WeComAccessReviewer")
   wecomAccessRequest         WeComAccessRequest?
+  entityOperationLogs        EntityOperationLog[]
+  appNotificationsReceived   AppNotificationReceipt[]
 }
 
+
+
 model WeComAccessRequest {
-  id          String            @id @default(cuid())
-  wecomUserId String
-  name        String
-  email       String
-  message     String?
-  status      WeComAccessStatus @default(PENDING)
-  reviewerId  String?
-  reviewNote  String?
-  reviewedAt  DateTime?
-  userId      String?           @unique
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id           String            @id @default(cuid())
+  wecomUserId  String
+  name         String
+  phone        String
+  passwordHash String?
+  message      String?
+  status       WeComAccessStatus @default(PENDING)
+  reviewerId   String?
+  reviewNote   String?
+  reviewedAt   DateTime?
+  userId       String?           @unique
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   reviewer User? @relation("WeComAccessReviewer", fields: [reviewerId], references: [id])
   user     User? @relation(fields: [userId], references: [id])
 
   @@index([status])
   @@index([wecomUserId])
+  @@index([phone])
 }
 
 model PersonnelProfile {
-  id             String         @id @default(cuid())
-  userId         String         @unique
-  staffCategory  StaffCategory
-  personnelType  PersonnelType?
-  isPresales     Boolean        @default(false)
-  dailyRate      Decimal?
-  enabled        Boolean        @default(true)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id                     String         @id @default(cuid())
+  userId                 String         @unique
+  staffCategory          StaffCategory
+  personnelType          PersonnelType?
+  isPresales             Boolean        @default(false)
+  /** 缴费基数（元/月） */
+  contributionBase       Decimal?
+  /** 基本工资（元/月） */
+  baseSalary             Decimal?
+  /** 社保公司承担（元/月） */
+  socialSecurityCompany  Decimal?
+  /** 公积金公司承担（元/月） */
+  housingFundCompany     Decimal?
+  /** 日单价缓存（可选；项目核算以月成本÷当月工作日为准） */
+  dailyRate              Decimal?
+  enabled                Boolean        @default(true)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// 某自然月的人员成本（可维护历史；含请假等调整）
+model PersonnelMonthlyCostAdjustment {
+  id                     String   @id @default(cuid())
+  userId                 String
+  year                   Int
+  month                  Int
+  /** 缴费基数（元/月）；空则回退档案默认 */
+  contributionBase       Decimal?
+  /** 基本工资（元/月） */
+  baseSalary             Decimal?
+  /** 社保公司承担（元/月） */
+  socialSecurityCompany  Decimal?
+  /** 公积金公司承担（元/月） */
+  housingFundCompany     Decimal?
+  /** 相对本月固定成本的增减（元，可为负） */
+  adjustmentAmount       Decimal  @default(0)
+  notes                  String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, year, month])
+  @@index([userId, year, month])
 }
 
 // ─── CRM: Customer ───────────────────────────────────────
@@ -471,18 +538,25 @@ model Opportunity {
 }
 
 model OpportunityStageLog {
-  id            String   @id @default(cuid())
-  opportunityId String
-  userId        String
-  fromStage     String?
-  toStage       String
-  note          String?
-  createdAt     DateTime @default(now())
+  id                   String    @id @default(cuid())
+  opportunityId        String
+  userId               String
+  fromStage            String?
+  toStage              String
+  note                 String?
+  /** 项目开发 KPI 人工核算：null=待核算 true=计入 false=不计入 */
+  countedAsProjectDev  Boolean?
+  reviewedAt           DateTime?
+  reviewedById         String?
+  createdAt            DateTime  @default(now())
 
   opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   user        User        @relation(fields: [userId], references: [id])
+  reviewedBy  User?       @relation("ProjectDevReviewer", fields: [reviewedById], references: [id])
 
   @@index([opportunityId])
+  @@index([createdAt])
+  @@index([countedAsProjectDev])
 }
 
 model OpportunityFollowUp {
@@ -544,27 +618,84 @@ model Contract {
   products          ContractProduct[]
   installments      PaymentInstallment[]
   paymentRecords    ContractPaymentRecord[]
+  externalPayoutRecords ExternalCostPayoutRecord[]
+  attachments       ContractAttachment[]
   project           Project?
 
   @@index([opportunityId])
   @@index([status])
 }
 
+model ContractAttachment {
+  id           String   @id @default(cuid())
+  contractId   String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation(fields: [uploadedById], references: [id])
+
+  @@index([contractId])
+}
+
 model ContractProduct {
-  id                   String  @id @default(cuid())
+  id                   String                 @id @default(cuid())
   contractId           String
   productServiceId     String?
   productName          String
   description          String?
-  costAmount           Decimal @default(0)
-  salesAmount          Decimal @default(0)
-  baselineCostPrice    Decimal @default(0)
-  actualCostPrice      Decimal @default(0)
-  costAdjustment       Decimal @default(0)
+  costType             ContractProductCostType @default(INTERNAL)
+  costAmount           Decimal                @default(0)
+  salesAmount          Decimal                @default(0)
+  baselineCostPrice    Decimal                @default(0)
+  actualCostPrice      Decimal                @default(0)
+  costAdjustment       Decimal                @default(0)
   costAdjustmentReason String?
 
-  contract       Contract               @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  productService ProductServiceTemplate? @relation(fields: [productServiceId], references: [id])
+  contract              Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  productService        ProductServiceTemplate?    @relation(fields: [productServiceId], references: [id])
+  externalInstallments  ExternalCostInstallment[]
+  externalPayoutRecords ExternalCostPayoutRecord[]
+
+  @@index([contractId])
+  @@index([costType])
+}
+
+model ExternalCostInstallment {
+  id                String    @id @default(cuid())
+  contractProductId String
+  periodNumber      Int
+  amount            Decimal
+  condition         String?
+  dueAt             DateTime?
+
+  contractProduct ContractProduct @relation(fields: [contractProductId], references: [id], onDelete: Cascade)
+
+  @@index([contractProductId])
+  @@unique([contractProductId, periodNumber])
+}
+
+model ExternalCostPayoutRecord {
+  id                String   @id @default(cuid())
+  contractId        String
+  contractProductId String
+  amount            Decimal
+  paidAt            DateTime
+  notes             String?
+  recordedById      String
+  createdAt         DateTime @default(now())
+
+  contract        Contract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractProduct ContractProduct @relation(fields: [contractProductId], references: [id], onDelete: Cascade)
+  recordedBy      User            @relation("ExternalCostPayoutRecorder", fields: [recordedById], references: [id])
+
+  @@index([contractId])
+  @@index([contractProductId])
+  @@index([paidAt])
 }
 
 model ContractPaymentRecord {
@@ -606,7 +737,7 @@ model Project {
   id              String        @id @default(cuid())
   name            String
   contractId      String?       @unique
-  customerId      String
+  customerId      String?
   projectManagerId String?
   status          ProjectStatus @default(PENDING_START)
   progressPercent Int           @default(0)
@@ -615,15 +746,19 @@ model Project {
   actualStartAt   DateTime?
   actualEndAt     DateTime?
   notes           String?
+  /** 最近套用的项目模型（供模板任务可选项） */
+  sourceModelId   String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
   contract       Contract?       @relation(fields: [contractId], references: [id])
-  customer       Customer        @relation(fields: [customerId], references: [id])
+  customer       Customer?       @relation(fields: [customerId], references: [id])
   projectManager User?           @relation("ProjectManager", fields: [projectManagerId], references: [id])
+  sourceModel    ProjectModel?   @relation(fields: [sourceModelId], references: [id], onDelete: SetNull)
   phases         ProjectPhase[]
   members        ProjectMember[]
   tasks          Task[]
+  projectTasks   ProjectTask[]
   costs          ProjectCost[]
   staffAllocations ProjectStaffAllocation[]
 }
@@ -633,16 +768,51 @@ model ProjectPhase {
   projectId   String
   name        String
   sourceProduct String?
+  /** 套用时对应的模板阶段 id */
+  sourceModelPhaseId String?
   sortOrder   Int
   parallelGroup Int?
+  progressWeight Int       @default(0)
   status      PhaseStatus @default(NOT_STARTED)
+  /** @deprecated 兼容旧数据；新逻辑用 plannedStartAt/plannedEndAt */
   plannedAt   DateTime?
+  plannedStartAt DateTime?
+  plannedEndAt   DateTime?
   completedAt DateTime?
 
   project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks        Task[]
+  projectTasks ProjectTask[]
   installments PaymentInstallment[]
   staffAllocations ProjectStaffAllocation[]
+}
+
+/// 项目计划任务（与销售 CRM Task 独立）
+model ProjectTask {
+  id                 String            @id @default(cuid())
+  projectId          String
+  phaseId            String
+  name               String
+  description        String?
+  status             ProjectTaskStatus @default(NOT_STARTED)
+  plannedStartAt     DateTime
+  plannedEndAt       DateTime
+  /// 实际完成时间（计划区间已全部落在过去时可填）
+  actualCompletedAt  DateTime?
+  /// 任务取消/作废备注
+  cancelledNote      String?
+  assigneeId         String?
+  sourceModelTaskId  String?
+  sortOrder          Int               @default(0)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  project  Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase    ProjectPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  assignee User?        @relation("ProjectTaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([projectId, phaseId, sortOrder])
+  @@index([phaseId, sortOrder])
 }
 
 model ProjectMember {
@@ -740,6 +910,75 @@ model PhaseTemplate {
   parallelGroup   Int?
 
   productService ProductServiceTemplate @relation(fields: [productServiceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Project Models (实施阶段模板) ───────────────────────
+
+model ProjectModel {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  enabled           Boolean  @default(true)
+  /** 总工期（自然日），决定甘特图长度 */
+  totalDurationDays Int      @default(40)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  phases    ProjectModelPhase[]
+  nodes     ProjectModelNode[]
+  projects  Project[]
+}
+
+/// 关键节点：无工期，仅一个时间点（参照 + 浮动）
+model ProjectModelNode {
+  id         String @id @default(cuid())
+  modelId    String
+  name       String
+  sortOrder  Int
+  timeRef    String @default("PROJECT_START")
+  timeOffset Int    @default(0)
+
+  model ProjectModel @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, sortOrder])
+}
+
+/// 阶段起止：参照项目/其他阶段开始或结束 + 浮动；结束可选固定工期
+model ProjectModelPhase {
+  id             String  @id @default(cuid())
+  modelId        String
+  name           String
+  sortOrder      Int
+  /** 按工期占比自动计算并落库 */
+  progressWeight Int     @default(0)
+
+  /** 开始参照：PROJECT_START | PROJECT_END | PHASE_START:{id} | PHASE_END:{id} */
+  startRef    String @default("PROJECT_START")
+  startOffset Int    @default(0)
+
+  /** 结束参照：同上或 DURATION（固定工期） */
+  endRef       String @default("DURATION")
+  endOffset    Int    @default(0)
+  durationDays Int?
+
+  model ProjectModel @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  tasks ProjectModelTask[]
+
+  @@index([modelId, sortOrder])
+}
+
+/// 阶段下的任务模板（名称 + 工期，自然日）
+model ProjectModelTask {
+  id           String @id @default(cuid())
+  phaseId      String
+  name         String
+  sortOrder    Int
+  durationDays Int    @default(1)
+
+  phase ProjectModelPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+
+  @@index([phaseId, sortOrder])
 }
 
 // ─── Sales: Targets, Tasks, Logs, Costs ──────────────────
@@ -872,6 +1111,11 @@ model SalesCheckIn {
   status          SalesCheckInStatus @default(PENDING)
   followUpId      String?            @unique
   salesDailyLogId String?
+  /** 服务端静默采集，不对销售展示 */
+  clientIp            String?
+  ipProvince          String?
+  ipCity              String?
+  locationIpMismatch  Boolean          @default(false)
 
   user          User           @relation("SalesCheckInUser", fields: [userId], references: [id])
   customer      Customer?      @relation(fields: [customerId], references: [id])
@@ -881,6 +1125,7 @@ model SalesCheckIn {
 
   @@index([userId, checkedInAt])
   @@index([customerId])
+  @@index([locationIpMismatch, checkedInAt])
 }
 
 model SalesDailyLog {
@@ -1028,4 +1273,52 @@ model AmapConfig {
   updatedById     String?
 
   updatedBy User? @relation("AmapConfigUpdater", fields: [updatedById], references: [id])
+}
+
+
+// ─── Operation log & notifications ───────────────────────
+
+model EntityOperationLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  userId     String
+  action     String
+  summary    String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model AppNotification {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  body      String
+  linkHref  String?
+  metaJson  String?
+  createdAt DateTime @default(now())
+
+  receipts AppNotificationReceipt[]
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+}
+
+model AppNotificationReceipt {
+  id             String    @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  notification AppNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt, createdAt])
 }

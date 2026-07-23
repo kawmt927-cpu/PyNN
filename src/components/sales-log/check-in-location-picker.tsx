@@ -20,7 +20,12 @@ type Props = {
   mapKey: string | null;
   geocodeReady?: boolean;
   disabled?: boolean;
+  /** 往来打卡时定位可选 */
   optional?: boolean;
+  /** 已跳过定位 */
+  skipped?: boolean;
+  /** 可选定位时跳过（PC 端无引导条时必需） */
+  onSkip?: () => void;
 };
 
 function loadAmapScript(key: string) {
@@ -87,6 +92,8 @@ export function CheckInLocationPicker({
   geocodeReady = true,
   disabled,
   optional = false,
+  skipped = false,
+  onSkip,
 }: Props) {
   const inWeCom = isWeComClient();
   const wecom = useWeComSdk(inWeCom);
@@ -204,15 +211,28 @@ export function CheckInLocationPicker({
     <div className="space-y-3 md:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Label>{optional ? "定位与地图（可选）" : "定位与地图"}</Label>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled || locating || !geocodeReady}
-          onClick={handleLocate}
-        >
-          {locating ? "定位解析中…" : value ? "重新定位" : "获取定位并解析地址"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {optional && !value && onSkip ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={disabled || locating}
+              onClick={onSkip}
+            >
+              {skipped ? "已跳过定位" : "暂时跳过定位"}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={disabled || locating || !geocodeReady}
+            onClick={handleLocate}
+          >
+            {locating ? "定位解析中…" : value ? "重新定位" : "获取定位并解析地址"}
+          </Button>
+        </div>
       </div>
 
       {!geocodeReady ? (
@@ -253,7 +273,7 @@ export function CheckInLocationPicker({
       )}
 
       {inWeCom && geocodeReady ? (
-        <p className="text-xs text-muted-foreground">企业微信内将使用企业微信定位接口获取 GPS。</p>
+        <p className="text-xs text-muted-foreground">企业微信内将用企微定位获取当前位置。</p>
       ) : null}
 
       {value ? (
@@ -263,15 +283,26 @@ export function CheckInLocationPicker({
             <span className="font-medium">{formatCheckInLocation(value)}</span>
           </p>
         </div>
+      ) : skipped ? (
+        <p className="text-sm text-muted-foreground">已跳过定位，提交时将不记录地点。</p>
       ) : (
         <p className="text-sm text-muted-foreground">
           {optional
-            ? "可选。未定位时提交将提示确认；获取后将记录省市区街道门牌。"
+            ? "可选。定位失败时可点「暂时跳过定位」，或直接提交后确认。"
             : "点击按钮后系统将获取 GPS，并解析为完整地点（省市区街道门牌）。"}
         </p>
       )}
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? (
+        <div className="space-y-1">
+          <p className="text-sm text-destructive">{error}</p>
+          {optional && onSkip && !skipped ? (
+            <p className="text-xs text-muted-foreground">
+              内置浏览器常无法定位。可点上方「暂时跳过定位」继续提交。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {value ? (
         <>

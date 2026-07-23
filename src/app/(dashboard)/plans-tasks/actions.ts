@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { FollowUpMethod } from "@prisma/client";
+import { z } from "zod";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import type { ActionResult } from "@/lib/action-result";
 import { weeklyAssignmentFormSchema } from "@/lib/validations/weekly-assignment";
 import {
   salesAnnualTargetFormSchema,
@@ -21,6 +23,8 @@ function revalidatePlansTasks() {
   revalidatePath("/today-work");
   revalidatePath("/weekly-tasks");
   revalidatePath("/follow-ups");
+  revalidatePath("/mobile/metrics");
+  revalidatePath("/customers");
 }
 
 export async function saveAnnualTarget(
@@ -159,51 +163,103 @@ export async function saveMonthlyKpiTargets(
   return { ok: true };
 }
 
-export async function createWeeklyAssignment(formData: FormData) {
-  const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+export async function createWeeklyAssignment(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    if (!canManageWeeklyAssignments(session.user.role)) {
+      return { error: "无权操作" };
+    }
 
-  const parsed = weeklyAssignmentFormSchema.parse({
-    assigneeId: formData.get("assigneeId"),
-    customerId: formData.get("customerId")?.toString() || undefined,
-    opportunityId: formData.get("opportunityId")?.toString() || undefined,
-    contactId: formData.get("contactId")?.toString() || undefined,
-    plannedMethod: formData.get("plannedMethod")?.toString() || undefined,
-    title: formData.get("title"),
-    description: formData.get("description") || undefined,
-    dueAt: formData.get("dueAt"),
-  });
+    const parsed = weeklyAssignmentFormSchema.parse({
+      assigneeId: formData.get("assigneeId"),
+      customerId: formData.get("customerId")?.toString() || undefined,
+      opportunityId: formData.get("opportunityId")?.toString() || undefined,
+      contactId: formData.get("contactId")?.toString() || undefined,
+      plannedMethod: formData.get("plannedMethod")?.toString() || undefined,
+      title: formData.get("title"),
+      description: formData.get("description") || undefined,
+      dueAt: formData.get("dueAt"),
+    });
 
-  const dueAt = new Date(parsed.dueAt);
-  if (Number.isNaN(dueAt.getTime())) throw new Error("截止时间无效");
+    const dueAt = new Date(parsed.dueAt);
+    if (Number.isNaN(dueAt.getTime())) return { error: "截止时间无效" };
 
-  const plannedMethod = parsed.plannedMethod?.trim()
-    ? (parsed.plannedMethod.trim() as FollowUpMethod)
-    : null;
+    const plannedMethod = parsed.plannedMethod?.trim()
+      ? (parsed.plannedMethod.trim() as FollowUpMethod)
+      : null;
 
-  await createWeeklyAssignmentWithFollowUpPlan({
-    createdById: session.user.id,
-    assigneeId: parsed.assigneeId,
-    customerId: parsed.customerId,
-    opportunityId: parsed.opportunityId?.trim() || null,
-    contactId: parsed.contactId?.trim() || null,
-    plannedMethod,
-    title: parsed.title,
-    description: parsed.description,
-    dueAt,
-  });
+    await createWeeklyAssignmentWithFollowUpPlan({
+      createdById: session.user.id,
+      assigneeId: parsed.assigneeId,
+      customerId: parsed.customerId,
+      opportunityId: parsed.opportunityId?.trim() || null,
+      contactId: parsed.contactId?.trim() || null,
+      plannedMethod,
+      title: parsed.title,
+      description: parsed.description,
+      dueAt,
+    });
 
-  revalidatePlansTasks();
+    revalidatePlansTasks();
+    return {};
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { error: error.errors[0]?.message ?? "表单无效" };
+    }
+    return { error: error instanceof Error ? error.message : "创建失败" };
+  }
 }
 
-export async function cancelWeeklyAssignment(id: string) {
+export async function cancelWeeklyAssignment(id: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    if (!canManageWeeklyAssignments(session.user.role)) {
+      return { error: "无权取消任务" };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await cancelWeeklyAssignmentWithPlan(tx, id);
+    });
+
+    revalidatePlansTasks();
+    return {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "取消失败" };
+  }
+}
+
+export async function saveProjectDevSettlement(input: {
+  userId: string;
+  year: number;
+  month: number;
+  /** 勾选计入的阶段日志 id */
+  countedLogIds: string[];
+}): Promise<{ ok: true; counted: number } | { ok: false; error: string }> {
   const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
-  if (!canManageWeeklyAssignments(session.user.role)) {
-    throw new Error("无权取消任务");
+  const { userId, year, month, countedLogIds } = input;
+  if (!userId || !Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return { ok: false, error: "参数无效" };
   }
 
-  await prisma.$transaction(async (tx) => {
-    await cancelWeeklyAssignmentWithPlan(tx, id);
-  });
+  const { listProjectDevSettlementItems } = await import("@/lib/plans-tasks/monthly-kpi");
+  const candidates = await listProjectDevSettlementItems(userId, year, month);
+  const candidateIds = new Set(candidates.map((item) => item.id));
+  const countedSet = new Set(countedLogIds.filter((id) => candidateIds.has(id)));
+  const now = new Date();
+
+  await prisma.$transaction(
+    candidates.map((item) =>
+      prisma.opportunityStageLog.update({
+        where: { id: item.id },
+        data: {
+          countedAsProjectDev: countedSet.has(item.id),
+          reviewedAt: now,
+          reviewedById: session.user.id,
+        },
+      })
+    )
+  );
 
   revalidatePlansTasks();
+  return { ok: true, counted: countedSet.size };
 }

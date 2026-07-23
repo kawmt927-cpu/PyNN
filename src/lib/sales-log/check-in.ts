@@ -11,13 +11,14 @@ import {
 } from "@/lib/validations/sales-log";
 import { formatCheckInLocation, hasCheckInLocation } from "@/lib/sales-log/format-location";
 import type { AgentWriteContext } from "@/lib/sales-log/write";
-import { createFollowUpFromAgent } from "@/lib/sales-log/write";
+import { assertSalesLogRole, createFollowUpFromAgent } from "@/lib/sales-log/write";
 import {
   completeCustomerPendingFollowPlan,
   getCustomerPendingFollowPlans,
   parsePendingPlanSelectionKey,
   pendingPlanSelectionKey,
 } from "@/lib/follow-ups/unified";
+import { applyCheckInIpAudit } from "@/lib/sales-log/check-in-ip-guard";
 
 export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInStatus) {
   const { start, end } = getTodayRange();
@@ -55,6 +56,8 @@ type CheckInWriteInput = {
   completeInteractionNow?: boolean;
   followUp?: CheckInFollowUpInput | null;
   completedPendingKeys?: string[];
+  /** 仅服务端从请求头注入，不对销售展示 */
+  clientIp?: string | null;
 };
 
 async function assertCheckInWriteAccess(checkIn: { userId: string }, role: UserRole, userId: string) {
@@ -161,6 +164,7 @@ export async function updateSalesCheckIn(
   checkInId: string,
   input: CheckInWriteInput
 ) {
+  assertSalesLogRole(input.role);
   const existing = await prisma.salesCheckIn.findUnique({
     where: { id: checkInId },
     include: { customer: { select: { name: true } } },
@@ -245,10 +249,22 @@ export async function updateSalesCheckIn(
     }
   }
 
+  const stillExists = await prisma.salesCheckIn.findUnique({
+    where: { id: checkIn.id },
+    select: { id: true },
+  });
+  if (stillExists && (hasCheckInLocation(checkIn) || input.clientIp)) {
+    await applyCheckInIpAudit({
+      checkInId: checkIn.id,
+      clientIp: input.clientIp ?? null,
+    });
+  }
+
   return checkIn;
 }
 
 export async function createSalesCheckIn(input: CheckInWriteInput) {
+  assertSalesLogRole(input.role);
   const mode = normalizeCheckInMode(input.checkInMode);
   const isInteraction = mode === "interaction";
   const customerId = isInteraction && input.customerId?.trim() ? input.customerId.trim() : null;
@@ -354,6 +370,13 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
         status: SalesCheckInStatus.COMPLETED,
         followUpId: followUpResult.followUpId,
       },
+    });
+  }
+
+  if (hasCheckInLocation(checkIn) || input.clientIp) {
+    await applyCheckInIpAudit({
+      checkInId: checkIn.id,
+      clientIp: input.clientIp ?? null,
     });
   }
 
@@ -490,6 +513,7 @@ export async function deleteSalesCheckIn(input: {
   userId: string;
   role: UserRole;
 }) {
+  assertSalesLogRole(input.role);
   const checkIn = await prisma.salesCheckIn.findUnique({
     where: { id: input.checkInId },
     select: {

@@ -41,11 +41,27 @@ export async function createWeeklyAssignmentWithFollowUpPlan(input: CreateWeekly
     },
   });
   if (!customer) throw new Error("客户不存在");
-  if (!customer.ownerId) {
-    throw new Error("公海客户需先指定负责人后再指派任务");
-  }
-  if (!isCustomerResponsible(input.assigneeId, customer)) {
-    throw new Error("只能指派给该客户的负责人或协助负责人");
+
+  const claimFromPool = customer.ownerId === null;
+  if (claimFromPool) {
+    const assignee = await prisma.user.findFirst({
+      where: {
+        id: input.assigneeId,
+        role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] },
+        personnelProfile: { enabled: true },
+      },
+      select: { id: true },
+    });
+    if (!assignee) throw new Error("所选销售无效或已停用");
+  } else {
+    if (!isCustomerResponsible(input.assigneeId, customer)) {
+      throw new Error("只能指派给该客户的负责人或协助负责人");
+    }
+    const assignee = await prisma.user.findFirst({
+      where: { id: input.assigneeId },
+      select: { id: true },
+    });
+    if (!assignee) throw new Error("所选销售不存在");
   }
 
   if (input.opportunityId) {
@@ -75,6 +91,30 @@ export async function createWeeklyAssignmentWithFollowUpPlan(input: CreateWeekly
   const now = new Date();
 
   return prisma.$transaction(async (tx) => {
+    if (claimFromPool) {
+      const stillPool = await tx.customer.findUnique({
+        where: { id: input.customerId },
+        select: { ownerId: true },
+      });
+      if (!stillPool) throw new Error("客户不存在");
+      if (stillPool.ownerId !== null) {
+        throw new Error("该客户已被其他人领走，请刷新后重试");
+      }
+      await tx.customer.update({
+        where: { id: input.customerId },
+        data: { ownerId: input.assigneeId },
+      });
+      await tx.customerClaimRequest.updateMany({
+        where: { customerId: input.customerId, status: "PENDING" },
+        data: {
+          status: "REJECTED",
+          reviewerId: input.createdById,
+          reviewNote: "指派任务时已指定负责人",
+          reviewedAt: now,
+        },
+      });
+    }
+
     const followUp = await tx.followUp.create({
       data: {
         customerId: input.customerId,

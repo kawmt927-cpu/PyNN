@@ -24,16 +24,19 @@ function profileDataForRole(
   role: UserRole,
   enabled: boolean,
   isPresales: boolean,
-  dailyRate?: number
+  existingDailyRate?: number | null
 ) {
   const staffCategory = staffCategoryForRole(role);
   const canImplementation = staffCategory === StaffCategory.IMPLEMENTATION;
-  const rate = canImplementation && dailyRate != null ? dailyRate : null;
   return {
     staffCategory,
     enabled,
     isPresales: canImplementation && isPresales,
-    dailyRate: canImplementation && (isPresales || rate != null) ? rate : null,
+    dailyRate: canImplementation
+      ? existingDailyRate != null
+        ? existingDailyRate
+        : null
+      : null,
   };
 }
 
@@ -41,28 +44,43 @@ export async function createUser(formData: FormData): Promise<ActionResult> {
   try {
     await requireUserAdmin();
     const parsed = parseUserFormData(formData, "create");
-    const password = parsed.password;
-    if (!password) throw new Error("请设置密码");
 
-    const existing = await prisma.user.findUnique({ where: { email: parsed.email } });
-    if (existing) throw new Error("邮箱已被使用");
+    if (parsed.phone) {
+      const phoneTaken = await prisma.user.findUnique({ where: { phone: parsed.phone } });
+      if (phoneTaken) throw new Error("手机号已被使用");
+    }
+    if (parsed.email) {
+      const emailTaken = await prisma.user.findUnique({ where: { email: parsed.email } });
+      if (emailTaken) throw new Error("邮箱已被使用");
+    }
+    if (parsed.wecomUserId) {
+      const wecomTaken = await prisma.user.findUnique({
+        where: { wecomUserId: parsed.wecomUserId },
+      });
+      if (wecomTaken) throw new Error("该企微 UserID 已被绑定");
+    }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    if (!parsed.wecomUserId && !parsed.password) {
+      throw new Error("请设置初始密码，或填写企微 UserID 作为待激活预建账号");
+    }
+
+    const passwordHash = parsed.password
+      ? await bcrypt.hash(parsed.password, 10)
+      : null;
+
     const profile = profileDataForRole(
       parsed.role,
       parsed.enabled ?? true,
       parsed.isPresales ?? false,
-      parsed.dailyRate
+      null
     );
-
-    if (profile.isPresales && profile.dailyRate == null) {
-      throw new Error("售前人员须填写日单价");
-    }
 
     await prisma.user.create({
       data: {
         name: parsed.name.trim(),
-        email: parsed.email.trim().toLowerCase(),
+        phone: parsed.phone ?? null,
+        email: parsed.email ?? null,
+        wecomUserId: parsed.wecomUserId ?? null,
         role: parsed.role,
         passwordHash,
         personnelProfile: { create: profile },
@@ -94,30 +112,48 @@ export async function updateUser(formData: FormData): Promise<ActionResult> {
     });
     if (!existing) throw new Error("用户不存在");
 
-    const emailTaken = await prisma.user.findFirst({
-      where: { email: parsed.email, NOT: { id } },
-    });
-    if (emailTaken) throw new Error("邮箱已被使用");
+    if (parsed.phone) {
+      const phoneTaken = await prisma.user.findFirst({
+        where: { phone: parsed.phone, NOT: { id } },
+      });
+      if (phoneTaken) throw new Error("手机号已被使用");
+    }
+    if (parsed.email) {
+      const emailTaken = await prisma.user.findFirst({
+        where: { email: parsed.email, NOT: { id } },
+      });
+      if (emailTaken) throw new Error("邮箱已被使用");
+    }
+    if (parsed.wecomUserId) {
+      const wecomTaken = await prisma.user.findFirst({
+        where: { wecomUserId: parsed.wecomUserId, NOT: { id } },
+      });
+      if (wecomTaken) throw new Error("该企微 UserID 已被绑定");
+    }
 
+    const existingRate =
+      existing.personnelProfile?.dailyRate != null
+        ? Number(existing.personnelProfile.dailyRate)
+        : null;
     const profile = profileDataForRole(
       parsed.role,
       parsed.enabled ?? true,
       parsed.isPresales ?? false,
-      parsed.dailyRate
+      existingRate
     );
-
-    if (profile.isPresales && profile.dailyRate == null) {
-      throw new Error("售前人员须填写日单价");
-    }
 
     const data: {
       name: string;
-      email: string;
+      phone: string | null;
+      email: string | null;
+      wecomUserId: string | null;
       role: UserRole;
       passwordHash?: string;
     } = {
       name: parsed.name.trim(),
-      email: parsed.email.trim().toLowerCase(),
+      phone: parsed.phone ?? null,
+      email: parsed.email ?? null,
+      wecomUserId: parsed.wecomUserId ?? null,
       role: parsed.role,
     };
 

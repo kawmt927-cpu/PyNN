@@ -14,6 +14,7 @@ type Props = {
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
+  showDepartment?: boolean;
 };
 
 export function CustomerContactsCard({
@@ -23,6 +24,7 @@ export function CustomerContactsCard({
   titleOptions,
   departmentOptions,
   roleOptions,
+  showDepartment = true,
 }: Props) {
   const [addOpen, setAddOpen] = useState(false);
 
@@ -47,6 +49,7 @@ export function CustomerContactsCard({
           titleOptions={titleOptions}
           departmentOptions={departmentOptions}
           roleOptions={roleOptions}
+          showDepartment={showDepartment}
           addOpen={addOpen}
           onAddOpenChange={setAddOpen}
         />

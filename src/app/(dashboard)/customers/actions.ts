@@ -9,13 +9,18 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "@/lib/validations/customer";
-import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess } from "@/lib/customers/access";
+import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess, CUSTOMER_ASSIGNABLE_ROLES } from "@/lib/customers/access";
 import { replaceCustomerAssistants } from "@/lib/customers/assistants";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
-import { assertCustomerGrade, requireCustomerGrade } from "@/lib/customers/grade";
+import { assertCustomerGrade } from "@/lib/customers/grade";
+import {
+  enforceCustomerTypeForCategory,
+  requireCustomerGradeForType,
+} from "@/lib/customers/customer-type-grade";
+import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
 import {
   completeCustomerPendingFollowPlan,
   getCustomerPendingFollowPlans,
@@ -84,18 +89,28 @@ function parseCustomerForm(formData: FormData) {
 }
 
 async function validateCustomerConfigFields(data: {
+  category: string;
   source?: string | null;
   customerType?: string | null;
   customerGrade?: string | null;
 }) {
-  const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
-  if (!data.customerType?.trim()) {
+  const { CONFIG_CATEGORY, assertConfigValue, getConfigOptions } = await import(
+    "@/lib/config-options"
+  );
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+  const enforcedType = enforceCustomerTypeForCategory(
+    data.category,
+    data.customerType,
+    typeOptions
+  );
+  if (!enforcedType) {
     throw new Error("请选择关系类型");
   }
+  const customerType = await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, enforcedType);
   return {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
-    customerType: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_TYPE, data.customerType),
-    customerGrade: requireCustomerGrade(data.customerGrade),
+    customerType,
+    customerGrade: requireCustomerGradeForType(customerType, data.customerGrade, typeOptions),
   };
 }
 
@@ -109,9 +124,12 @@ function formatActionError(error: unknown): ActionResult {
   return { error: "操作失败，请重试" };
 }
 
-function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
+async function resolveOwnerId(role: UserRole, userId: string, ownerId: string | null | undefined) {
   if (role === "SALES") return userId;
-  if (canManageCustomerOwner(role) && ownerId) return ownerId;
+  if (canManageCustomerOwner(role) && ownerId) {
+    await assertSelectableSalesOwner(role, userId, ownerId, CUSTOMER_ASSIGNABLE_ROLES);
+    return ownerId;
+  }
   if (canManageCustomerOwner(role)) return null;
   return userId;
 }
@@ -124,7 +142,7 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
 
     await assertCustomerNameAvailable(data.name);
 
-    const ownerId = resolveOwnerId(session.user.role, session.user.id, data.ownerId);
+    const ownerId = await resolveOwnerId(session.user.role, session.user.id, data.ownerId);
     const canSetAssistants =
       canManageCustomerOwner(session.user.role) || session.user.role === "SALES";
 
@@ -153,6 +171,17 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(customer.id, parseTagValues(formData));
 
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CUSTOMER,
+      entityId: customer.id,
+      userId: session.user.id,
+      action: "创建",
+      summary: `创建客户「${customer.name}」`,
+    });
+
     revalidatePath("/customers");
     return { redirectTo: `/customers/${customer.id}` };
   } catch (error) {
@@ -170,7 +199,7 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const data = parseCustomerForm(formData);
     const configFields = await validateCustomerConfigFields(data);
     const ownerId = canManageCustomerOwner(session.user.role)
-      ? resolveOwnerId(session.user.role, session.user.id, data.ownerId)
+      ? await resolveOwnerId(session.user.role, session.user.id, data.ownerId)
       : existing.ownerId;
     const canSetAssistants =
       canManageCustomerOwner(session.user.role) || existing.ownerId === session.user.id;
@@ -200,6 +229,17 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(id, parseTagValues(formData));
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CUSTOMER,
+      entityId: id,
+      userId: session.user.id,
+      action: "更新",
+      summary: `更新客户「${data.name}」`,
+    });
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
@@ -371,6 +411,12 @@ export async function assignCustomerToSales(formData: FormData) {
       },
     });
   } else {
+    const target = await prisma.user.findFirst({
+      where: { id: salesUserId, role: { in: CUSTOMER_ASSIGNABLE_ROLES } },
+      select: { id: true },
+    });
+    if (!target) throw new Error("只能分配给销售、销售管理或管理员");
+
     await prisma.$transaction(async (tx) => {
       await tx.customer.update({
         where: { id: customerId },

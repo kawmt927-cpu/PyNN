@@ -51,7 +51,7 @@ export function CustomerContractsList({ contracts, customerId, linkReturnTo }: P
           {contracts.map((row) => {
             const roles: string[] = [];
             if (row.signCustomerId === customerId) roles.push("签约客户");
-            if (row.endUserCustomerId === customerId) roles.push("终用户");
+            if (row.endUserCustomerId === customerId) roles.push("最终用户");
 
             return (
               <tr key={row.id} className="border-b last:border-0">

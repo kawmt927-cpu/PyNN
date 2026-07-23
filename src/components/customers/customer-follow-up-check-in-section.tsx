@@ -1,7 +1,6 @@
-import { canManageCustomerOwner } from "@/lib/customers/access";
+import { canManageCustomerOwner, listCustomerAssignableUsers } from "@/lib/customers/access";
 import { getEffectiveAmapConfig } from "@/lib/amap/config";
 import { loadInteractionFormOptions } from "@/lib/config-options";
-import { prisma } from "@/lib/prisma";
 import {
   CheckInForm,
   type CheckInCustomerContext,
@@ -37,13 +36,7 @@ export async function CustomerFollowUpCheckInSection({
 }: Props) {
   const [interactionFormOptions, salesUsers, amap] = await Promise.all([
     loadInteractionFormOptions(),
-    canManageCustomerOwner(role)
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+    canManageCustomerOwner(role) ? listCustomerAssignableUsers() : Promise.resolve([]),
     getEffectiveAmapConfig(),
   ]);
 

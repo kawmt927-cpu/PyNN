@@ -7,6 +7,7 @@ import {
   canManageContractApproval,
   canEditContract,
   canRecordContractPayment,
+  canManageContractAttachments,
   isSignedContractStatus,
 } from "@/lib/contracts/access";
 import { isPendingContractApproval } from "@/lib/contracts/approval";
@@ -25,15 +26,25 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallmentProgressChart } from "@/components/contracts/installment-progress-chart";
 import { ContractPaymentPanel } from "@/components/contracts/contract-payment-panel";
+import { ExternalCostPayoutPanel } from "@/components/contracts/external-cost-payout-panel";
+import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
 import { ContractForm } from "@/components/contracts/contract-form";
 import { resolveBackNavigation, selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
-import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
+import { getConfigOptions, CONFIG_CATEGORY, labelForConfig } from "@/lib/config-options";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import {
   approveContract,
   rejectContract,
   addContractPaymentRecord,
   deleteContractPaymentRecord,
+  addExternalCostPayoutRecord,
+  deleteExternalCostPayoutRecord,
 } from "@/app/(dashboard)/contracts/actions";
+import {
+  ENTITY_TYPES,
+  listEntityOperationLogs,
+} from "@/lib/audit/entity-operation-log";
+import { EntityOperationLogList } from "@/components/audit/entity-operation-log-list";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -59,7 +70,14 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       project: { select: { id: true, name: true } },
       products: {
         orderBy: { productName: "asc" },
-        include: { productService: { select: { name: true } } },
+        include: {
+          productService: { select: { name: true } },
+          externalInstallments: { orderBy: { periodNumber: "asc" } },
+          externalPayoutRecords: {
+            orderBy: { paidAt: "desc" },
+            include: { recordedBy: { select: { name: true } } },
+          },
+        },
       },
       installments: { orderBy: { periodNumber: "asc" } },
       paymentRecords: {
@@ -72,6 +90,8 @@ export default async function ContractDetailPage({ params, searchParams }: Props
   if (!contract) notFound();
   const accessible = await getContractForUser(id, session.user.role, session.user.id);
   if (!accessible) notFound();
+
+  const operationLogs = await listEntityOperationLogs(ENTITY_TYPES.CONTRACT, id);
 
   const { backHref, backLabel } = resolveBackNavigation(query, "/contracts");
   const selfPath = selfReturnPath(`/contracts/${id}`, query);
@@ -89,24 +109,56 @@ export default async function ContractDetailPage({ params, searchParams }: Props
     }))
   );
 
-  const productCostTotal = contract.products.reduce(
-    (sum, row) => sum + Number(row.costAmount || row.actualCostPrice),
+  const productSelfCost = contract.products
+    .filter((row) => row.costType !== "EXTERNAL")
+    .reduce((sum, row) => sum + Number(row.costAmount || row.actualCostPrice), 0);
+  const externalCostTotal = contract.products
+    .filter((row) => row.costType === "EXTERNAL")
+    .reduce((sum, row) => sum + Number(row.costAmount || row.actualCostPrice), 0);
+
+  const businessCosts = await prisma.salesCost.findMany({
+    where: {
+      costType: "BUSINESS",
+      customerId: {
+        in: [contract.signCustomerId, contract.endUserCustomerId],
+      },
+    },
+    orderBy: { costDate: "desc" },
+    include: {
+      salesUser: { select: { name: true } },
+      customer: { select: { id: true, name: true } },
+    },
+    take: 50,
+  });
+  const businessCostTotal = businessCosts.reduce(
+    (sum, row) => sum + Number(row.totalAmount),
     0
   );
+  const allCostTotal = productSelfCost + externalCostTotal + businessCostTotal;
+
   const signed = isSignedContractStatus(contract.status);
-  const showResubmit = contract.status === "REJECTED" && query.edit === "1";
+  const canEdit = canEditContract(session.user.role);
+  const showResubmit = contract.status === "REJECTED" && query.edit === "1" && canEdit;
   const canApprove =
     canManageContractApproval(session.user.role) && isPendingContractApproval(contract.status);
-  const canEdit = canEditContract(session.user.role);
+  const canUploadAttachments = canManageContractAttachments(session.user.role);
 
-  const [salesUsers, paymentMethods] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
+  const [salesUsers, paymentMethods, internalCostNames, externalCostNames] = await Promise.all([
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+      includeUserIds: [contract.ownerId, contract.ourRepresentativeId].filter(
+        (id): id is string => Boolean(id)
+      ),
     }),
     getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
+    getConfigOptions(CONFIG_CATEGORY.INTERNAL_COST_PRODUCT),
+    getConfigOptions(CONFIG_CATEGORY.EXTERNAL_COST_PRODUCT),
   ]);
+
+  const paymentMethodLabels = Object.fromEntries(
+    paymentMethods.map((o) => [o.value, o.label])
+  );
 
   if (showResubmit) {
     return (
@@ -130,6 +182,14 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             value: o.value,
             label: o.label,
           }))}
+          internalCostNameOptions={internalCostNames.map((o) => ({
+            value: o.value,
+            label: o.label,
+          }))}
+          externalCostNameOptions={externalCostNames.map((o) => ({
+            value: o.value,
+            label: o.label,
+          }))}
           defaultValues={{
             title: contract.title,
             totalAmount: totalAmount,
@@ -147,7 +207,15 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             products: contract.products.map((row) => ({
               productServiceId: row.productServiceId,
               productName: row.productName,
+              description: row.description,
               costAmount: Number(row.costAmount || row.actualCostPrice),
+              costType: row.costType,
+              externalInstallments: row.externalInstallments.map((item) => ({
+                periodNumber: item.periodNumber,
+                amount: Number(item.amount),
+                condition: item.condition,
+                dueAt: item.dueAt?.toISOString(),
+              })),
             })),
             installments: contract.installments.map((row) => ({
               periodNumber: row.periodNumber,
@@ -185,7 +253,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
           <p className="font-medium text-destructive">合同已驳回</p>
           <p className="mt-1">{contract.rejectReason}</p>
-          {session.user.role === "SALES" && contract.ownerId === session.user.id && (
+          {canEdit && (
             <Link href={`${selfPath}${selfPath.includes("?") ? "&" : "?"}edit=1`} className="mt-2 inline-block text-primary hover:underline">
               修改并重新提交
             </Link>
@@ -217,13 +285,26 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             <span className="text-muted-foreground">合同金额：</span>
             {formatAmount(contract.totalAmount)}
           </p>
-          <p>
-            <span className="text-muted-foreground">产品成本合计：</span>
-            {formatAmount(productCostTotal)}
-            <span className="ml-3 text-muted-foreground">
-              预估毛利：{formatAmount(totalAmount - productCostTotal)}
-            </span>
-          </p>
+          <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2">
+            <p>
+              <span className="text-muted-foreground">产品本身成本：</span>
+              {formatAmount(productSelfCost)}
+            </p>
+            <p>
+              <span className="text-muted-foreground">外部成本合同：</span>
+              {formatAmount(externalCostTotal)}
+            </p>
+            <p>
+              <span className="text-muted-foreground">商务成本：</span>
+              {formatAmount(businessCostTotal)}
+            </p>
+            <p className="pt-1 font-medium">
+              成本合计：{formatAmount(allCostTotal)}
+              <span className="ml-3 font-normal text-muted-foreground">
+                预估毛利：{formatAmount(totalAmount - allCostTotal)}
+              </span>
+            </p>
+          </div>
           <p>
             <span className="text-muted-foreground">签约类型：</span>
             {SIGNING_TYPE_LABELS[contract.signingType]}
@@ -231,7 +312,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
           {contract.paymentMethod && (
             <p>
               <span className="text-muted-foreground">支付方式：</span>
-              {contract.paymentMethod}
+              {labelForConfig(paymentMethodLabels, contract.paymentMethod)}
             </p>
           )}
           <p>
@@ -249,13 +330,13 @@ export default async function ContractDetailPage({ params, searchParams }: Props
           </p>
           {contract.signContact && (
             <p>
-              <span className="text-muted-foreground">甲方代表：</span>
+              <span className="text-muted-foreground">对方代表：</span>
               {contract.signContact.name}
               {contract.signContact.title ? `（${contract.signContact.title}）` : ""}
             </p>
           )}
           <p>
-            <span className="text-muted-foreground">终用户：</span>
+            <span className="text-muted-foreground">最终用户：</span>
             <Link
               href={withReturnTo(`/customers/${contract.endUserCustomer.id}`, selfPath)}
               className="text-primary hover:underline"
@@ -313,28 +394,102 @@ export default async function ContractDetailPage({ params, searchParams }: Props
         </CardContent>
       </Card>
 
-      {contract.products.length > 0 && (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">合同附件</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ContractAttachmentsPanel
+            contractId={contract.id}
+            canUpload={canUploadAttachments}
+            canDelete={false}
+          />
+        </CardContent>
+      </Card>
+
+      {(contract.products.length > 0 || businessCosts.length > 0) && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">签约产品</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-lg">成本构成</CardTitle>
+            {contract.products.some((row) => row.costType === "EXTERNAL") ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/contracts/external-costs?contractId=${contract.id}`}>
+                  外部成本维护
+                </Link>
+              </Button>
+            ) : null}
           </CardHeader>
-          <CardContent>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="pb-2 pr-4">产品</th>
-                  <th className="pb-2">成本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {contract.products.map((row) => (
-                  <tr key={row.id} className="border-b">
-                    <td className="py-2 pr-4">{row.productName}</td>
-                    <td className="py-2">{formatAmount(row.costAmount || row.actualCostPrice)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <CardContent className="space-y-6">
+            {contract.products.length > 0 ? (
+              <div>
+                <p className="mb-2 text-sm font-medium">产品 / 外部成本合同</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-4">名称</th>
+                      <th className="pb-2 pr-4">类型</th>
+                      <th className="pb-2 pr-4">成本 / 应付</th>
+                      <th className="pb-2">备注</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contract.products.map((row) => {
+                      const paid = sumPaymentRecords(row.externalPayoutRecords);
+                      return (
+                        <tr key={row.id} className="border-b">
+                          <td className="py-2 pr-4">{row.productName}</td>
+                          <td className="py-2 pr-4">
+                            {row.costType === "EXTERNAL" ? "外部成本合同" : "产品本身"}
+                          </td>
+                          <td className="py-2 pr-4">
+                            {formatAmount(row.costAmount || row.actualCostPrice)}
+                            {row.costType === "EXTERNAL" ? (
+                              <span className="ml-2 text-muted-foreground">
+                                （已付 {formatAmount(paid)}）
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="py-2 text-muted-foreground">{row.description || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {businessCosts.length > 0 ? (
+              <div>
+                <p className="mb-2 text-sm font-medium">商务成本</p>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-4">日期</th>
+                      <th className="pb-2 pr-4">客户</th>
+                      <th className="pb-2 pr-4">销售</th>
+                      <th className="pb-2 pr-4">金额</th>
+                      <th className="pb-2">说明</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {businessCosts.map((row) => (
+                      <tr key={row.id} className="border-b">
+                        <td className="py-2 pr-4 whitespace-nowrap">
+                          {row.costDate.toISOString().slice(0, 10)}
+                        </td>
+                        <td className="py-2 pr-4">{row.customer?.name ?? "—"}</td>
+                        <td className="py-2 pr-4">{row.salesUser.name}</td>
+                        <td className="py-2 pr-4">{formatAmount(row.totalAmount)}</td>
+                        <td className="py-2 text-muted-foreground">{row.description || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  商务成本来自「销售成本」中关联本签约客户或最终用户的商务费用，便于追踪合同全成本。
+                </p>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       )}
@@ -387,6 +542,48 @@ export default async function ContractDetailPage({ params, searchParams }: Props
           }))}
         />
       )}
+
+      {signed &&
+        canRecordContractPayment(session.user.role) &&
+        contract.products
+          .filter((row) => row.costType === "EXTERNAL")
+          .map((row) => {
+            const paid = sumPaymentRecords(row.externalPayoutRecords);
+            return (
+              <ExternalCostPayoutPanel
+                key={row.id}
+                productId={row.id}
+                productName={row.productName}
+                costAmount={Number(row.costAmount || row.actualCostPrice)}
+                totalPaid={paid}
+                canDelete={canManageContractApproval(session.user.role)}
+                onAdd={addExternalCostPayoutRecord}
+                onDelete={deleteExternalCostPayoutRecord}
+                installments={row.externalInstallments.map((item) => ({
+                  periodNumber: item.periodNumber,
+                  amount: Number(item.amount),
+                  condition: item.condition,
+                  dueAt: item.dueAt?.toISOString() ?? null,
+                }))}
+                records={row.externalPayoutRecords.map((item) => ({
+                  id: item.id,
+                  amount: Number(item.amount),
+                  paidAt: item.paidAt.toISOString(),
+                  notes: item.notes,
+                  recordedBy: item.recordedBy,
+                }))}
+              />
+            );
+          })}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">操作日志</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EntityOperationLogList logs={operationLogs} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

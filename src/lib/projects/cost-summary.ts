@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { loadDailyRateResolver } from "@/lib/personnel/load-daily-rate-resolver";
 import {
   AllocationRecord,
   buildPersonLaborSplit,
@@ -41,18 +42,30 @@ export function summarizeProjectLabor(
   projectId: string,
   allocations: Array<AllocationRecord & { userName: string }>,
   allUserAllocations: AllocationRecord[],
-  dateRange?: { from: Date; to: Date }
+  dateRange?: { from: Date; to: Date },
+  resolveDailyRate?: (userId: string, date: Date) => number
 ): { laborCost: number; laborLines: ProjectLaborLine[] } {
   const projectAllocations = allocations.filter((a) => a.projectId === projectId);
-  const laborLines: ProjectLaborLine[] = projectAllocations.map((allocation) => ({
-    allocationId: allocation.id,
-    userId: allocation.userId,
-    userName: allocation.userName,
-    allocationMode: allocation.allocationMode,
-    effectiveDays: computeEffectiveDays(allocation, allUserAllocations, dateRange),
-    dailyRateSnapshot: allocation.dailyRateSnapshot,
-    cost: computeAllocationCost(allocation, allUserAllocations, dateRange),
-  }));
+  const laborLines: ProjectLaborLine[] = projectAllocations.map((allocation) => {
+    const effectiveDays = computeEffectiveDays(allocation, allUserAllocations, dateRange);
+    const cost = computeAllocationCost(
+      allocation,
+      allUserAllocations,
+      dateRange,
+      resolveDailyRate
+    );
+    const avgDailyRate =
+      effectiveDays > 0 ? round2(cost / effectiveDays) : allocation.dailyRateSnapshot;
+    return {
+      allocationId: allocation.id,
+      userId: allocation.userId,
+      userName: allocation.userName,
+      allocationMode: allocation.allocationMode,
+      effectiveDays,
+      dailyRateSnapshot: avgDailyRate,
+      cost,
+    };
+  });
   const laborCost = round2(laborLines.reduce((sum, line) => sum + line.cost, 0));
   return { laborCost, laborLines };
 }
@@ -79,7 +92,10 @@ export async function getProjectCostSummary(
   if (!project) throw new Error("项目不存在");
 
   const userIds = [...new Set(allocations.map((a) => a.userId))];
-  const allUserAllocations = await loadUserAllocations(userIds);
+  const [allUserAllocations, resolveDailyRate] = await Promise.all([
+    loadUserAllocations(userIds),
+    loadDailyRateResolver(userIds),
+  ]);
 
   const enriched = allocations.map((row) => ({
     ...serializeAllocationRecord(row),
@@ -90,7 +106,8 @@ export async function getProjectCostSummary(
     projectId,
     enriched,
     allUserAllocations,
-    dateRange
+    dateRange,
+    resolveDailyRate
   );
 
   const expenseCost = round2(Number(expenseAgg._sum.amount ?? 0));
@@ -121,7 +138,8 @@ export async function getPersonAllocationSplit(
     projectName: row.project.name,
   }));
 
-  const split = buildPersonLaborSplit(userId, userAllocations, dateRange);
+  const resolveDailyRate = await loadDailyRateResolver([userId]);
+  const split = buildPersonLaborSplit(userId, userAllocations, dateRange, resolveDailyRate);
   const totalCost = round2(split.reduce((sum, row) => sum + row.cost, 0));
   const totalDays = round2(split.reduce((sum, row) => sum + row.effectiveDays, 0));
 
@@ -149,7 +167,7 @@ export async function attachCostsToProjectList(
     progressPercent: number;
     plannedStartAt: Date | null;
     plannedEndAt: Date | null;
-    customer: { name: string };
+    customer: { name: string } | null;
     projectManager: { name: string } | null;
     contract: { totalAmount: { toNumber?: () => number } | number } | null;
   }>
@@ -162,7 +180,7 @@ export async function attachCostsToProjectList(
         name: project.name,
         status: project.status,
         progressPercent: project.progressPercent,
-        customerName: project.customer.name,
+        customerName: project.customer?.name ?? "内部项目",
         managerName: project.projectManager?.name ?? null,
         plannedStartAt: project.plannedStartAt,
         plannedEndAt: project.plannedEndAt,

@@ -7,6 +7,31 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   PROJECT_MANAGER: "项目经理",
   PROJECT_STAFF: "项目人员",
   ADMIN: "管理员",
+  HR: "行政人事",
+};
+
+/** 管理权限由高到低（数值越小权限越高），用于用户列表等排序 */
+export const ROLE_PRIVILEGE_RANK: Record<UserRole, number> = {
+  ADMIN: 0,
+  SALES_MANAGER: 1,
+  PROJECT_ADMIN: 2,
+  PROJECT_MANAGER: 3,
+  SALES: 4,
+  PROJECT_STAFF: 5,
+  HR: 6,
+};
+
+/** 编辑用户 / 开通审批时展示的角色说明 */
+export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
+  SALES:
+    "今日工作、日报、计划与任务、客户、商机、待跟进、合同（本人数据；可提审合同）。",
+  SALES_MANAGER:
+    "销售侧全部数据与审批、销售人员、销售成本；可编辑/审批合同；系统配置中的销售相关项。",
+  PROJECT_ADMIN: "项目、资源排班、实施人员；系统配置中的项目相关项。",
+  PROJECT_MANAGER: "项目与排班、我的任务；合同只读查阅；系统配置中的项目相关项。",
+  PROJECT_STAFF: "项目、资源排班、我的任务。",
+  ADMIN: "全部模块，含用户管理与完整系统配置。",
+  HR: "行政人事账号已开通；线上报销等能力后续上线前仅可进入工作台。",
 };
 
 export const CUSTOMER_CATEGORY_LABELS = {
@@ -80,8 +105,18 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/approvals", label: "审批", roles: ["SALES_MANAGER", "ADMIN"] },
+  {
+    href: "/notifications",
+    label: "通知",
+    roles: ["SALES_MANAGER", "PROJECT_ADMIN", "ADMIN"],
+  },
   { href: "/follow-ups", label: "待跟进", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/contracts", label: "合同", roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"] },
+  {
+    href: "/contracts/external-costs",
+    label: "外部成本",
+    roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"],
+  },
   { href: "/projects", label: "项目", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/projects/schedule", label: "资源排班", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/my-tasks", label: "我的任务", roles: ["PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
@@ -90,6 +125,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/sales-costs", label: "销售成本", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/admin/users", label: "用户管理", roles: ["ADMIN"] },
   { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER"] },
+  { href: "/hr", label: "工作台", roles: ["HR"] },
 ];
 
 export function getNavForRole(role: UserRole): NavItem[] {
@@ -110,6 +146,7 @@ export function canAccess(role: UserRole, resource: string, action: string): boo
     PROJECT_ADMIN: ["projects:all", "personnel:all", "presales-assignments:all", "settings:project"],
     PROJECT_MANAGER: ["projects:assigned", "tasks:assigned", "contracts:read", "settings:project"],
     PROJECT_STAFF: ["tasks:own", "projects:assigned"],
+    HR: ["hr:home"],
   };
   const perms = matrix[role] ?? [];
   const key = `${resource}:${action}`;

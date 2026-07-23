@@ -307,11 +307,18 @@ async function ensureSalesUsers() {
   const users: Record<string, string> = {};
 
   for (const rep of SALES_REPS) {
+    const phone =
+      rep.email === "sales1@example.com"
+        ? "13800000011"
+        : rep.email === "sales2@example.com"
+          ? "13800000012"
+          : "13800000013";
     const user = await prisma.user.upsert({
       where: { email: rep.email },
-      update: { name: rep.name },
+      update: { name: rep.name, phone },
       create: {
         email: rep.email,
+        phone,
         name: rep.name,
         passwordHash,
         role: UserRole.SALES,

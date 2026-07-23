@@ -14,30 +14,59 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ConfigOptionItem } from "@/lib/config-options";
+import type { ContactOption } from "@/components/sales-log/contact-select";
 
 const fieldLabelClass = "flex min-h-9 items-center";
+
+export type QuickContactDraft = {
+  id: string;
+  name: string;
+  title: string | null;
+  department: string | null;
+  phone: string | null;
+  wechat: string | null;
+  role: string;
+};
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   customerId: string;
+  /** 编辑时传入；为空则为新增 */
+  contact?: QuickContactDraft | null;
   initialName?: string;
   titleOptions?: ConfigOptionItem[];
   departmentOptions?: ConfigOptionItem[];
   roleOptions?: ConfigOptionItem[];
-  onCreated: (contact: { id: string; name: string }) => void;
+  onSaved: (contact: { id: string; name: string }) => void;
 };
+
+function toDraft(contact: ContactOption): QuickContactDraft {
+  return {
+    id: contact.id,
+    name: contact.name,
+    title: contact.title,
+    department: contact.department,
+    phone: contact.phone,
+    wechat: contact.wechat,
+    role: contact.role || "OTHER",
+  };
+}
+
+export { toDraft as contactOptionToQuickDraft };
 
 export function QuickContactDialog({
   open,
   onOpenChange,
   customerId,
+  contact = null,
   initialName = "",
   titleOptions = [],
   departmentOptions = [],
   roleOptions = [],
-  onCreated,
+  onSaved,
 }: Props) {
+  const isEdit = Boolean(contact);
   const [name, setName] = useState(initialName);
   const [title, setTitle] = useState("");
   const [department, setDepartment] = useState("");
@@ -52,18 +81,27 @@ export function QuickContactDialog({
 
   useEffect(() => {
     if (!open) return;
-    setName(initialName);
-    setTitle("");
-    setDepartment("");
-    setPhone("");
-    setWechat("");
-    setRole(
-      loadedRoleOptions.find((opt) => opt.value === "OTHER")?.value ??
-        loadedRoleOptions[0]?.value ??
-        "OTHER"
-    );
+    if (contact) {
+      setName(contact.name);
+      setTitle(contact.title ?? "");
+      setDepartment(contact.department ?? "");
+      setPhone(contact.phone ?? "");
+      setWechat(contact.wechat ?? "");
+      setRole(contact.role || "OTHER");
+    } else {
+      setName(initialName);
+      setTitle("");
+      setDepartment("");
+      setPhone("");
+      setWechat("");
+      setRole(
+        loadedRoleOptions.find((opt) => opt.value === "OTHER")?.value ??
+          loadedRoleOptions[0]?.value ??
+          "OTHER"
+      );
+    }
     setError(null);
-  }, [open, initialName]);
+  }, [open, initialName, contact]);
 
   useEffect(() => {
     if (titleOptions.length > 0) setLoadedTitleOptions(titleOptions);
@@ -94,6 +132,18 @@ export function QuickContactDialog({
       .catch(() => {});
   }, [open, loadedTitleOptions.length, loadedDeptOptions.length, loadedRoleOptions.length]);
 
+  useEffect(() => {
+    if (!open || !contact || loadedRoleOptions.length === 0) return;
+    const exists = loadedRoleOptions.some((opt) => opt.value === contact.role);
+    if (!exists) {
+      setRole(
+        loadedRoleOptions.find((opt) => opt.value === "OTHER")?.value ??
+          loadedRoleOptions[0]?.value ??
+          contact.role
+      );
+    }
+  }, [open, contact, loadedRoleOptions]);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -103,28 +153,30 @@ export function QuickContactDialog({
     }
     startTransition(async () => {
       try {
+        const payload = {
+          name,
+          title,
+          department,
+          phone,
+          wechat,
+          role,
+          ...(isEdit && contact ? { contactId: contact.id } : {}),
+        };
         const res = await fetch(`/api/customers/${customerId}/contacts`, {
-          method: "POST",
+          method: isEdit ? "PATCH" : "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            title,
-            department,
-            phone,
-            wechat,
-            role,
-          }),
+          body: JSON.stringify(payload),
         });
         const data = (await res.json()) as { id?: string; name?: string; error?: string };
         if (!res.ok || !data.id || !data.name) {
-          setError(data.error || "创建联系人失败");
+          setError(data.error || (isEdit ? "更新联系人失败" : "创建联系人失败"));
           return;
         }
-        onCreated({ id: data.id, name: data.name });
+        onSaved({ id: data.id, name: data.name });
         onOpenChange(false);
       } catch {
-        setError("创建联系人失败，请稍后重试");
+        setError(isEdit ? "更新联系人失败，请稍后重试" : "创建联系人失败，请稍后重试");
       }
     });
   }
@@ -133,8 +185,10 @@ export function QuickContactDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>新增联系人</DialogTitle>
-          <DialogDescription>保存后将自动选中该联系人。</DialogDescription>
+          <DialogTitle>{isEdit ? "编辑联系人" : "新增联系人"}</DialogTitle>
+          <DialogDescription>
+            {isEdit ? "保存后列表将刷新显示最新信息。" : "保存后将自动选中该联系人。"}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -197,7 +251,7 @@ export function QuickContactDialog({
               取消
             </Button>
             <Button type="submit" disabled={pending || !name.trim()}>
-              {pending ? "保存中…" : "保存并选中"}
+              {pending ? "保存中…" : isEdit ? "保存" : "保存并选中"}
             </Button>
           </div>
         </form>

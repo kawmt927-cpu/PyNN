@@ -15,6 +15,7 @@ import { formatLocalDateInput } from "@/lib/dates/local-date";
 import type { SchedulePeriod } from "./timeline";
 import { getWeekPeriod, workdaysInPeriod } from "./timeline";
 import { trimOverlappingProjectAllocations } from "./allocation-dedup";
+import { loadDailyRateResolver } from "@/lib/personnel/load-daily-rate-resolver";
 
 export type ScheduleBar = {
   id: string;
@@ -88,6 +89,8 @@ export type ScheduleProjectOption = {
   projectManagerName: string | null;
   plannedStartAt: string | null;
   plannedEndAt: string | null;
+  actualStartAt: string | null;
+  actualEndAt: string | null;
   periodEffectiveDays: number;
   periodStaffCount: number;
   periodCost: number;
@@ -102,7 +105,13 @@ export type ScheduleModuleData = {
   };
   staff: ScheduleStaff[];
   projects: ScheduleProjectOption[];
+  /** 当前周期内可见的投入条（用于甘特展示） */
   allBars: ScheduleBar[];
+  /**
+   * 周期内出现过的「项目+人员」的全部分段（含周期外），
+   * 供编辑弹窗做重叠校验与新增分段默认日期，避免漏检。
+   */
+  allocationSegments: ScheduleBar[];
   globalRows: SchedulePersonRow[];
 };
 
@@ -150,14 +159,17 @@ async function enrichBars(
   weekRange: { from: Date; to: Date }
 ): Promise<ScheduleBar[]> {
   const userIds = [...new Set(rows.map((r) => r.userId))];
-  const allByUser = await Promise.all(
-    userIds.map(async (userId) => {
-      const list = await prisma.projectStaffAllocation.findMany({
-        where: { userId },
-      });
-      return { userId, records: list.map(serializeAllocationRecord) };
-    })
-  );
+  const [allByUser, resolveDailyRate] = await Promise.all([
+    Promise.all(
+      userIds.map(async (userId) => {
+        const list = await prisma.projectStaffAllocation.findMany({
+          where: { userId },
+        });
+        return { userId, records: list.map(serializeAllocationRecord) };
+      })
+    ),
+    loadDailyRateResolver(userIds),
+  ]);
   const recordMap = new Map<string, AllocationRecord[]>(
     allByUser.map(({ userId, records }) => [userId, records])
   );
@@ -165,6 +177,10 @@ async function enrichBars(
   return rows.map((row) => {
     const record = serializeAllocationRecord(row);
     const userRecords = recordMap.get(row.userId) ?? [record];
+    const effectiveDays = computeEffectiveDays(record, userRecords, weekRange);
+    const cost = computeAllocationCost(record, userRecords, weekRange, resolveDailyRate);
+    const avgDailyRate =
+      effectiveDays > 0 ? Math.round((cost / effectiveDays) * 100) / 100 : resolveDailyRate(row.userId, weekRange.from);
     return {
       id: row.id,
       userId: row.userId,
@@ -175,9 +191,9 @@ async function enrichBars(
       endDate: formatLocalDateInput(row.endDate),
       allocationMode: row.allocationMode,
       plannedDays: record.plannedDays,
-      effectiveDays: computeEffectiveDays(record, userRecords, weekRange),
-      dailyRateSnapshot: record.dailyRateSnapshot,
-      cost: computeAllocationCost(record, userRecords, weekRange),
+      effectiveDays,
+      dailyRateSnapshot: avgDailyRate,
+      cost,
       notes: row.notes,
     };
   });
@@ -186,6 +202,9 @@ async function enrichBars(
 export async function loadScheduleStaff(period: SchedulePeriod): Promise<ScheduleStaff[]> {
   const range = { from: toDateOnly(period.from), to: toDateOnly(period.to) };
   const capacityDays = workdaysInPeriod(period);
+  const periodMid = new Date(
+    (range.from.getTime() + range.to.getTime()) / 2
+  );
 
   const users = await prisma.user.findMany({
     where: {
@@ -194,7 +213,15 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
     select: {
       id: true,
       name: true,
-      personnelProfile: { select: { dailyRate: true, personnelType: true } },
+      personnelProfile: {
+        select: {
+          baseSalary: true,
+          socialSecurityCompany: true,
+          housingFundCompany: true,
+          dailyRate: true,
+          personnelType: true,
+        },
+      },
       staffAllocations: {
         where: overlapRangeWhere(range.from, range.to),
         select: { projectId: true, startDate: true, endDate: true },
@@ -202,6 +229,9 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
     },
     orderBy: { name: "asc" },
   });
+
+  const userIds = users.map((u) => u.id);
+  const resolveDailyRate = await loadDailyRateResolver(userIds);
 
   const result: ScheduleStaff[] = [];
   for (const user of users) {
@@ -215,13 +245,19 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
       periodEffectiveDays += load.totalShare;
     }
 
+    const resolved = resolveDailyRate(user.id, periodMid);
+    const dailyRate =
+      resolved > 0
+        ? resolved
+        : user.personnelProfile?.dailyRate != null
+          ? Number(user.personnelProfile.dailyRate)
+          : null;
+
     const projectIds = new Set(user.staffAllocations.map((a) => a.projectId));
     result.push({
       id: user.id,
       name: user.name,
-      dailyRate: user.personnelProfile?.dailyRate
-        ? Number(user.personnelProfile.dailyRate)
-        : null,
+      dailyRate,
       personnelType: user.personnelProfile?.personnelType ?? null,
       weekEffectiveDays: round2(periodEffectiveDays),
       parallelProjects: projectIds.size,
@@ -416,6 +452,8 @@ export async function getScheduleModuleData(
         progressPercent: true,
         plannedStartAt: true,
         plannedEndAt: true,
+        actualStartAt: true,
+        actualEndAt: true,
         customer: { select: { name: true } },
         projectManager: { select: { name: true } },
       },
@@ -435,6 +473,33 @@ export async function getScheduleModuleData(
   ]);
 
   const allBars = await enrichBars(barsRaw, range);
+
+  // 编辑弹窗需要同项目同人员的全部分段（含当前周期外），否则会漏检重叠
+  const pairKeys = new Map<string, { projectId: string; userId: string }>();
+  for (const row of barsRaw) {
+    pairKeys.set(`${row.projectId}:${row.userId}`, {
+      projectId: row.projectId,
+      userId: row.userId,
+    });
+  }
+  const pairs = [...pairKeys.values()];
+  const siblingRows =
+    pairs.length === 0
+      ? []
+      : await prisma.projectStaffAllocation.findMany({
+          where: {
+            OR: pairs.map((pair) => ({
+              projectId: pair.projectId,
+              userId: pair.userId,
+            })),
+          },
+          include: {
+            user: { select: { name: true } },
+            project: { select: { name: true } },
+          },
+          orderBy: [{ startDate: "asc" }],
+        });
+  const allocationSegments = await enrichBars(siblingRows, range);
 
   const projectStats = new Map<
     string,
@@ -464,12 +529,14 @@ export async function getScheduleModuleData(
       return {
         id: p.id,
         name: p.name,
-        customerName: p.customer.name,
+        customerName: p.customer?.name ?? "内部项目",
         status: p.status,
         progressPercent: p.progressPercent,
         projectManagerName: p.projectManager?.name ?? null,
         plannedStartAt: p.plannedStartAt?.toISOString() ?? null,
         plannedEndAt: p.plannedEndAt?.toISOString() ?? null,
+        actualStartAt: p.actualStartAt?.toISOString() ?? null,
+        actualEndAt: p.actualEndAt?.toISOString() ?? null,
         periodEffectiveDays: stats?.effectiveDays ?? 0,
         periodStaffCount: stats?.staff.size ?? 0,
         periodCost: stats?.cost ?? 0,
@@ -479,6 +546,7 @@ export async function getScheduleModuleData(
       };
     }),
     allBars,
+    allocationSegments,
     globalRows: buildGlobalRows(allBars, capacityDays),
   };
 }

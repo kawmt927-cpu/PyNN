@@ -3,33 +3,28 @@ import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { canViewAllDailyReports } from "@/lib/sales-log/access";
 import {
-  buildDailyReportDayHref,
   dailyReportDayNavDates,
+  defaultDailyReportDayDate,
   getDailyReportDayView,
+  listDailyReportMarkedDates,
   parseDailyReportDayParams,
   resolveDailyReportSubjectUser,
 } from "@/lib/sales-log/daily-report-day";
-import { formatDailyReportDateLabel } from "@/lib/sales-log/daily-reports";
-import { DailyReportDayNav } from "@/components/daily-reports/daily-report-day-nav";
-import { DailyReportDetailView } from "@/components/daily-reports/daily-report-detail";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  defaultDailyReportDayDate,
-  listDailyReportMarkedDates,
-} from "@/lib/sales-log/daily-report-day";
+import { DailyReportHistoryQuery } from "@/components/daily-reports/daily-report-history-query";
 
 type Props = {
   searchParams: Promise<{
     date?: string;
     userId?: string;
+    tab?: string;
   }>;
 };
 
 export default async function DailyReportsPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const params = await searchParams;
-  const dayParams = parseDailyReportDayParams(params);
   const showAll = canViewAllDailyReports(session.user.role);
+  const dayParams = parseDailyReportDayParams(params);
 
   const [subjectUser, salesUsers] = await Promise.all([
     resolveDailyReportSubjectUser(
@@ -83,47 +78,16 @@ export default async function DailyReportsPage({ searchParams }: Props) {
         </p>
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">
-            {formatDailyReportDateLabel(report.logDate)}
-            {showAll ? ` · ${report.user.name}` : ""}
-            {nav.isToday ? (
-              <span className="ml-2 text-sm font-normal text-muted-foreground">（今天）</span>
-            ) : null}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <DailyReportDayNav
-            date={activeParams.date}
-            prevDate={nav.prevDate}
-            nextDate={nav.nextDate}
-            canGoNext={nav.canGoNext}
-            isToday={nav.isToday}
-            userId={activeParams.userId}
-            maxDate={maxDate}
-            markedDates={markedDates}
-            showUserFilter={showAll}
-            salesUsers={salesUsers}
-          />
-        </CardContent>
-      </Card>
-
-      {!hasActivity ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            该日暂无打卡、往来或日报记录。
-            {nav.canGoNext ? null : (
-              <>
-                {" "}
-                可点「上一天」查看历史，或通过日期选择器跳转。
-              </>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <DailyReportDetailView report={report} showUser={showAll} showDateTitle={false} />
-      )}
+      <DailyReportHistoryQuery
+        report={report}
+        showAll={showAll}
+        salesUsers={salesUsers}
+        activeParams={activeParams}
+        nav={nav}
+        maxDate={maxDate}
+        markedDates={markedDates}
+        hasActivity={hasActivity}
+      />
     </div>
   );
 }

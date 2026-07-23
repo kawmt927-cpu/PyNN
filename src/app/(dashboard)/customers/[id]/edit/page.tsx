@@ -1,10 +1,16 @@
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
-import { getCustomerForUser, canManageCustomerOwner, canEditCustomerContent } from "@/lib/customers/access";
+import {
+  getCustomerForUser,
+  canManageCustomerOwner,
+  canEditCustomerContent,
+  listCustomerAssignableUsers,
+} from "@/lib/customers/access";
+import { customerExists } from "@/lib/customers/access-denied";
 import { loadCustomerFormOptions } from "@/lib/config-options";
 import { CustomerForm } from "@/components/customers/customer-form";
 import { BackLink } from "@/components/navigation/back-link";
+import { AccessDeniedCard } from "@/components/navigation/access-denied-card";
 import { resolveBackNavigation, selfReturnPath } from "@/lib/navigation/return-to";
 
 type Props = {
@@ -16,27 +22,48 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
   const { id } = await params;
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
 
-  if (!customer) notFound();
-  if (!canEditCustomerContent(session.user.role, session.user.id, customer)) notFound();
+  // 先归一关系类型 value（历史「渠道」可能不是 CHANNEL），再读客户
+  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions } =
+    await loadCustomerFormOptions();
+
+  if (!(await customerExists(id))) notFound();
+
+  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
+  const { backHref, backLabel } = resolveBackNavigation(query, `/customers/${id}`);
+
+  if (!customer) {
+    return (
+      <div className="space-y-4">
+        <AccessDeniedCard backHref={backHref} backLabel={backLabel} entityLabel="该客户" />
+      </div>
+    );
+  }
+  if (!canEditCustomerContent(session.user.role, session.user.id, customer)) {
+    return (
+      <div className="space-y-4">
+        <AccessDeniedCard
+          backHref={backHref}
+          backLabel={backLabel}
+          entityLabel="该客户（无编辑权限）"
+        />
+      </div>
+    );
+  }
 
   const showOwnerSelect = canManageCustomerOwner(session.user.role);
   const showAssistantOwnersSelect =
     showOwnerSelect || customer.ownerId === session.user.id;
   const salesUsers =
     showOwnerSelect || showAssistantOwnersSelect
-      ? await prisma.user.findMany({
-          where: {
-            role: { in: ["SALES", "SALES_MANAGER"] },
-            personnelProfile: { enabled: true },
-          },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
+      ? await listCustomerAssignableUsers({
+          includeUserIds: [
+            customer.ownerId,
+            ...customer.assistantOwners.map((a) => a.userId),
+          ].filter((id): id is string => Boolean(id)),
         })
       : [];
 
-  const { sourceOptions, typeOptions, gradeOptions, tagOptions } = await loadCustomerFormOptions();
   const initialTagValues = customer.tags.map((item) => item.tagValue);
 
   const detailHref = selfReturnPath(`/customers/${id}`, query);
@@ -57,6 +84,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
         sourceOptions={sourceOptions}
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
+        channelGradeOptions={channelGradeOptions}
         tagOptions={tagOptions}
         initialTagValues={initialTagValues}
         initial={{

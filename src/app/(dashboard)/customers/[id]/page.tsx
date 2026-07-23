@@ -6,6 +6,7 @@ import {
   getCustomerForUser,
   canManageCustomerOwner,
   canEditCustomerContent,
+  listCustomerAssignableUsers,
 } from "@/lib/customers/access";
 import {
   HOSPITAL_LEVEL_LABELS,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/config-options";
 import { countCustomerFollowUps, getCustomerFollowUpHistory } from "@/lib/follow-ups/unified";
 import { getCustomerGradeFollowUpSchedule } from "@/lib/customers/grade-expiry";
+import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 import {
   contractListWhere,
   opportunityListWhere,
@@ -43,6 +45,13 @@ import {
   selfReturnPath,
   withReturnTo,
 } from "@/lib/navigation/return-to";
+import {
+  ENTITY_TYPES,
+  listEntityOperationLogs,
+} from "@/lib/audit/entity-operation-log";
+import { EntityOperationLogList } from "@/components/audit/entity-operation-log-list";
+import { AccessDeniedCard } from "@/components/navigation/access-denied-card";
+import { customerExists } from "@/lib/customers/access-denied";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -54,28 +63,35 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const db = getPrismaClient();
-  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
+  if (!(await customerExists(id))) notFound();
 
-  if (!customer) notFound();
+  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
+  if (!customer) {
+    const { backHref, backLabel } = resolveBackNavigation(query, "/customers");
+    return (
+      <div className="space-y-4">
+        <AccessDeniedCard backHref={backHref} backLabel={backLabel} entityLabel="该客户" />
+      </div>
+    );
+  }
 
   const canManage = canManageCustomerOwner(session.user.role);
   const inPool = customer.ownerId === null;
   const isSales = session.user.role === "SALES";
 
 
-  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, opportunities, contracts, followUps, gradeFollowUpSchedule] =
+  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, opportunities, contracts, followUps, gradeFollowUpSchedule, operationLogs] =
     await Promise.all([
       canManage
-        ? db.user.findMany({
-            where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-            select: { id: true, name: true },
-            orderBy: { name: "asc" },
+        ? listCustomerAssignableUsers({
+            includeUserIds: customer.ownerId ? [customer.ownerId] : [],
           })
         : Promise.resolve([]),
       getConfigOptionMaps([
         CONFIG_CATEGORY.CUSTOMER_SOURCE,
         CONFIG_CATEGORY.CUSTOMER_TYPE,
         CONFIG_CATEGORY.CUSTOMER_GRADE,
+        CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
         CONFIG_CATEGORY.OPPORTUNITY_STAGE,
       ]),
       getCustomerTagDefinitions(),
@@ -119,12 +135,18 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         customerId: customer.id,
         customerGrade: customer.customerGrade,
         customerCreatedAt: customer.createdAt,
+        customerType: customer.customerType,
       }),
+      listEntityOperationLogs(ENTITY_TYPES.CUSTOMER, customer.id),
     ]);
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+  const isChannel = isChannelCustomerType(customer.customerType, typeLabels);
+  const gradeLabels =
+    (isChannel
+      ? labelMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE]
+      : labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE]) ?? {};
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
 
   const relations = [
@@ -164,7 +186,11 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h1 className="text-2xl font-bold">{customer.name}</h1>
-            <CustomerGradeMetaBadge grade={customer.customerGrade} labelMap={gradeLabels} />
+            <CustomerGradeMetaBadge
+              grade={customer.customerGrade}
+              labelMap={gradeLabels}
+              tone={isChannel ? "blue" : "amber"}
+            />
           </div>
           <CustomerMetaLine
             className="mt-1"
@@ -248,12 +274,17 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
             <Row label="现有系统" value={customer.existingSystem ?? "—"} />
             <Row label="关系类型" value={labelForConfig(typeLabels, customer.customerType)} />
             <Row
-              label="客户等级"
+              label={isChannel ? "渠道等级" : "客户等级"}
               value={
-                <CustomerGradeIcon
-                  grade={customer.customerGrade}
-                  labelMap={gradeLabels}
-                />
+                customer.customerGrade ? (
+                  <CustomerGradeIcon
+                    grade={customer.customerGrade}
+                    labelMap={gradeLabels}
+                    tone={isChannel ? "blue" : "amber"}
+                  />
+                ) : (
+                  "—"
+                )
               }
             />
             {gradeFollowUpSchedule ? (
@@ -274,6 +305,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           titleOptions={contactFormOptions.titleOptions}
           departmentOptions={contactFormOptions.departmentOptions}
           roleOptions={contactFormOptions.roleOptions}
+          showDepartment={customer.category === "HOSPITAL"}
         />
       </div>
 
@@ -361,6 +393,15 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         </CardHeader>
         <CardContent>
           <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">操作日志</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EntityOperationLogList logs={operationLogs} />
         </CardContent>
       </Card>
     </div>

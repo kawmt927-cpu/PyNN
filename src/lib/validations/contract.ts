@@ -2,11 +2,49 @@ import { z } from "zod";
 
 const money = z.coerce.number().finite();
 
-export const contractProductLineSchema = z.object({
-  productServiceId: z.string().optional().nullable(),
-  productName: z.string().min(1, "请填写产品名称"),
-  costAmount: money.min(0, "成本不能为负"),
+export const externalCostInstallmentLineSchema = z.object({
+  periodNumber: z.coerce.number().int().positive("期次须为正整数"),
+  amount: money.positive("计划金额须大于 0"),
+  condition: z.string().optional().nullable(),
+  dueAt: z.string().optional().nullable(),
 });
+
+export const contractProductLineSchema = z
+  .object({
+    productServiceId: z.string().optional().nullable(),
+    productName: z.string().min(1, "请选择产品名称"),
+    description: z.string().optional().nullable(),
+    costType: z.enum(["INTERNAL", "EXTERNAL"]).default("INTERNAL"),
+    costAmount: money.min(0, "成本不能为负"),
+    externalInstallments: z.array(externalCostInstallmentLineSchema).optional().default([]),
+  })
+  .superRefine((row, ctx) => {
+    if (row.costType !== "EXTERNAL") return;
+    if (!row.externalInstallments.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `外部成本「${row.productName}」请添加付款分期`,
+        path: ["externalInstallments"],
+      });
+      return;
+    }
+    const coverageError = validateInstallmentCoverage(row.costAmount, row.externalInstallments);
+    if (coverageError) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `外部成本「${row.productName}」：${coverageError.replace("回款计划", "付款计划").replace("合同金额", "应付总额")}`,
+        path: ["externalInstallments"],
+      });
+    }
+    const periodNumbers = row.externalInstallments.map((item) => item.periodNumber);
+    if (new Set(periodNumbers).size !== periodNumbers.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `外部成本「${row.productName}」付款期次不能重复`,
+        path: ["externalInstallments"],
+      });
+    }
+  });
 
 export const contractInstallmentLineSchema = z.object({
   periodNumber: z.coerce.number().int().positive("期次须为正整数"),
@@ -34,8 +72,8 @@ export const contractFormSchema = z
     totalAmount: money.positive("合同金额须大于 0"),
     signingType: z.enum(["DIRECT", "INDIRECT"]),
     signCustomerId: z.string().min(1, "请选择签约客户"),
-    endUserCustomerId: z.string().min(1, "请选择终用户"),
-    signContactId: z.string().min(1, "请选择甲方代表（客户联系人）"),
+    endUserCustomerId: z.string().min(1, "请选择最终用户"),
+    signContactId: z.string().min(1, "请选择对方代表（客户联系人）"),
     ourRepresentativeId: z.string().min(1, "请选择我方代表"),
     paymentMethod: z.string().optional().nullable(),
     ownerId: z.string().optional().nullable(),
@@ -72,6 +110,40 @@ export const contractPaymentRecordSchema = z.object({
   paidAt: z.string().min(1, "请选择回款日期"),
   notes: z.string().optional(),
 });
+
+export const externalCostPayoutRecordSchema = z.object({
+  contractProductId: z.string().min(1),
+  amount: money.positive("实付金额须大于 0"),
+  paidAt: z.string().min(1, "请选择付款日期"),
+  notes: z.string().optional(),
+});
+
+export const externalCostInstallmentsUpdateSchema = z
+  .object({
+    contractProductId: z.string().min(1),
+    costAmount: money.min(0, "应付总额不能为负"),
+    installments: z.array(externalCostInstallmentLineSchema).min(1, "请至少添加一期付款计划"),
+  })
+  .superRefine((data, ctx) => {
+    const coverageError = validateInstallmentCoverage(data.costAmount, data.installments);
+    if (coverageError) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: coverageError
+          .replace("回款计划", "付款计划")
+          .replace("合同金额", "应付总额"),
+        path: ["installments"],
+      });
+    }
+    const periodNumbers = data.installments.map((row) => row.periodNumber);
+    if (new Set(periodNumbers).size !== periodNumbers.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "付款期次不能重复",
+        path: ["installments"],
+      });
+    }
+  });
 
 export const contractRejectSchema = z.object({
   contractId: z.string().min(1),

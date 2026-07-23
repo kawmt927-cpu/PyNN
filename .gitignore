@@ -27,6 +27,12 @@ yarn-error.log*
 .env
 .env*.local
 
+# local uploads (合同附件等)
+/uploads/
+
+# roster sync export (含 passwordHash，勿提交)
+/tmp/
+
 # prisma
 *.db
 *.db-journal

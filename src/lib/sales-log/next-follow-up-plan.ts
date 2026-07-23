@@ -7,7 +7,7 @@ export function resolveNoneGradeLabel(
 ): string {
   const fromOptions = gradeOptions?.find((option) => option.value === CUSTOMER_GRADE.NONE)?.label;
   if (fromOptions) return fromOptions;
-  return getCustomerGradeLabel(CUSTOMER_GRADE.NONE, labelMap) ?? "未评级";
+  return getCustomerGradeLabel(CUSTOMER_GRADE.NONE, labelMap) ?? "长期无意向客户";
 }
 
 export function getNextFollowUpPlanHintRequired(noneGradeLabel: string): string {

@@ -121,7 +121,8 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                         <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
                       ) : null}
                       <p className="text-xs text-muted-foreground">
-                        截止 {format(task.dueAt, "MM-dd HH:mm")}
+                        {task.createdBy.name} 指派给 {task.assignee.name} · 截止{" "}
+                        {format(task.dueAt, "MM-dd HH:mm")}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">

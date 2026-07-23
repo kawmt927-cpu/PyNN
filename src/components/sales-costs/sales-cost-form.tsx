@@ -11,7 +11,13 @@ import { SelectField } from "@/components/ui/select-field";
 import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
 import { SALES_COST_TYPE_OPTIONS } from "@/lib/sales-costs/labels";
 import { TRAVEL_ITEM_FIELDS, type TravelAmountKey, type TravelNoteKey } from "@/lib/sales-costs/travel-items";
-import type { ActionResult } from "@/lib/action-result";
+import {
+  asUserFacingError,
+  toUserFacingActionError,
+  type ActionResult,
+  type UserFacingActionError,
+} from "@/lib/action-result";
+import { ActionErrorDisplay } from "@/components/ui/action-error-display";
 import { cn } from "@/lib/utils";
 
 type SubmitAction = (formData: FormData) => Promise<ActionResult>;
@@ -96,7 +102,7 @@ export function SalesCostForm({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserFacingActionError | null>(null);
   const [costType, setCostType] = useState<SalesCostType>(
     defaultValues?.costType ?? defaultCostType
   );
@@ -128,7 +134,7 @@ export function SalesCostForm({
         if (costId) formData.set("id", costId);
         const result = await submitAction(formData);
         if (result.error) {
-          setError(result.error);
+          setError(asUserFacingError(result.error));
           return;
         }
         if (result.redirectTo) {
@@ -136,12 +142,7 @@ export function SalesCostForm({
           router.refresh();
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "";
-        if (message.includes("was not found on the server")) {
-          setError("提交失败，请刷新页面后重试");
-          return;
-        }
-        setError(message || "提交失败，请重试");
+        setError(toUserFacingActionError(err));
       }
     });
   }
@@ -284,7 +285,7 @@ export function SalesCostForm({
         </FormField>
       ) : null}
 
-      {error ? <p className="col-span-full text-sm text-destructive">{error}</p> : null}
+      <ActionErrorDisplay error={error} className="col-span-full" />
 
       <div className="col-span-full flex gap-2">
         <Button type="submit" disabled={pending}>

@@ -43,6 +43,15 @@ export function countCalendarDays(start: Date, end: Date): number {
   return eachCalendarDay(start, end).length;
 }
 
+/** 从起始日起第 N 个自然日（1-based；N=1 即起始日当天） */
+export function addCalendarDays(from: Date, calendarDayIndex: number): Date {
+  const start = toDateOnly(from);
+  const offset = Math.max(1, Math.round(calendarDayIndex)) - 1;
+  const result = new Date(start);
+  result.setDate(result.getDate() + offset);
+  return result;
+}
+
 /** 仅周一至周五（拖拽默认区间、容量口径等仍可用） */
 export function eachWorkday(start: Date, end: Date): Date[] {
   return eachCalendarDay(start, end).filter(isWorkday);

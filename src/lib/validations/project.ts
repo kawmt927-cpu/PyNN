@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const PROJECT_TABS = [
   { id: "overview", label: "概览" },
-  { id: "phases", label: "阶段" },
+  { id: "plan", label: "项目计划" },
   { id: "schedule", label: "资源排班" },
   { id: "costs", label: "发生费用" },
 ] as const;
@@ -10,7 +10,8 @@ export const PROJECT_TABS = [
 export type ProjectTab = (typeof PROJECT_TABS)[number]["id"];
 
 export function parseProjectTab(value: string | undefined): ProjectTab {
-  if (value === "phases") return "phases";
+  // 兼容旧链接 ?tab=phases
+  if (value === "plan" || value === "phases") return "plan";
   if (value === "schedule") return "schedule";
   if (value === "costs") return "costs";
   return "overview";
@@ -23,21 +24,16 @@ const phaseStatusSchema = z.enum([
   "BLOCKED",
 ] as const);
 
-const projectStatusSchema = z.enum([
-  "PENDING_START",
-  "IMPLEMENTING",
-  "ACCEPTED",
-  "MAINTAINING",
-  "CLOSED",
-] as const);
-
 export const projectOverviewSchema = z.object({
-  status: projectStatusSchema,
-  progressPercent: z.coerce.number().int().min(0).max(100),
   plannedStartAt: z.string().optional(),
   plannedEndAt: z.string().optional(),
-  actualStartAt: z.string().optional(),
-  actualEndAt: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+export const createProjectSchema = z.object({
+  name: z.string().trim().min(1, "项目名称不能为空"),
+  customerId: z.string().trim().optional().nullable(),
+  contractId: z.string().trim().optional().nullable(),
   notes: z.string().optional(),
 });
 

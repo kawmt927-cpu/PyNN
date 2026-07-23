@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { SALES_MOBILE_ROLES } from "@/lib/mobile/sales-roles";
 import { getCustomerForUser } from "@/lib/customers/access";
+import { customerExists } from "@/lib/customers/access-denied";
 import {
   CONFIG_CATEGORY,
   labelForConfig,
@@ -12,6 +13,7 @@ import {
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { CustomerTagList } from "@/components/customers/customer-tag-badge";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
+import { AccessDeniedCard } from "@/components/navigation/access-denied-card";
 import { prisma } from "@/lib/prisma";
 import {
   opportunityListWhere,
@@ -28,8 +30,20 @@ export default async function MobileCustomerDetailPage({ params }: Props) {
   const session = await requireRole(SALES_MOBILE_ROLES);
   const { id } = await params;
 
+  if (!(await customerExists(id))) notFound();
+
   const customer = await getCustomerForUser(id, session.user.role, session.user.id);
-  if (!customer) notFound();
+  if (!customer) {
+    return (
+      <div className="space-y-4 p-4">
+        <AccessDeniedCard
+          backHref="/mobile/customers"
+          backLabel="返回客户列表"
+          entityLabel="该客户"
+        />
+      </div>
+    );
+  }
 
   const [labelMaps, stageMaps, tagDefs, opportunities, contracts] = await Promise.all([
     loadCustomerFieldLabelMaps(),
@@ -160,8 +174,18 @@ export default async function MobileCustomerDetailPage({ params }: Props) {
           )}
         </section>
 
+        <section className="space-y-2">
+          <Link
+            href={`/mobile/customers/${id}/follow-ups`}
+            className="flex items-center justify-between rounded-xl border bg-card px-4 py-3 text-sm font-medium active:bg-muted/50"
+          >
+            客户跟进
+            <span className="text-xs font-normal text-muted-foreground">写跟进 / 查历史</span>
+          </Link>
+        </section>
+
         <p className="text-xs text-muted-foreground">
-          补跟进、改等级等请在电脑端客户详情操作。
+          新建客户、签约、复杂编辑可在本页「客户跟进」或「更多 → 客户」完成；签约请用电脑端。
         </p>
       </div>
     </div>

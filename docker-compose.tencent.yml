@@ -9,9 +9,12 @@ services:
       target: builder
     env_file:
       - .env.production
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - crm-data:/app/data
-    command: sh -c "npx prisma migrate deploy && chown -R 1001:1001 /app/data"
+      - crm-uploads:/app/uploads
+    command: sh -c "npx prisma migrate deploy && mkdir -p /app/uploads/contracts && chown -R 1001:1001 /app/data /app/uploads"
     profiles:
       - migrate
 
@@ -23,9 +26,13 @@ services:
       - "3001:3000"
     env_file:
       - .env.production
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - crm-data:/app/data
+      - crm-uploads:/app/uploads
     restart: unless-stopped
 
 volumes:
   crm-data:
+  crm-uploads:

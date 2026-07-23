@@ -4,12 +4,20 @@ import { resolveReturnTo } from "@/lib/navigation/return-to";
 
 export const WECOM_DEFAULT_RETURN_TO = "/mobile";
 
+/** OAuth 未绑定用户短期凭证，申请开通时校验 */
+export const WECOM_PENDING_USER_COOKIE = "wecom_pending_userid";
+
 export const WECOM_OAUTH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NEXTAUTH_URL?.startsWith("https://") ?? false,
   sameSite: "lax" as const,
   path: "/",
   maxAge: 600,
+} as const;
+
+export const WECOM_PENDING_USER_COOKIE_OPTIONS = {
+  ...WECOM_OAUTH_COOKIE_OPTIONS,
+  maxAge: 60 * 60 * 24,
 } as const;
 
 export function createWeComOAuthState(): string {
@@ -50,6 +58,14 @@ export function clearWeComOAuthCookies(res: NextResponse): NextResponse {
   res.cookies.delete("wecom_oauth_state");
   res.cookies.delete("wecom_return_to");
   return res;
+}
+
+export function setWeComPendingUserCookie(res: NextResponse, wecomUserId: string): void {
+  res.cookies.set(WECOM_PENDING_USER_COOKIE, wecomUserId, WECOM_PENDING_USER_COOKIE_OPTIONS);
+}
+
+export function clearWeComPendingUserCookie(res: NextResponse): void {
+  res.cookies.delete(WECOM_PENDING_USER_COOKIE);
 }
 
 /**

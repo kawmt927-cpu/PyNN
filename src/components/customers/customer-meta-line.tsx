@@ -19,9 +19,11 @@ function MetaSeparator() {
 function GradeMetaBadge({
   grade,
   labelMap,
+  tone = "amber",
 }: {
   grade: string;
   labelMap?: Record<string, string>;
+  tone?: "amber" | "blue";
 }) {
   const normalized = normalizeCustomerGrade(grade);
   if (!normalized) return null;
@@ -30,7 +32,7 @@ function GradeMetaBadge({
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/50 bg-muted/40 px-2 py-0.5 text-sm font-normal">
-      <CustomerGradeVisual grade={normalized} size="sm" />
+      <CustomerGradeVisual grade={normalized} size="sm" tone={tone} />
       {text ? <span className="text-foreground/80">{text}</span> : null}
     </span>
   );
@@ -41,15 +43,17 @@ export function CustomerGradeMetaBadge({
   grade,
   labelMap,
   className,
+  tone = "amber",
 }: {
   grade: string | null | undefined;
   labelMap?: Record<string, string>;
   className?: string;
+  tone?: "amber" | "blue";
 }) {
   if (!grade || !normalizeCustomerGrade(grade)) return null;
   return (
     <span className={className}>
-      <GradeMetaBadge grade={grade} labelMap={labelMap} />
+      <GradeMetaBadge grade={grade} labelMap={labelMap} tone={tone} />
     </span>
   );
 }

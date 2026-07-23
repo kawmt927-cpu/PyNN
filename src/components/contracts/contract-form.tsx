@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,14 +18,30 @@ import {
 } from "@/app/(dashboard)/contracts/actions";
 import { SIGNING_TYPE_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
-import type { ActionResult } from "@/lib/action-result";
+import {
+  asUserFacingError,
+  toUserFacingActionError,
+  type ActionResult,
+  type UserFacingActionError,
+} from "@/lib/action-result";
+import { ActionErrorDisplay } from "@/components/ui/action-error-display";
 import { validateInstallmentCoverage } from "@/lib/validations/contract";
 import { getContractPaymentRemaining } from "@/lib/contracts/payment-waterfall";
 import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
+import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
+import {
+  ContractPendingAttachments,
+  uploadContractAttachmentFiles,
+} from "@/components/contracts/contract-pending-attachments";
+import {
+  ContractCostComposition,
+  defaultCostProductLine,
+  type CostProductLine,
+} from "@/components/contracts/contract-cost-composition";
+import type { ConfigOptionItem } from "@/lib/config-options";
+import { nextClientKey } from "@/lib/ui/stable-client-key";
 
 type SalesOption = { id: string; name: string };
-type ProductTemplate = { id: string; name: string; defaultCost: number };
-type ProductLine = { key: string; productServiceId: string; productName: string; costAmount: string };
 type InstallmentLine = {
   key: string;
   periodNumber: number;
@@ -38,6 +54,8 @@ type Props = {
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
   paymentMethodOptions?: Array<{ value: string; label: string }>;
+  internalCostNameOptions?: ConfigOptionItem[];
+  externalCostNameOptions?: ConfigOptionItem[];
   opportunityId?: string;
   opportunityTitle?: string;
   contractId?: string;
@@ -62,7 +80,19 @@ type Props = {
     effectiveAt?: string;
     expiresAt?: string;
     notes?: string;
-    products?: Array<{ productServiceId?: string | null; productName: string; costAmount: number }>;
+    products?: Array<{
+      productServiceId?: string | null;
+      productName: string;
+      description?: string | null;
+      costAmount: number;
+      costType?: "INTERNAL" | "EXTERNAL";
+      externalInstallments?: Array<{
+        periodNumber: number;
+        amount: number;
+        condition?: string | null;
+        dueAt?: string | null;
+      }>;
+    }>;
     installments?: Array<{
       periodNumber: number;
       amount: number;
@@ -86,17 +116,13 @@ function toDateInput(value?: Date | string | null) {
 }
 
 function newKey() {
-  return Math.random().toString(36).slice(2, 10);
+  return nextClientKey("form");
 }
 
 /** 两列网格内统一标签行高，使左右输入框对齐 */
 const FORM_GRID_CELL = "grid min-w-0 grid-rows-[2.75rem_auto] gap-2 space-y-0";
 const FORM_GRID_LABEL = "self-end leading-snug";
 const FORM_FULL_WIDTH = "space-y-2 md:col-span-2";
-
-function defaultProductLine(): ProductLine {
-  return { key: newKey(), productServiceId: "", productName: "", costAmount: "" };
-}
 
 function defaultInstallmentLine(periodNumber: number, amount = ""): InstallmentLine {
   return { key: newKey(), periodNumber, amount, condition: "", dueAt: "" };
@@ -112,6 +138,8 @@ export function ContractForm({
   showOwnerSelect,
   salesUsers = [],
   paymentMethodOptions = [],
+  internalCostNameOptions = [],
+  externalCostNameOptions = [],
   opportunityId,
   opportunityTitle,
   contractId,
@@ -122,9 +150,8 @@ export function ContractForm({
   submitLabel = "提交销售合同",
 }: Props) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UserFacingActionError | null>(null);
   const [pending, startTransition] = useTransition();
-  const [templates, setTemplates] = useState<ProductTemplate[]>([]);
 
   const [linkedOpportunityId, setLinkedOpportunityId] = useState(
     opportunityId ?? defaultValues?.opportunityId ?? ""
@@ -145,16 +172,28 @@ export function ContractForm({
   const [totalAmount, setTotalAmount] = useState(
     defaultValues?.totalAmount != null ? String(defaultValues.totalAmount) : ""
   );
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
-  const [products, setProducts] = useState<ProductLine[]>(() =>
+  const [products, setProducts] = useState<CostProductLine[]>(() =>
     defaultValues?.products?.length
       ? defaultValues.products.map((row) => ({
           key: newKey(),
-          productServiceId: row.productServiceId ?? "",
           productName: row.productName,
+          notes: row.description ?? "",
           costAmount: String(row.costAmount),
+          costType: row.costType === "EXTERNAL" ? "EXTERNAL" : "INTERNAL",
+          externalInstallments:
+            row.costType === "EXTERNAL" && row.externalInstallments?.length
+              ? row.externalInstallments.map((item) => ({
+                  key: newKey(),
+                  periodNumber: item.periodNumber,
+                  amount: String(item.amount),
+                  condition: item.condition ?? "",
+                  dueAt: item.dueAt ? toDateInput(item.dueAt) : "",
+                }))
+              : [],
         }))
-      : [defaultProductLine()]
+      : [defaultCostProductLine("INTERNAL")]
   );
 
   const [installments, setInstallments] = useState<InstallmentLine[]>(() =>
@@ -168,13 +207,6 @@ export function ContractForm({
         }))
       : [defaultInstallmentLine(1)]
   );
-
-  useEffect(() => {
-    fetch("/api/product-templates", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : { items: [] }))
-      .then((data: { items: ProductTemplate[] }) => setTemplates(data.items ?? []))
-      .catch(() => setTemplates([]));
-  }, []);
 
   const productCostTotal = useMemo(
     () => products.reduce((sum, row) => sum + (Number(row.costAmount) || 0), 0),
@@ -220,9 +252,19 @@ export function ContractForm({
     }
 
     const productsPayload = products.map((row) => ({
-      productServiceId: row.productServiceId || null,
       productName: row.productName.trim(),
+      description: row.notes.trim() || null,
+      costType: row.costType,
       costAmount: Number(row.costAmount) || 0,
+      externalInstallments:
+        row.costType === "EXTERNAL"
+          ? row.externalInstallments.map((item) => ({
+              periodNumber: item.periodNumber,
+              amount: Number(item.amount) || 0,
+              condition: item.condition.trim() || null,
+              dueAt: item.dueAt || null,
+            }))
+          : [],
     }));
 
     const installmentsPayload = installments.map((row) => ({
@@ -237,7 +279,7 @@ export function ContractForm({
 
     const coverageError = validateInstallmentCoverage(contractAmountNum, installmentsPayload);
     if (coverageError) {
-      setError(coverageError);
+      setError(asUserFacingError(coverageError));
       return;
     }
 
@@ -255,15 +297,26 @@ export function ContractForm({
           result = await createContract(formData);
         }
         if (result.error) {
-          setError(result.error);
+          setError(asUserFacingError(result.error));
           return;
         }
+
+        const savedId = result.contractId ?? contractId;
+        if (savedId && pendingFiles.length > 0) {
+          const uploadErrors = await uploadContractAttachmentFiles(savedId, pendingFiles);
+          if (uploadErrors.length > 0) {
+            window.alert(`合同已保存，但部分附件上传失败：\n${uploadErrors.join("\n")}`);
+          } else {
+            setPendingFiles([]);
+          }
+        }
+
         if (result.redirectTo) {
           router.push(result.redirectTo);
           router.refresh();
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "提交失败");
+        setError(toUserFacingActionError(e));
       }
     });
   }
@@ -339,7 +392,7 @@ export function ContractForm({
           <CustomerSearchSelect
             id="endUserCustomerId"
             name="endUserCustomerId"
-            label="终用户 *"
+            label="最终用户 *"
             required
             className={FORM_GRID_CELL}
             labelClassName={FORM_GRID_LABEL}
@@ -353,7 +406,7 @@ export function ContractForm({
 
           <div className={FORM_GRID_CELL}>
             <Label htmlFor="signContactId" className={FORM_GRID_LABEL}>
-              甲方代表 *
+              对方代表 *
             </Label>
             <div>
               <ContactSelect
@@ -425,117 +478,6 @@ export function ContractForm({
             <Label htmlFor="notes">备注</Label>
             <Textarea id="notes" name="notes" rows={3} defaultValue={defaultValues?.notes ?? ""} />
           </div>
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">签约产品（成本）</h2>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setProducts((rows) => [...rows, defaultProductLine()])}
-          >
-            添加产品
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          合同售价为上方合同金额；此处仅录入各产品成本。预估毛利：
-          <span className="ml-1 font-medium text-foreground">
-            {Number.isFinite(grossProfit) ? grossProfit.toFixed(2) : "—"} 元
-          </span>
-        </p>
-        <div className="space-y-3">
-          {products.map((row, index) => (
-            <div key={row.key} className="grid gap-3 rounded-lg border p-3 md:grid-cols-12">
-              <div className="md:col-span-4 space-y-1">
-                <Label>产品模板</Label>
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={row.productServiceId}
-                  onChange={(e) => {
-                    const template = templates.find((t) => t.id === e.target.value);
-                    setProducts((rows) =>
-                      rows.map((item) =>
-                        item.key === row.key
-                          ? {
-                              ...item,
-                              productServiceId: e.target.value,
-                              productName: template?.name ?? item.productName,
-                              costAmount:
-                                template != null
-                                  ? String(template.defaultCost)
-                                  : item.costAmount,
-                            }
-                          : item
-                      )
-                    );
-                  }}
-                >
-                  <option value="">手动填写</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-4 space-y-1">
-                <Label>产品名称 *</Label>
-                <Input
-                  value={row.productName}
-                  onChange={(e) =>
-                    setProducts((rows) =>
-                      rows.map((item) =>
-                        item.key === row.key ? { ...item, productName: e.target.value } : item
-                      )
-                    )
-                  }
-                  required
-                />
-              </div>
-              <div className="md:col-span-3 space-y-1">
-                <Label>成本 *</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={row.costAmount}
-                  onChange={(e) =>
-                    setProducts((rows) =>
-                      rows.map((item) =>
-                        item.key === row.key ? { ...item, costAmount: e.target.value } : item
-                      )
-                    )
-                  }
-                  required
-                />
-              </div>
-              <div className="flex items-end md:col-span-1">
-                {products.length > 1 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (
-                        !confirmDestructiveAction(
-                          `确定删除产品「${row.productName || "该行"}」？需保存合同后才会生效。`
-                        )
-                      ) {
-                        return;
-                      }
-                      setProducts((rows) => rows.filter((item) => item.key !== row.key));
-                    }}
-                  >
-                    删
-                  </Button>
-                )}
-              </div>
-              {index === products.length - 1 ? null : null}
-            </div>
-          ))}
         </div>
       </section>
 
@@ -660,7 +602,31 @@ export function ContractForm({
         </div>
       </section>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <ContractCostComposition
+        products={products}
+        onChange={setProducts}
+        internalNameOptions={internalCostNameOptions}
+        externalNameOptions={externalCostNameOptions}
+        contractAmount={contractAmountNum}
+        grossProfit={grossProfit}
+        paymentPlan={installments}
+        onError={(message) => setError(asUserFacingError(message))}
+      />
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">合同附件</h2>
+        {contractId ? (
+          <ContractAttachmentsPanel contractId={contractId} canUpload canDelete />
+        ) : (
+          <ContractPendingAttachments
+            files={pendingFiles}
+            onChange={setPendingFiles}
+            disabled={pending}
+          />
+        )}
+      </section>
+
+      <ActionErrorDisplay error={error} />
 
       <Button type="submit" disabled={pending || !installmentsCovered}>
         {pending ? "提交中…" : submitLabel}

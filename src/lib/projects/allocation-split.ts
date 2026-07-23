@@ -205,10 +205,26 @@ export function buildAllocationDailySegments(
 export function computeAllocationCost(
   allocation: AllocationRecord,
   allUserAllocations: AllocationRecord[],
-  dateRange?: { from: Date; to: Date }
+  dateRange?: { from: Date; to: Date },
+  resolveDailyRate?: (userId: string, date: Date) => number
 ): number {
-  const days = computeEffectiveDays(allocation, allUserAllocations, dateRange);
-  return round2(days * allocation.dailyRateSnapshot);
+  const rangeStart = maxDate(dateRange?.from ?? allocation.startDate, allocation.startDate);
+  const rangeEnd = minDate(dateRange?.to ?? allocation.endDate, allocation.endDate);
+  if (compareDates(rangeStart, rangeEnd) > 0) return 0;
+
+  if (!resolveDailyRate) {
+    const days = computeEffectiveDays(allocation, allUserAllocations, dateRange);
+    return round2(days * allocation.dailyRateSnapshot);
+  }
+
+  let cost = 0;
+  for (const day of eachCalendarDay(rangeStart, rangeEnd)) {
+    const shares = getDailyShares(allocation.userId, day, allUserAllocations);
+    const share = shares.get(allocation.id) ?? 0;
+    if (share <= 0) continue;
+    cost += share * resolveDailyRate(allocation.userId, day);
+  }
+  return round2(cost);
 }
 
 export function serializeAllocationRecord(raw: {
@@ -242,12 +258,18 @@ export function serializeAllocationRecord(raw: {
 export function buildPersonLaborSplit(
   userId: string,
   allocations: Array<AllocationRecord & { projectName: string }>,
-  dateRange?: { from: Date; to: Date }
+  dateRange?: { from: Date; to: Date },
+  resolveDailyRate?: (userId: string, date: Date) => number
 ): PersonLaborSplitRow[] {
   const userAllocations = allocations.filter((a) => a.userId === userId);
   const rows = userAllocations.map((allocation) => {
     const effectiveDays = computeEffectiveDays(allocation, userAllocations, dateRange);
-    const cost = round2(effectiveDays * allocation.dailyRateSnapshot);
+    const cost = computeAllocationCost(
+      allocation,
+      userAllocations,
+      dateRange,
+      resolveDailyRate
+    );
     return {
       allocationId: allocation.id,
       projectId: allocation.projectId,

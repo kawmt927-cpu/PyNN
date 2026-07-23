@@ -36,6 +36,7 @@ export async function GET(
       department: true,
       phone: true,
       wechat: true,
+      role: true,
       isPrimary: true,
     },
   });
@@ -91,6 +92,71 @@ export async function POST(
     }
     return Response.json(
       { error: error instanceof Error ? error.message : "创建失败" },
+      { status: 400 }
+    );
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user || !SALES_LOG_ROLES.includes(session.user.role)) {
+    return Response.json({ error: "未登录或无权操作" }, { status: 401 });
+  }
+
+  const { id: customerId } = await params;
+  const customer = await getCustomerForUser(customerId, session.user.role, session.user.id);
+  if (!customer) {
+    return Response.json({ error: "客户不存在或无权访问" }, { status: 404 });
+  }
+
+  try {
+    await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
+    const body = (await req.json()) as { contactId?: string } & Record<string, unknown>;
+    const contactId = typeof body.contactId === "string" ? body.contactId.trim() : "";
+    if (!contactId) {
+      return Response.json({ error: "缺少联系人" }, { status: 400 });
+    }
+
+    const existing = await prisma.contact.findFirst({
+      where: { id: contactId, customerId },
+      select: { id: true },
+    });
+    if (!existing) {
+      return Response.json({ error: "联系人不存在" }, { status: 404 });
+    }
+
+    const parsed = quickContactSchema.parse(body);
+    const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
+    const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
+    if (!role) {
+      return Response.json({ error: "请选择角色" }, { status: 400 });
+    }
+
+    const contact = await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        name: parsed.name.trim(),
+        title: parsed.title ?? null,
+        department: parsed.department ?? null,
+        phone: parsed.phone ?? null,
+        wechat: parsed.wechat ?? null,
+        role,
+      },
+      select: { id: true, name: true },
+    });
+
+    revalidatePath(`/customers/${customerId}`);
+    revalidatePath("/today-work");
+    return Response.json({ id: contact.id, name: contact.name });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return Response.json({ error: error.errors[0]?.message ?? "表单无效" }, { status: 400 });
+    }
+    return Response.json(
+      { error: error instanceof Error ? error.message : "更新失败" },
       { status: 400 }
     );
   }

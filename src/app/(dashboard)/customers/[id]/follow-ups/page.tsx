@@ -7,6 +7,7 @@ import {
   canEditCustomerContent,
   canEditCustomerFollowUp,
 } from "@/lib/customers/access";
+import { customerExists } from "@/lib/customers/access-denied";
 import {
   CONFIG_CATEGORY,
   loadCustomerFieldLabelMaps,
@@ -18,6 +19,7 @@ import {
   CustomerFollowUpCheckInSection,
 } from "@/components/customers/customer-follow-up-check-in-section";
 import { BackLink } from "@/components/navigation/back-link";
+import { AccessDeniedCard } from "@/components/navigation/access-denied-card";
 import { CustomerMetaLine, CustomerGradeMetaBadge } from "@/components/customers/customer-meta-line";
 import {
   countCustomerFollowUps,
@@ -26,7 +28,11 @@ import {
   serializeCustomerPendingFollowPlan,
 } from "@/lib/follow-ups/unified";
 import { prisma } from "@/lib/prisma";
-import { selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
+import {
+  resolveBackNavigation,
+  selfReturnPath,
+  withReturnTo,
+} from "@/lib/navigation/return-to";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -38,10 +44,19 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
 
+  if (!(await customerExists(id))) notFound();
+
   const customer = await getCustomerForUser(id, session.user.role, session.user.id, {
     allowAssignedWeeklyTask: true,
   });
-  if (!customer) notFound();
+  if (!customer) {
+    const { backHref, backLabel } = resolveBackNavigation(query, "/customers");
+    return (
+      <div className="space-y-4">
+        <AccessDeniedCard backHref={backHref} backLabel={backLabel} entityLabel="该客户" />
+      </div>
+    );
+  }
 
   const canManage = canManageCustomerOwner(session.user.role);
   const canEdit = canEditCustomerFollowUp(session.user.role, session.user.id, customer);

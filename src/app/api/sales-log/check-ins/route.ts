@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { createSalesCheckIn, updateSalesCheckIn } from "@/lib/sales-log/check-in";
 import { checkInFormSchema } from "@/lib/validations/sales-log";
+import { getRequestClientIp } from "@/lib/request/client-ip";
 import type { UserRole } from "@prisma/client";
 
 const SALES_LOG_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
@@ -24,10 +25,12 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const parsed = checkInFormSchema.parse(body);
+    const clientIp = getRequestClientIp(req);
     const payload = {
       userId: session.user.id,
       role: session.user.role,
       ...parsed,
+      clientIp,
     };
 
     if (parsed.updateCheckInId?.trim()) {
@@ -41,6 +44,7 @@ export async function POST(req: Request) {
     revalidatePath("/mobile");
     revalidatePath("/mobile/check-in");
     revalidatePath("/follow-ups");
+    revalidatePath("/notifications");
     if (parsed.customerId?.trim()) {
       revalidatePath(`/customers/${parsed.customerId.trim()}`);
       revalidatePath(`/customers/${parsed.customerId.trim()}/follow-ups`);

@@ -45,7 +45,7 @@ export default async function MobileContractDetailPage({ params }: Props) {
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">终用户</dt>
+            <dt className="text-xs text-muted-foreground">最终用户</dt>
             <dd>
               <Link
                 href={`/mobile/customers/${contract.endUserCustomer.id}`}

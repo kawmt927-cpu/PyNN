@@ -9,7 +9,7 @@ type FinalizeInput = {
   approverId: string;
 };
 
-/** 审核通过或直接签署：标记已签署、赢单、创建项目 */
+/** 审核通过或直接签署：标记已签署、赢单（项目由管理员/项目管理员手动创建） */
 export async function finalizeSignedContract(tx: Tx, input: FinalizeInput) {
   const contract = await tx.contract.findUnique({
     where: { id: input.contractId },
@@ -41,16 +41,5 @@ export async function finalizeSignedContract(tx: Tx, input: FinalizeInput) {
         data: { status: "SIGNED", amountLocked: true },
       });
     }
-  }
-
-  if (!contract.project) {
-    await tx.project.create({
-      data: {
-        name: contract.title,
-        customerId: contract.endUserCustomerId,
-        contractId: contract.id,
-        status: "PENDING_START",
-      },
-    });
   }
 }

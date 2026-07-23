@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,13 @@ import { SelectField } from "@/components/ui/select-field";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { CustomerCategory } from "@prisma/client";
+import {
+  categoryLocksToDirectCustomer,
+  customerTypeRequiresGrade,
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveDirectCustomerTypeValue,
+} from "@/lib/customers/customer-type-grade";
 
 type SalesOption = { id: string; name: string };
 
@@ -50,6 +58,7 @@ type Props = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
 };
@@ -74,9 +83,29 @@ export function CustomerFieldsSection({
   sourceOptions,
   typeOptions,
   gradeOptions,
+  channelGradeOptions = [],
   showOwnerSelect,
   salesUsers = [],
 }: Props) {
+  const relationTypeLocked = categoryLocksToDirectCustomer(values.category);
+  const directTypeValue = resolveDirectCustomerTypeValue(typeOptions);
+  const showGrade = customerTypeRequiresGrade(values.customerType, typeOptions);
+  const activeGradeOptions = isChannelCustomerType(values.customerType, typeOptions)
+    ? channelGradeOptions
+    : gradeOptions;
+  const gradeTone = gradeToneForCustomerType(values.customerType, typeOptions);
+  const gradeLabel = isChannelCustomerType(values.customerType, typeOptions)
+    ? "渠道等级"
+    : "客户等级";
+
+  useEffect(() => {
+    if (!relationTypeLocked) return;
+    if (values.customerType === directTypeValue) return;
+    onChange({ customerType: directTypeValue, customerGrade: "" });
+    // onChange 由父组件内联传入，勿放入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync lock only
+  }, [relationTypeLocked, directTypeValue, values.customerType]);
+
   return (
     <div className="grid gap-4 rounded-md border bg-muted/20 p-4 md:grid-cols-2">
       <p className="text-sm font-medium md:col-span-2">新建客户（销售对象）</p>
@@ -99,7 +128,18 @@ export function CustomerFieldsSection({
           name="category"
           required
           value={values.category}
-          onChange={(e) => onChange({ category: e.target.value as CustomerCategory })}
+          onChange={(e) => {
+            const category = e.target.value as CustomerCategory;
+            if (categoryLocksToDirectCustomer(category)) {
+              onChange({
+                category,
+                customerType: resolveDirectCustomerTypeValue(typeOptions),
+                customerGrade: "",
+              });
+              return;
+            }
+            onChange({ category });
+          }}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
           {categoryOptions.map((opt) => (
@@ -116,16 +156,29 @@ export function CustomerFieldsSection({
         name="customerType"
         options={withEmptyOption(typeOptions)}
         value={values.customerType}
-        onValueChange={(customerType) => onChange({ customerType })}
+        onValueChange={(customerType) => {
+          if (relationTypeLocked) return;
+          onChange({ customerType, customerGrade: "" });
+        }}
         required
+        disabled={relationTypeLocked}
+        description={
+          relationTypeLocked ? "医院客户关系类型固定为直接客户" : undefined
+        }
       />
 
-      <CustomerGradeSelect
-        value={values.customerGrade}
-        onValueChange={(customerGrade) => onChange({ customerGrade })}
-        options={gradeOptions}
-        required
-      />
+      {showGrade ? (
+        <CustomerGradeSelect
+          value={values.customerGrade}
+          onValueChange={(customerGrade) => onChange({ customerGrade })}
+          options={activeGradeOptions}
+          required
+          label={gradeLabel}
+          tone={gradeTone}
+        />
+      ) : (
+        <input type="hidden" name="customerGrade" value="" />
+      )}
 
       <SelectField
         id="source"

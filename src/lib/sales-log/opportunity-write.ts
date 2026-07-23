@@ -7,12 +7,16 @@ import {
 import { buildOpportunityEditChanges } from "@/lib/opportunities/edit-log";
 import { parseExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
 import { prisma } from "@/lib/prisma";
+import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
 import type { AgentWriteContext } from "@/lib/sales-log/write";
 
-function resolveOwnerId(role: UserRole, userId: string, ownerId?: string | null) {
+async function resolveOwnerId(role: UserRole, userId: string, ownerId?: string | null) {
   if (role === "SALES") return userId;
-  if (canManageOpportunityOwner(role) && ownerId) return ownerId;
+  if (canManageOpportunityOwner(role) && ownerId) {
+    await assertSelectableSalesOwner(role, userId, ownerId);
+    return ownerId;
+  }
   return userId;
 }
 
@@ -60,7 +64,7 @@ export async function createOpportunityFromAgent(
     input.customerId,
     input.customerName
   );
-  const ownerId = resolveOwnerId(ctx.role, ctx.userId);
+  const ownerId = await resolveOwnerId(ctx.role, ctx.userId);
   const title = input.title.trim();
   if (!title) throw new Error("商机名称不能为空");
 
@@ -88,6 +92,18 @@ export async function createOpportunityFromAgent(
       },
     });
     return created;
+  });
+
+  const { recordEntityOperation, ENTITY_TYPES } = await import(
+    "@/lib/audit/entity-operation-log"
+  );
+  await recordEntityOperation({
+    entityType: ENTITY_TYPES.OPPORTUNITY,
+    entityId: opportunity.id,
+    userId: ctx.userId,
+    action: "创建",
+    summary: `创建商机「${opportunity.title}」`,
+    detail: "来源：AI 销售日志",
   });
 
   return {
@@ -181,6 +197,20 @@ export async function updateOpportunityFromAgent(
       });
     }
   });
+
+  if (changes.length > 0) {
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: existing.id,
+      userId: ctx.userId,
+      action: "更新",
+      summary: `更新商机「${nextData.title}」`,
+      detail: `来源：AI 销售日志；${changes.join("；")}`,
+    });
+  }
 
   return {
     success: true as const,

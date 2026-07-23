@@ -1,27 +1,28 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { UserRole } from "@prisma/client";
 import {
   approveWeComAccess,
   rejectWeComAccess,
-} from "@/app/(dashboard)/admin/settings/actions";
+} from "@/app/(dashboard)/admin/users/wecom-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ROLE_LABELS } from "@/lib/permissions";
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "@/lib/permissions";
 
 export type WeComAccessRequestRow = {
   id: string;
   wecomUserId: string;
   name: string;
-  email: string;
+  phone: string;
   message: string | null;
   createdAt: string;
+  hasPassword: boolean;
 };
 
-type UserOption = { id: string; name: string; email: string };
+type UserOption = { id: string; name: string; phone: string | null; email: string | null };
 
 type Props = {
   requests: WeComAccessRequestRow[];
@@ -35,6 +36,7 @@ const ASSIGNABLE_ROLES: UserRole[] = [
   "PROJECT_MANAGER",
   "PROJECT_STAFF",
   "ADMIN",
+  "HR",
 ];
 
 export function WeComAccessRequestsPanel({ requests, usersWithoutWecom }: Props) {
@@ -65,6 +67,7 @@ function WeComAccessRequestCard({
   usersWithoutWecom: UserOption[];
 }) {
   const [pending, startTransition] = useTransition();
+  const [role, setRole] = useState<UserRole>("SALES");
 
   return (
     <div className="rounded-lg border p-4">
@@ -78,8 +81,13 @@ function WeComAccessRequestCard({
           {request.name}
         </p>
         <p>
-          <span className="text-muted-foreground">申请邮箱：</span>
-          {request.email}
+          <span className="text-muted-foreground">手机号：</span>
+          {request.phone}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {request.hasPassword
+            ? "申请人已设置登录密码（批准后生效）"
+            : "申请人未设置密码，将生成随机密码，请提醒其重置"}
         </p>
         {request.message ? (
           <p>
@@ -116,16 +124,18 @@ function WeComAccessRequestCard({
           <Label>角色</Label>
           <select
             name="role"
-            defaultValue="SALES"
+            value={role}
+            onChange={(e) => setRole(e.target.value as UserRole)}
             required
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           >
-            {ASSIGNABLE_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABELS[role]}
+            {ASSIGNABLE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
               </option>
             ))}
           </select>
+          <p className="text-xs text-muted-foreground">{ROLE_DESCRIPTIONS[role]}</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor={`name-${request.id}`}>姓名</Label>
@@ -137,12 +147,12 @@ function WeComAccessRequestCard({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor={`email-${request.id}`}>邮箱</Label>
+          <Label htmlFor={`phone-${request.id}`}>手机号</Label>
           <Input
-            id={`email-${request.id}`}
-            name="email"
-            type="email"
-            defaultValue={request.email}
+            id={`phone-${request.id}`}
+            name="phone"
+            type="tel"
+            defaultValue={request.phone}
             required
           />
         </div>
@@ -155,7 +165,9 @@ function WeComAccessRequestCard({
             <option value="">请选择</option>
             {usersWithoutWecom.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.name} ({u.email})
+                {u.name}
+                {u.phone ? ` · ${u.phone}` : ""}
+                {u.email ? ` · ${u.email}` : ""}
               </option>
             ))}
           </select>

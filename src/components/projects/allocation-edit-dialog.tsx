@@ -15,7 +15,15 @@ import { SelectField } from "@/components/ui/select-field";
 import { cn } from "@/lib/utils";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
-import { formatPersonDays } from "@/lib/projects/timeline";
+import { openEndDatePickerAfterStartChange } from "@/lib/dates/open-date-picker";
+import {
+  allocationDatesOutsideProjectBoundsError,
+  clampAllocationDatesToProjectBounds,
+  defaultAllocationDates,
+  formatPersonDays,
+  projectAllocationDateBounds,
+  type ProjectScheduleDates,
+} from "@/lib/projects/timeline";
 import {
   dateRangesOverlap,
 } from "@/lib/projects/allocation-overlap";
@@ -53,6 +61,8 @@ type Props = {
   peerRecords: AllocationRecord[];
   /** 拖拽新增分段时的初始日期 */
   draftSegment?: { startDate: string; endDate: string } | null;
+  /** 项目计划/实际起止，用于限制分段日期 */
+  projectDates?: ProjectScheduleDates | null;
   onClose: () => void;
   onSaved?: () => void;
 };
@@ -74,8 +84,8 @@ function barToDraft(bar: ScheduleBar): SegmentDraft {
   return {
     key: isDraft ? `new-${bar.id}` : bar.id,
     id: isDraft ? undefined : bar.id,
-    startDate: formatLocalDateInput(new Date(bar.startDate)),
-    endDate: formatLocalDateInput(new Date(bar.endDate)),
+    startDate: bar.startDate.slice(0, 10),
+    endDate: bar.endDate.slice(0, 10),
     allocationMode: bar.allocationMode,
     plannedDays: bar.plannedDays != null ? String(bar.plannedDays) : "",
     notes: bar.notes ?? "",
@@ -123,10 +133,20 @@ function newDraftSegment(
 function buildInitialSegments(
   bar: ScheduleBar,
   projectSegments: ScheduleBar[],
-  draftSegment?: { startDate: string; endDate: string } | null
+  draftSegment?: { startDate: string; endDate: string } | null,
+  projectDates?: ProjectScheduleDates | null
 ): SegmentDraft[] {
+  const clampedDraft = draftSegment
+    ? projectDates
+      ? clampAllocationDatesToProjectBounds(draftSegment, projectDates)
+      : draftSegment
+    : null;
+
   if (projectSegments.length === 0) {
-    if (draftSegment) return [newDraftSegment(bar, draftSegment)];
+    if (clampedDraft) return [newDraftSegment(bar, clampedDraft)];
+    if (isDraftScheduleBarId(bar.id) && projectDates) {
+      return [newDraftSegment(bar, defaultAllocationDates(projectDates))];
+    }
     return [barToDraft(bar)];
   }
 
@@ -134,26 +154,26 @@ function buildInitialSegments(
     .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
     .map(barToDraft);
 
-  if (!draftSegment) return base;
+  if (!clampedDraft) return base;
 
   const overlapIdx = base.findIndex((segment) =>
     dateRangesOverlap(
       segment.startDate,
       segment.endDate,
-      draftSegment.startDate,
-      draftSegment.endDate
+      clampedDraft.startDate,
+      clampedDraft.endDate
     )
   );
   if (overlapIdx >= 0) {
     base[overlapIdx] = {
       ...base[overlapIdx],
-      startDate: draftSegment.startDate,
-      endDate: draftSegment.endDate,
+      startDate: clampedDraft.startDate,
+      endDate: clampedDraft.endDate,
     };
     return base;
   }
 
-  return [...base, newDraftSegment(bar, draftSegment)];
+  return [...base, newDraftSegment(bar, clampedDraft)];
 }
 
 export function AllocationEditDialog({
@@ -162,17 +182,18 @@ export function AllocationEditDialog({
   canEdit,
   peerRecords,
   draftSegment,
+  projectDates,
   onClose,
   onSaved,
 }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [segments, setSegments] = useState<SegmentDraft[]>(() =>
-    bar ? buildInitialSegments(bar, projectSegments, draftSegment) : []
+    bar ? buildInitialSegments(bar, projectSegments, draftSegment, projectDates) : []
   );
   const [activeKey, setActiveKey] = useState(() => {
     if (!bar) return "";
-    const initial = buildInitialSegments(bar, projectSegments, draftSegment);
+    const initial = buildInitialSegments(bar, projectSegments, draftSegment, projectDates);
     const overlap = draftSegment
       ? initial.find((s) =>
           dateRangesOverlap(s.startDate, s.endDate, draftSegment.startDate, draftSegment.endDate)
@@ -183,6 +204,17 @@ export function AllocationEditDialog({
 
   const activeIndex = segments.findIndex((s) => s.key === activeKey);
   const active = activeIndex >= 0 ? segments[activeIndex] : segments[0];
+
+  const dateBounds = useMemo(
+    () => (projectDates ? projectAllocationDateBounds(projectDates) : { minStart: null, maxEnd: null }),
+    [projectDates]
+  );
+  const minStartKey = dateBounds.minStart
+    ? formatLocalDateInput(dateBounds.minStart)
+    : undefined;
+  const maxEndKey = dateBounds.maxEnd
+    ? formatLocalDateInput(dateBounds.maxEnd)
+    : undefined;
 
   useEffect(() => {
     setSegments((prev) => {
@@ -331,6 +363,14 @@ export function AllocationEditDialog({
       ) {
         return "结束日期不能早于开始日期";
       }
+      if (projectDates) {
+        const boundsError = allocationDatesOutsideProjectBoundsError(
+          active.startDate,
+          active.endDate,
+          projectDates
+        );
+        if (boundsError) return boundsError;
+      }
       for (const segment of segments) {
         if (segment.key === activeKey) continue;
         if (
@@ -341,14 +381,14 @@ export function AllocationEditDialog({
             segment.endDate
           )
         ) {
-          return "该分段与同项目其他排班分段时间重叠";
+          return `与分段 ${segment.startDate}~${segment.endDate} 重叠，请调整日期`;
         }
       }
       return null;
     } catch {
       return "日期无效";
     }
-  }, [active, activeKey, segments]);
+  }, [active, activeKey, projectDates, segments]);
 
   const isActiveDirty = useMemo(() => {
     if (!active) return false;
@@ -358,8 +398,8 @@ export function AllocationEditDialog({
     const originalPlanned =
       original.plannedDays != null ? String(original.plannedDays) : "";
     return (
-      active.startDate !== formatLocalDateInput(new Date(original.startDate)) ||
-      active.endDate !== formatLocalDateInput(new Date(original.endDate)) ||
+      active.startDate !== original.startDate.slice(0, 10) ||
+      active.endDate !== original.endDate.slice(0, 10) ||
       active.allocationMode !== original.allocationMode ||
       (active.allocationMode === "MANUAL" &&
         active.plannedDays.trim() !== originalPlanned) ||
@@ -381,7 +421,9 @@ export function AllocationEditDialog({
         parseDateOnlyInput(a.endDate).getTime() - parseDateOnlyInput(b.endDate).getTime()
     );
     const last = sorted[sorted.length - 1] ?? active;
-    const dates = defaultDatesAfterLastSegment(last);
+    const dates = projectDates
+      ? clampAllocationDatesToProjectBounds(defaultDatesAfterLastSegment(last), projectDates)
+      : defaultDatesAfterLastSegment(last);
     const draft = newDraftSegment(bar!, dates);
     setSegments((prev) => [...prev, draft]);
     setActiveKey(draft.key);
@@ -485,7 +527,7 @@ export function AllocationEditDialog({
                 >
                   分段 {index + 1}
                   {segment.startDate && segment.endDate
-                    ? ` · ${segment.startDate.slice(5)}~${segment.endDate.slice(5)}`
+                    ? ` · ${segment.startDate}~${segment.endDate}`
                     : ""}
                 </button>
               ))}
@@ -494,7 +536,17 @@ export function AllocationEditDialog({
               <p className="text-xs text-destructive">{activeOverlapError}</p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                各分段日期不能重叠；保存仅提交当前分段
+                各分段日期不能重叠
+                {minStartKey || maxEndKey
+                  ? `；须在项目起止范围内${
+                      minStartKey && maxEndKey
+                        ? `（${minStartKey}～${maxEndKey}）`
+                        : minStartKey
+                          ? `（不早于 ${minStartKey}）`
+                          : `（不晚于 ${maxEndKey}）`
+                    }`
+                  : ""}
+                ；保存仅提交当前分段
               </p>
             )}
           </div>
@@ -509,8 +561,18 @@ export function AllocationEditDialog({
                 type="date"
                 required
                 disabled={!canEdit}
+                min={minStartKey}
+                max={active.endDate || maxEndKey}
                 value={active.startDate}
-                onChange={(e) => updateActive({ startDate: e.target.value })}
+                onChange={(e) => {
+                  const startDate = e.target.value;
+                  updateActive({ startDate });
+                  if (canEdit) {
+                    openEndDatePickerAfterStartChange("edit-endDate", {
+                      min: startDate || minStartKey,
+                    });
+                  }
+                }}
               />
             </div>
             <div className="space-y-2">
@@ -522,6 +584,8 @@ export function AllocationEditDialog({
                 type="date"
                 required
                 disabled={!canEdit}
+                min={active.startDate || minStartKey}
+                max={maxEndKey}
                 value={active.endDate}
                 onChange={(e) => updateActive({ endDate: e.target.value })}
               />

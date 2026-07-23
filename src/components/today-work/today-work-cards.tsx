@@ -127,7 +127,7 @@ export function TodayWorkCards({
             hint="点击进入 · 与 AI 助理整理并提交日报"
             accentClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
             icon={<ClipboardList className="h-6 w-6" aria-hidden />}
-            onClick={() => router.push("/mobile/log")}
+            onClick={() => router.push("/today-work/daily-log")}
           >
             <p
               className={cn(

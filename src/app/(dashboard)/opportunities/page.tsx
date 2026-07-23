@@ -23,6 +23,7 @@ import {
   canAddOpportunityQuote,
   canSignOpportunity,
 } from "@/lib/opportunities/status";
+import { canEditContract } from "@/lib/contracts/access";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { OpportunityFunnelSummary } from "@/components/opportunities/opportunity-funnel-summary";
 import { OpportunityRowActions } from "@/components/opportunities/opportunity-row-actions";
@@ -156,7 +157,8 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                     );
                     const canManageStatus = canManageOpportunityStatus(session.user.role);
                     const isAbandoned = opp.status === "ABANDONED";
-                    const canSign = canSignOpportunity(opp.status);
+                    const canSign =
+                      canSignOpportunity(opp.status) && canEditContract(session.user.role);
                     const canAbandon = canAbandonOpportunity(opp.status);
                     const canAddQuote = canAddOpportunityQuote(opp.status);
 

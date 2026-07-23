@@ -13,6 +13,18 @@ import {
 import { trimOverlappingProjectAllocations } from "@/lib/projects/allocation-dedup";
 import { parseDateOnlyInput } from "@/lib/validations/project";
 import { toDateOnly } from "@/lib/projects/workdays";
+import { formatLocalDateInput } from "@/lib/dates/local-date";
+import { allocationDatesOutsideProjectBoundsError } from "@/lib/projects/timeline";
+import {
+  computeMonthlyCost,
+  resolveDailyRateForDate,
+  resolveEffectiveMonthlyCost,
+} from "@/lib/personnel/daily-rate";
+import { resolveMonthCostFromHistory } from "@/lib/personnel/resolve-month-cost";
+import {
+  clearActualStartIfNoAllocations,
+  ensureActualStartOnFirstAllocation,
+} from "@/lib/projects/project-actual-dates";
 
 function formatError(error: unknown): ActionResult {
   if (error instanceof Error) return { error: error.message };
@@ -38,16 +50,84 @@ async function requireProjectAccess(projectId: string, manage = false) {
   return { session, project };
 }
 
-async function resolveStaffDailyRate(userId: string): Promise<number> {
-  const profile = await prisma.personnelProfile.findUnique({
-    where: { userId },
-    select: { dailyRate: true, enabled: true, staffCategory: true },
-  });
+function assertAllocationWithinProjectDates(
+  project: {
+    plannedStartAt: Date | null;
+    plannedEndAt: Date | null;
+    actualStartAt: Date | null;
+    actualEndAt: Date | null;
+  },
+  startDate: Date,
+  endDate: Date
+) {
+  const error = allocationDatesOutsideProjectBoundsError(startDate, endDate, project);
+  if (error) throw new Error(error);
+}
+
+async function resolveStaffDailyRate(userId: string, referenceDate: Date): Promise<number> {
+  const day = toDateOnly(referenceDate);
+  const year = day.getFullYear();
+  const month = day.getMonth() + 1;
+
+  const [profile, monthRows] = await Promise.all([
+    prisma.personnelProfile.findUnique({
+      where: { userId },
+      select: {
+        enabled: true,
+        staffCategory: true,
+        dailyRate: true,
+      },
+    }),
+    prisma.personnelMonthlyCostAdjustment.findMany({
+      where: {
+        userId,
+        OR: [{ year: { lt: year } }, { year, month: { lte: month } }],
+      },
+      select: {
+        year: true,
+        month: true,
+        contributionBase: true,
+        baseSalary: true,
+        socialSecurityCompany: true,
+        housingFundCompany: true,
+        adjustmentAmount: true,
+        notes: true,
+      },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    }),
+  ]);
+
   if (!profile?.enabled || profile.staffCategory !== "IMPLEMENTATION") {
     throw new Error("实施人员无效或未启用");
   }
-  if (profile.dailyRate == null) throw new Error("该人员未设置日单价");
-  return Number(profile.dailyRate);
+
+  const resolved = resolveMonthCostFromHistory(
+    monthRows.map((row) => ({
+      year: row.year,
+      month: row.month,
+      contributionBase: row.contributionBase != null ? Number(row.contributionBase) : null,
+      baseSalary: row.baseSalary != null ? Number(row.baseSalary) : null,
+      socialSecurityCompany:
+        row.socialSecurityCompany != null ? Number(row.socialSecurityCompany) : null,
+      housingFundCompany:
+        row.housingFundCompany != null ? Number(row.housingFundCompany) : null,
+      adjustmentAmount: Number(row.adjustmentAmount),
+      notes: row.notes ?? "",
+    })),
+    year,
+    month
+  );
+
+  const fixed = computeMonthlyCost({
+    baseSalary: resolved?.baseSalary ?? null,
+    socialSecurityCompany: resolved?.socialSecurityCompany ?? null,
+    housingFundCompany: resolved?.housingFundCompany ?? null,
+  });
+  const effective = resolveEffectiveMonthlyCost(fixed, resolved?.adjustmentAmount ?? 0);
+  const rate = resolveDailyRateForDate(effective, day);
+  if (rate != null) return rate;
+  if (profile.dailyRate != null) return Number(profile.dailyRate);
+  throw new Error("该人员未设置月成本");
 }
 
 function revalidateAllocationPaths(projectId: string) {
@@ -74,7 +154,9 @@ async function assertNoOverlapWithProjectUser(
   });
   const overlap = findOverlappingSegment(startDate, endDate, siblings, excludeId);
   if (overlap) {
-    throw new Error("该时间段与同项目其他排班分段重叠，请调整日期");
+    const from = formatLocalDateInput(toDateOnly(overlap.startDate));
+    const to = formatLocalDateInput(toDateOnly(overlap.endDate));
+    throw new Error(`该时间段与同项目其他排班分段重叠（${from}~${to}），请调整日期`);
   }
 }
 
@@ -82,7 +164,7 @@ export async function createProjectAllocation(formData: FormData): Promise<Actio
   try {
     const projectId = formData.get("projectId")?.toString();
     if (!projectId) return { error: "缺少项目 ID" };
-    await requireProjectAccess(projectId, true);
+    const { project } = await requireProjectAccess(projectId, true);
 
     const userId = formData.get("userId")?.toString();
     if (!userId) return { error: "请选择人员" };
@@ -90,6 +172,7 @@ export async function createProjectAllocation(formData: FormData): Promise<Actio
     const startDate = parseDateOnlyInput(formData.get("startDate")?.toString());
     const endDate = parseDateOnlyInput(formData.get("endDate")?.toString());
     if (startDate > endDate) throw new Error("结束日期不能早于开始日期");
+    assertAllocationWithinProjectDates(project, startDate, endDate);
 
     const allocationMode =
       formData.get("allocationMode")?.toString() === "MANUAL" ? "MANUAL" : "AUTO";
@@ -107,7 +190,7 @@ export async function createProjectAllocation(formData: FormData): Promise<Actio
 
     const splitWeightRaw = formData.get("splitWeight")?.toString();
     const splitWeight = splitWeightRaw ? Number(splitWeightRaw) : null;
-    const dailyRateSnapshot = await resolveStaffDailyRate(userId);
+    const dailyRateSnapshot = await resolveStaffDailyRate(userId, startDate);
 
     const created = await prisma.projectStaffAllocation.create({
       data: {
@@ -124,6 +207,8 @@ export async function createProjectAllocation(formData: FormData): Promise<Actio
       },
     });
 
+    await ensureActualStartOnFirstAllocation(projectId, startDate);
+
     revalidateAllocationPaths(projectId);
     return { allocationId: created.id };
   } catch (error) {
@@ -136,11 +221,12 @@ export async function updateProjectAllocation(formData: FormData): Promise<Actio
     const allocationId = formData.get("allocationId")?.toString();
     const projectId = formData.get("projectId")?.toString();
     if (!allocationId || !projectId) return { error: "缺少参数" };
-    await requireProjectAccess(projectId, true);
+    const { project } = await requireProjectAccess(projectId, true);
 
     const startDate = parseDateOnlyInput(formData.get("startDate")?.toString());
     const endDate = parseDateOnlyInput(formData.get("endDate")?.toString());
     if (startDate > endDate) throw new Error("结束日期不能早于开始日期");
+    assertAllocationWithinProjectDates(project, startDate, endDate);
 
     const current = await prisma.projectStaffAllocation.findUnique({
       where: { id: allocationId },
@@ -206,7 +292,7 @@ export async function saveProjectUserAllocationSegments(input: {
   segments: AllocationSegmentInput[];
 }): Promise<ActionResult> {
   try {
-    await requireProjectAccess(input.projectId, true);
+    const { project } = await requireProjectAccess(input.projectId, true);
     if (input.segments.length === 0) throw new Error("至少保留一个排班分段");
 
     const parsed = input.segments.map((segment) => {
@@ -215,6 +301,7 @@ export async function saveProjectUserAllocationSegments(input: {
       if (startDate.getTime() > endDate.getTime()) {
         throw new Error("结束日期不能早于开始日期");
       }
+      assertAllocationWithinProjectDates(project, startDate, endDate);
       const allocationMode = segment.allocationMode;
       const plannedDays =
         allocationMode === "MANUAL" && segment.plannedDays != null
@@ -238,7 +325,6 @@ export async function saveProjectUserAllocationSegments(input: {
 
     assertSegmentsNoOverlap(parsed);
 
-    const dailyRateSnapshot = await resolveStaffDailyRate(input.userId);
     const existing = await prisma.projectStaffAllocation.findMany({
       where: { projectId: input.projectId, userId: input.userId },
       select: { id: true },
@@ -263,6 +349,10 @@ export async function saveProjectUserAllocationSegments(input: {
             },
           });
         } else {
+          const dailyRateSnapshot = await resolveStaffDailyRate(
+            input.userId,
+            segment.startDate
+          );
           await tx.projectStaffAllocation.create({
             data: {
               projectId: input.projectId,
@@ -278,6 +368,13 @@ export async function saveProjectUserAllocationSegments(input: {
         }
       }
     });
+
+    const earliestStart = parsed.reduce(
+      (min, segment) => (segment.startDate.getTime() < min.getTime() ? segment.startDate : min),
+      parsed[0].startDate
+    );
+    await ensureActualStartOnFirstAllocation(input.projectId, earliestStart);
+    await clearActualStartIfNoAllocations(input.projectId);
 
     revalidateAllocationPaths(input.projectId);
     return {};
@@ -339,6 +436,7 @@ export async function deleteProjectAllocation(formData: FormData): Promise<Actio
     await requireProjectAccess(projectId, true);
 
     await prisma.projectStaffAllocation.delete({ where: { id: allocationId } });
+    await clearActualStartIfNoAllocations(projectId);
     revalidateAllocationPaths(projectId);
     return {};
   } catch (error) {

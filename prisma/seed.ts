@@ -8,9 +8,10 @@ async function main() {
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@example.com" },
-    update: {},
+    update: { phone: "13800000001" },
     create: {
       email: "admin@example.com",
+      phone: "13800000001",
       name: "系统管理员",
       passwordHash,
       role: UserRole.ADMIN,
@@ -26,9 +27,10 @@ async function main() {
 
   const salesManager = await prisma.user.upsert({
     where: { email: "salesmgr@example.com" },
-    update: {},
+    update: { phone: "13800000002" },
     create: {
       email: "salesmgr@example.com",
+      phone: "13800000002",
       name: "销售经理",
       passwordHash: await bcrypt.hash("sales123", 10),
       role: UserRole.SALES_MANAGER,
@@ -40,9 +42,10 @@ async function main() {
 
   const sales = await prisma.user.upsert({
     where: { email: "sales1@example.com" },
-    update: {},
+    update: { phone: "13800000011" },
     create: {
       email: "sales1@example.com",
+      phone: "13800000011",
       name: "张销售",
       passwordHash: await bcrypt.hash("sales123", 10),
       role: UserRole.SALES,
@@ -56,9 +59,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "sales2@example.com" },
-    update: {},
+    update: { phone: "13800000012" },
     create: {
       email: "sales2@example.com",
+      phone: "13800000012",
       name: "李销售",
       passwordHash: await bcrypt.hash("sales123", 10),
       role: UserRole.SALES,
@@ -70,9 +74,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "sales3@example.com" },
-    update: {},
+    update: { phone: "13800000013" },
     create: {
       email: "sales3@example.com",
+      phone: "13800000013",
       name: "王销售",
       passwordHash: await bcrypt.hash("sales123", 10),
       role: UserRole.SALES,
@@ -84,9 +89,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "projadmin@example.com" },
-    update: {},
+    update: { phone: "13800000021" },
     create: {
       email: "projadmin@example.com",
+      phone: "13800000021",
       name: "李项目管理员",
       passwordHash: await bcrypt.hash("proj123", 10),
       role: UserRole.PROJECT_ADMIN,
@@ -104,9 +110,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "pm@example.com" },
-    update: {},
+    update: { phone: "13800000022" },
     create: {
       email: "pm@example.com",
+      phone: "13800000022",
       name: "王项目经理",
       passwordHash: await bcrypt.hash("proj123", 10),
       role: UserRole.PROJECT_MANAGER,
@@ -122,9 +129,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "staff@example.com" },
-    update: {},
+    update: { phone: "13800000023" },
     create: {
       email: "staff@example.com",
+      phone: "13800000023",
       name: "赵实施",
       passwordHash: await bcrypt.hash("proj123", 10),
       role: UserRole.PROJECT_STAFF,
@@ -176,6 +184,105 @@ async function main() {
     },
   });
 
+  // 标准实施模型：先建模型与阶段，再挂前序（避免同批自引用外键问题）
+  await prisma.projectModel.upsert({
+    where: { id: "seed-project-model-standard" },
+    update: { totalDurationDays: 45 },
+    create: {
+      id: "seed-project-model-standard",
+      name: "标准实施模型",
+      description: "含并行部署与迁移的标准软件实施阶段",
+      enabled: true,
+      totalDurationDays: 45,
+    },
+  });
+
+  const seedPhases: Array<{
+    id: string;
+    name: string;
+    sortOrder: number;
+    startRef: string;
+    startOffset: number;
+    durationDays: number;
+  }> = [
+    {
+      id: "seed-phase-kickoff",
+      name: "项目启动",
+      sortOrder: 1,
+      startRef: "PROJECT_START",
+      startOffset: 0,
+      durationDays: 5,
+    },
+    {
+      id: "seed-phase-survey",
+      name: "需求调研",
+      sortOrder: 2,
+      startRef: "PHASE_END:seed-phase-kickoff",
+      startOffset: 1,
+      durationDays: 10,
+    },
+    {
+      id: "seed-phase-deploy",
+      name: "系统部署",
+      sortOrder: 3,
+      startRef: "PHASE_END:seed-phase-survey",
+      startOffset: 1,
+      durationDays: 15,
+    },
+    {
+      id: "seed-phase-migrate",
+      name: "数据迁移",
+      sortOrder: 3,
+      startRef: "PHASE_END:seed-phase-survey",
+      startOffset: 1,
+      durationDays: 10,
+    },
+    {
+      id: "seed-phase-train",
+      name: "用户培训",
+      sortOrder: 4,
+      startRef: "PHASE_END:seed-phase-deploy",
+      startOffset: 1,
+      durationDays: 5,
+    },
+    {
+      id: "seed-phase-accept",
+      name: "项目验收",
+      sortOrder: 5,
+      startRef: "PHASE_END:seed-phase-train",
+      startOffset: 1,
+      durationDays: 5,
+    },
+  ];
+
+  for (const phase of seedPhases) {
+    await prisma.projectModelPhase.upsert({
+      where: { id: phase.id },
+      update: {
+        name: phase.name,
+        sortOrder: phase.sortOrder,
+        startRef: phase.startRef,
+        startOffset: phase.startOffset,
+        endRef: "DURATION",
+        endOffset: 0,
+        durationDays: phase.durationDays,
+        progressWeight: 0,
+      },
+      create: {
+        id: phase.id,
+        modelId: "seed-project-model-standard",
+        name: phase.name,
+        sortOrder: phase.sortOrder,
+        startRef: phase.startRef,
+        startOffset: phase.startOffset,
+        endRef: "DURATION",
+        endOffset: 0,
+        durationDays: phase.durationDays,
+        progressWeight: 0,
+      },
+    });
+  }
+
   const configOptions = [
     { category: "follow_up_method", value: "PHONE", label: "电话" },
     { category: "follow_up_method", value: "WECHAT", label: "微信" },
@@ -192,10 +299,10 @@ async function main() {
     { category: "customer_type", value: "DIRECT", label: "直接客户", sortOrder: 1 },
     { category: "customer_type", value: "CHANNEL", label: "渠道", sortOrder: 2 },
     { category: "customer_type", value: "PARTNER", label: "合作伙伴", sortOrder: 3 },
-    { category: "customer_grade", value: "STAR_3", label: "三星", sortOrder: 1 },
-    { category: "customer_grade", value: "STAR_2", label: "两星", sortOrder: 2 },
-    { category: "customer_grade", value: "STAR_1", label: "一星", sortOrder: 3 },
-    { category: "customer_grade", value: "NONE", label: "未评级", sortOrder: 4 },
+    { category: "customer_grade", value: "STAR_3", label: "有意向或在建客户", sortOrder: 1 },
+    { category: "customer_grade", value: "STAR_2", label: "已交付的客户", sortOrder: 2 },
+    { category: "customer_grade", value: "STAR_1", label: "短期无意向客户", sortOrder: 3 },
+    { category: "customer_grade", value: "NONE", label: "长期无意向客户", sortOrder: 4 },
     { category: "customer_tag", value: "TAG_KEY_ACCOUNT", label: "重点客户", sortOrder: 1, color: "#bae6fd" },
     { category: "customer_tag", value: "TAG_STRATEGIC", label: "战略客户", sortOrder: 2, color: "#ddd6fe" },
     { category: "customer_tag", value: "TAG_RISK", label: "风险关注", sortOrder: 3, color: "#fecdd3" },

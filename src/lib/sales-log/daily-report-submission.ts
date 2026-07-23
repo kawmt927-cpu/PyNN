@@ -14,6 +14,17 @@ export function getDailyReportDeadline(logDate: Date) {
   return deadline;
 }
 
+function startOfLocalDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** 日志日是否早于「今天」（不含今天）——历史日不按漏交考核 */
+export function isDailyReportLogDateBeforeToday(logDate: Date, now = new Date()) {
+  return startOfLocalDay(logDate).getTime() < startOfLocalDay(now).getTime();
+}
+
 export function isLateDailyReportSubmission(submittedAt: Date, logDate: Date) {
   return submittedAt.getTime() > getDailyReportDeadline(logDate).getTime();
 }
@@ -24,6 +35,8 @@ export function isDailyReportSubmissionOverdue(
   now = new Date()
 ) {
   if (isDailyReportSubmitted(status)) return false;
+  // 今天之前的历史日：不按「未按时提交」考核（导入往来等）
+  if (isDailyReportLogDateBeforeToday(logDate, now)) return false;
   return now.getTime() > getDailyReportDeadline(logDate).getTime();
 }
 
@@ -69,6 +82,17 @@ export function resolveDailyReportDisplayStatus(
       submitted: true,
       lateSubmission,
       submissionTime,
+    };
+  }
+
+  // 今天之前未提交：正常态「当日无日报」，不标超期
+  if (isDailyReportLogDateBeforeToday(report.logDate, now)) {
+    return {
+      label: "当日无日报",
+      overdue: false,
+      submitted: false,
+      lateSubmission: false,
+      submissionTime: null,
     };
   }
 

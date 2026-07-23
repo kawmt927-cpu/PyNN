@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { CONTRACT_STATUS_LABELS } from "@/lib/permissions";
 import { resolveBackNavigation, selfReturnPath } from "@/lib/navigation/return-to";
 import { getConfigOptions, CONFIG_CATEGORY } from "@/lib/config-options";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -29,7 +30,12 @@ export default async function EditContractPage({ params, searchParams }: Props) 
       signCustomer: { select: { id: true, name: true } },
       endUserCustomer: { select: { id: true, name: true } },
       opportunity: { select: { id: true, title: true } },
-      products: { orderBy: { productName: "asc" } },
+      products: {
+        orderBy: { productName: "asc" },
+        include: {
+          externalInstallments: { orderBy: { periodNumber: "asc" } },
+        },
+      },
       installments: { orderBy: { periodNumber: "asc" } },
     },
   });
@@ -41,13 +47,15 @@ export default async function EditContractPage({ params, searchParams }: Props) 
   const { backHref, backLabel } = resolveBackNavigation(query, `/contracts/${id}`);
   const detailPath = selfReturnPath(`/contracts/${id}`, query);
 
-  const [salesUsers, paymentMethods] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: ["SALES", "SALES_MANAGER", "ADMIN"] } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
+  const [salesUsers, paymentMethods, internalCostNames, externalCostNames] = await Promise.all([
+    listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+      roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+      includeUserIds: [contract.ownerId, contract.ourRepresentativeId].filter(Boolean) as string[],
     }),
     getConfigOptions(CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD),
+    getConfigOptions(CONFIG_CATEGORY.INTERNAL_COST_PRODUCT),
+    getConfigOptions(CONFIG_CATEGORY.EXTERNAL_COST_PRODUCT),
   ]);
 
   return (
@@ -81,6 +89,14 @@ export default async function EditContractPage({ params, searchParams }: Props) 
           value: o.value,
           label: o.label,
         }))}
+        internalCostNameOptions={internalCostNames.map((o) => ({
+          value: o.value,
+          label: o.label,
+        }))}
+        externalCostNameOptions={externalCostNames.map((o) => ({
+          value: o.value,
+          label: o.label,
+        }))}
         defaultValues={{
           title: contract.title,
           totalAmount: Number(contract.totalAmount),
@@ -102,7 +118,15 @@ export default async function EditContractPage({ params, searchParams }: Props) 
           products: contract.products.map((row) => ({
             productServiceId: row.productServiceId,
             productName: row.productName,
+            description: row.description,
             costAmount: Number(row.costAmount || row.actualCostPrice),
+            costType: row.costType,
+            externalInstallments: row.externalInstallments.map((item) => ({
+              periodNumber: item.periodNumber,
+              amount: Number(item.amount),
+              condition: item.condition,
+              dueAt: item.dueAt?.toISOString(),
+            })),
           })),
           installments: contract.installments.map((row) => ({
             periodNumber: row.periodNumber,

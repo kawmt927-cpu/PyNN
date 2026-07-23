@@ -4,43 +4,25 @@ import { ROLE_LABELS } from "./permissions";
 export type DemoAccount = {
   role: UserRole;
   label: string;
-  email: string;
+  phone: string;
   password: string;
 };
 
-/** 三位销售演示账号（与 prisma/seed-demo-data.ts 一致） */
-export const SALES_QUICK_LOGIN: Array<{ label: string; email: string; password: string }> = [
-  { label: "张销售", email: "sales1@example.com", password: "sales123" },
-  { label: "李销售", email: "sales2@example.com", password: "sales123" },
-  { label: "王销售", email: "sales3@example.com", password: "sales123" },
-];
+/** 公司正式环境：仅保留管理员快捷入口（与 import-company-roster 临时账密一致） */
+export const SALES_QUICK_LOGIN: Array<{ label: string; phone: string; password: string }> = [];
 
-/** 与 prisma/seed.ts 默认账号一致，仅供开发测试快捷登录 */
 export const DEMO_ACCOUNTS: DemoAccount[] = [
-  { role: "ADMIN", label: ROLE_LABELS.ADMIN, email: "admin@example.com", password: "admin123" },
   {
-    role: "SALES_MANAGER",
-    label: ROLE_LABELS.SALES_MANAGER,
-    email: "salesmgr@example.com",
-    password: "sales123",
+    role: "ADMIN",
+    label: `${ROLE_LABELS.ADMIN}（万嘉南）`,
+    phone: "13900000002",
+    password: "admin123",
   },
   {
-    role: "PROJECT_ADMIN",
-    label: ROLE_LABELS.PROJECT_ADMIN,
-    email: "projadmin@example.com",
-    password: "proj123",
-  },
-  {
-    role: "PROJECT_MANAGER",
-    label: ROLE_LABELS.PROJECT_MANAGER,
-    email: "pm@example.com",
-    password: "proj123",
-  },
-  {
-    role: "PROJECT_STAFF",
-    label: ROLE_LABELS.PROJECT_STAFF,
-    email: "staff@example.com",
-    password: "proj123",
+    role: "ADMIN",
+    label: `${ROLE_LABELS.ADMIN}（张潇笑）`,
+    phone: "13900000001",
+    password: "admin123",
   },
 ];
 

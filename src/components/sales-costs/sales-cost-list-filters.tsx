@@ -89,13 +89,16 @@ export function SalesCostListFilters({ salesUsers }: Props) {
           ))}
         </select>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => router.push("/sales-costs")}
-      >
-        清除筛选
-      </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            const year = new Date().getFullYear();
+            router.push(`/sales-costs?year=${year}`);
+          }}
+        >
+          清除筛选
+        </Button>
     </div>
   );
 }

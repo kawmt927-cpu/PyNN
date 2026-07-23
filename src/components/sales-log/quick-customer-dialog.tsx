@@ -26,6 +26,13 @@ import {
   canUseCustomerKimiEnrich,
   fetchCustomerKimiEnrich,
 } from "@/lib/customers/kimi-enrich-ui";
+import {
+  categoryLocksToDirectCustomer,
+  customerTypeRequiresGrade,
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveDirectCustomerTypeValue,
+} from "@/lib/customers/customer-type-grade";
 
 type SalesOption = { id: string; name: string };
 
@@ -39,6 +46,7 @@ type Props = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
@@ -77,6 +85,7 @@ export function QuickCustomerDialog({
   sourceOptions,
   typeOptions,
   gradeOptions,
+  channelGradeOptions = [],
   tagOptions,
   showOwnerSelect,
   salesUsers = [],
@@ -102,6 +111,17 @@ export function QuickCustomerDialog({
   const [pending, startTransition] = useTransition();
   const [enriching, startEnrichTransition] = useTransition();
 
+  const relationTypeLocked = categoryLocksToDirectCustomer(category);
+  const directTypeValue = resolveDirectCustomerTypeValue(typeOptions);
+  const showGrade = customerTypeRequiresGrade(customerType, typeOptions);
+  const activeGradeOptions = isChannelCustomerType(customerType, typeOptions)
+    ? channelGradeOptions
+    : gradeOptions;
+  const gradeTone = gradeToneForCustomerType(customerType, typeOptions);
+  const gradeLabel = isChannelCustomerType(customerType, typeOptions)
+    ? "渠道等级"
+    : "客户等级";
+
   useEffect(() => {
     if (!open) return;
     setName(initialName);
@@ -123,6 +143,13 @@ export function QuickCustomerDialog({
     setNameCorrected(false);
   }, [open, initialName, initialProvince, initialCity, initialDistrict]);
 
+  useEffect(() => {
+    if (!relationTypeLocked) return;
+    if (customerType === directTypeValue) return;
+    setCustomerType(directTypeValue);
+    setCustomerGrade("");
+  }, [relationTypeLocked, directTypeValue, customerType]);
+
   const canEnrich = category !== "" && canUseCustomerKimiEnrich(category);
 
   function handleKimiEnrich() {
@@ -142,9 +169,6 @@ export function QuickCustomerDialog({
         const data = await fetchCustomerKimiEnrich({
           name,
           category,
-          province,
-          city,
-          district,
         });
         const result = applyCustomerKimiEnrich(data, {
           name,
@@ -237,6 +261,7 @@ export function QuickCustomerDialog({
           <DialogTitle>新增客户</DialogTitle>
           <DialogDescription>
             医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。保存后回到往来打卡。
+            「Kimi 智能填充」仅根据当前客户名称检索，不使用打卡定位或上次已填地址。
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -271,7 +296,14 @@ export function QuickCustomerDialog({
               <select
                 id="quickCustomerCategory"
                 value={category}
-                onChange={(e) => setCategory(e.target.value as CustomerCategory | "")}
+                onChange={(e) => {
+                  const next = e.target.value as CustomerCategory | "";
+                  setCategory(next);
+                  if (categoryLocksToDirectCustomer(next)) {
+                    setCustomerType(resolveDirectCustomerTypeValue(typeOptions));
+                    setCustomerGrade("");
+                  }
+                }}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 required
               >
@@ -289,20 +321,32 @@ export function QuickCustomerDialog({
               name="customerType"
               options={withEmptyOption(typeOptions)}
               value={customerType}
-              onValueChange={setCustomerType}
+              onValueChange={(value) => {
+                if (relationTypeLocked) return;
+                setCustomerType(value);
+                setCustomerGrade("");
+              }}
               required
+              disabled={relationTypeLocked}
+              description={
+                relationTypeLocked ? "医院客户关系类型固定为直接客户" : undefined
+              }
               className={FORM_GRID_CELL}
               labelClassName={FORM_GRID_LABEL}
             />
 
-            <CustomerGradeSelect
-              value={customerGrade}
-              onValueChange={setCustomerGrade}
-              options={gradeOptions}
-              required
-              className={FORM_GRID_CELL}
-              labelClassName={FORM_GRID_LABEL}
-            />
+            {showGrade ? (
+              <CustomerGradeSelect
+                value={customerGrade}
+                onValueChange={setCustomerGrade}
+                options={activeGradeOptions}
+                required
+                label={gradeLabel}
+                tone={gradeTone}
+                className={FORM_GRID_CELL}
+                labelClassName={FORM_GRID_LABEL}
+              />
+            ) : null}
 
             <CustomerTagSelect
               options={tagOptions}

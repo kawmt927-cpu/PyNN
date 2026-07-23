@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { bindWeComUser, unbindWeComUser } from "./actions";
 import { getWeComConfigForAdmin } from "@/lib/wecom/config";
 import { listPendingWeComAccessRequests } from "@/lib/wecom/access-request";
-import { WeComAccessRequestsPanel } from "@/components/admin/wecom-access-requests-panel";
 import { WeComIntegrationOverview } from "@/components/admin/wecom-integration-overview";
 import { getAllConfigOptionsGrouped } from "@/lib/config-options";
 import {
@@ -26,18 +26,22 @@ import { AmapSettings } from "@/components/admin/amap-settings";
 import { UnbindWecomButton } from "@/components/admin/unbind-wecom-button";
 import { KpiSettings } from "@/components/admin/kpi-settings";
 import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
+import { ProjectModelsList } from "@/components/admin/project-models-list";
+import { ProjectModelCreateForm } from "@/components/admin/project-model-create-form";
+import { ProjectModelEditor } from "@/components/admin/project-model-editor";
+import { PROJECT_MODELS_LIST_HREF } from "@/components/admin/project-model-types";
 import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { getAiAgentConfigForAdmin, getSalesLogPromptSettings } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
 
 type Props = {
-  searchParams: Promise<{ tab?: string; module?: string; field?: string }>;
+  searchParams: Promise<{ tab?: string; module?: string; field?: string; model?: string }>;
 };
 
 export default async function AdminSettingsPage({ searchParams }: Props) {
   const session = await requireSettingsPageAccess();
   const role = session.user.role;
-  const { tab: rawTab, module: rawModule, field: rawField } = await searchParams;
+  const { tab: rawTab, module: rawModule, field: rawField, model: rawModel } = await searchParams;
 
   const accessibleModules = getAccessibleConfigModules(role);
   const accessibleTabs = getAccessibleSettingsTabs(role);
@@ -54,8 +58,20 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     rawField
   );
 
-  const [users, optionsByCategory, aiAgentConfig, salesLogPrompt, amapConfig, productTemplates, wecomAccessRequests] =
-    await Promise.all([
+  const projectModelParam =
+    activeTab === SETTINGS_TAB.PROJECT_MODELS ? rawModel?.trim() || null : null;
+
+  const [
+    users,
+    optionsByCategory,
+    aiAgentConfig,
+    salesLogPrompt,
+    amapConfig,
+    productTemplates,
+    projectModels,
+    projectModelDetail,
+    wecomAccessRequests,
+  ] = await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, email: true, role: true, wecomUserId: true },
@@ -67,10 +83,36 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     activeTab === SETTINGS_TAB.PRODUCTS
       ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
       : Promise.resolve([]),
+    activeTab === SETTINGS_TAB.PROJECT_MODELS && !projectModelParam
+      ? prisma.projectModel.findMany({
+          orderBy: { name: "asc" },
+          include: { _count: { select: { phases: true } } },
+        })
+      : Promise.resolve([]),
+    activeTab === SETTINGS_TAB.PROJECT_MODELS &&
+    projectModelParam &&
+    projectModelParam !== "new"
+      ? prisma.projectModel.findUnique({
+          where: { id: projectModelParam },
+          include: {
+            phases: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { tasks: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }] } } },
+            nodes: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }] },
+          },
+        })
+      : Promise.resolve(null),
     activeTab === SETTINGS_TAB.WECOM && role === "ADMIN"
       ? listPendingWeComAccessRequests()
       : Promise.resolve([]),
   ]);
+
+  if (
+    activeTab === SETTINGS_TAB.PROJECT_MODELS &&
+    projectModelParam &&
+    projectModelParam !== "new" &&
+    !projectModelDetail
+  ) {
+    redirect(PROJECT_MODELS_LIST_HREF);
+  }
 
   const wecomConfig = getWeComConfigForAdmin();
 
@@ -99,6 +141,72 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
                 initialField={defaultField?.category}
               />
             </Suspense>
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.PROJECT_MODELS ? (
+        <Card
+          className={
+            projectModelDetail ? "flex min-h-[calc(100vh-11rem)] flex-col" : undefined
+          }
+        >
+          {projectModelDetail ? null : (
+            <CardHeader>
+              <CardTitle>项目模型</CardTitle>
+            </CardHeader>
+          )}
+          <CardContent
+            className={
+              projectModelDetail ? "flex min-h-0 flex-1 flex-col pt-6" : undefined
+            }
+          >
+            {projectModelParam === "new" ? (
+              <ProjectModelCreateForm />
+            ) : projectModelDetail ? (
+              <ProjectModelEditor
+                model={{
+                  id: projectModelDetail.id,
+                  name: projectModelDetail.name,
+                  description: projectModelDetail.description,
+                  enabled: projectModelDetail.enabled,
+                  totalDurationDays: projectModelDetail.totalDurationDays,
+                  phases: projectModelDetail.phases.map((phase) => ({
+                    id: phase.id,
+                    name: phase.name,
+                    sortOrder: phase.sortOrder,
+                    progressWeight: phase.progressWeight,
+                    startRef: phase.startRef,
+                    startOffset: phase.startOffset,
+                    endRef: phase.endRef,
+                    endOffset: phase.endOffset,
+                    durationDays: phase.durationDays,
+                    tasks: phase.tasks.map((task) => ({
+                      id: task.id,
+                      name: task.name,
+                      sortOrder: task.sortOrder,
+                      durationDays: task.durationDays,
+                    })),
+                  })),
+                  nodes: projectModelDetail.nodes.map((node) => ({
+                    id: node.id,
+                    name: node.name,
+                    sortOrder: node.sortOrder,
+                    timeRef: node.timeRef,
+                    timeOffset: node.timeOffset,
+                  })),
+                }}
+              />
+            ) : (
+              <ProjectModelsList
+                items={projectModels.map((row) => ({
+                  id: row.id,
+                  name: row.name,
+                  description: row.description,
+                  enabled: row.enabled,
+                  totalDurationDays: row.totalDurationDays,
+                  phaseCount: row._count.phases,
+                }))}
+              />
+            )}
           </CardContent>
         </Card>
       ) : activeTab === SETTINGS_TAB.PRODUCTS ? (
@@ -172,16 +280,21 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
               </p>
               <WeComIntegrationOverview config={wecomConfig} />
               <div className="rounded-md bg-muted p-3 text-xs leading-relaxed">
-                <p className="font-medium text-foreground">应用主页（推荐）</p>
+                <p className="font-medium text-foreground">应用主页（推荐 · 销售移动端）</p>
                 <code className="mt-1 block break-all">
-                  https://你的域名/today-work
+                  https://你的域名/mobile
                 </code>
-                <p className="mt-3 font-medium text-foreground">销售日志 H5（可选二级入口）</p>
+                <p className="mt-3 font-medium text-foreground">静态跳板（企微 WebView 更稳）</p>
+                <code className="mt-1 block break-all">https://你的域名/wecom-entry.html</code>
+                <p className="mt-3 font-medium text-foreground">PC 今日工作 / 销售日志 H5</p>
+                <code className="mt-1 block break-all">https://你的域名/today-work</code>
                 <code className="mt-1 block break-all">https://你的域名/mobile/log</code>
               </div>
               <p className="text-muted-foreground">
                 <strong>可信域名</strong>、<strong>OAuth 回调域</strong>、<strong>JS 接口安全域名</strong>
-                均填写 CRM 域名。PC 浏览器登录使用「登录页 → 企业微信扫码」。
+                均填写 CRM 域名。另需在企微后台将服务器公网 IP 加入<strong>企业可信 IP</strong>（当前生产：
+                <code>122.51.86.223</code>
+                ），否则授权换票会失败。PC 浏览器登录使用「登录页 → 企业微信扫码」。
               </p>
             </CardContent>
           </Card>
@@ -197,16 +310,18 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
                 ) : null}
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <WeComAccessRequestsPanel
-                requests={wecomAccessRequests.map((r) => ({
-                  ...r,
-                  createdAt: r.createdAt.toISOString(),
-                }))}
-                usersWithoutWecom={users
-                  .filter((u) => !u.wecomUserId)
-                  .map((u) => ({ id: u.id, name: u.name, email: u.email }))}
-              />
+            <CardContent className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                企微开通申请已移至用户管理，便于与角色分配一并处理。
+              </p>
+              <Button asChild>
+                <Link href="/admin/users/wecom-requests">
+                  打开企微开通申请
+                  {wecomAccessRequests.length > 0
+                    ? `（${wecomAccessRequests.length} 条待审）`
+                    : ""}
+                </Link>
+              </Button>
             </CardContent>
           </Card>
 

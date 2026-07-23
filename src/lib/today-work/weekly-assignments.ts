@@ -8,17 +8,18 @@ export type WeeklyAssignmentListItem = {
   description: string | null;
   dueAt: Date;
   status: string;
+  followUpId: string | null;
   customer: { id: string; name: string; customerGrade: string | null } | null;
   opportunity: { id: string; title: string } | null;
   assignee: { id: string; name: string };
-  createdBy: { name: string };
+  createdBy: { id: string; name: string };
 };
 
 const listInclude = {
   customer: { select: { id: true, name: true, customerGrade: true } },
   opportunity: { select: { id: true, title: true } },
   assignee: { select: { id: true, name: true } },
-  createdBy: { select: { name: true } },
+  createdBy: { select: { id: true, name: true } },
   followUp: {
     select: {
       nextFollowUpMethod: true,

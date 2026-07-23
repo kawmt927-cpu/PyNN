@@ -3,13 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getTeamActivityDateRange,
   parseTeamActivityView,
-  resolveTeamActivityUserId,
+  resolveTeamActivityUserFilter,
   type TeamActivityView,
 } from "@/lib/today-work/activity-view-scope";
 import { getCalendarWeekRange } from "@/lib/plans-tasks/upcoming-actions";
 import {
   groupTeamWorkByDay,
-  listTeamSalesMembers,
+  listTeamActivityMembers,
   listTeamWorkActivity,
   summarizeTeamWorkActivity,
 } from "@/lib/today-work/team-work-activity";
@@ -35,15 +35,18 @@ function viewDescription(view: TeamActivityView, now: Date) {
 export async function TeamWorkActivityPanel({ searchParams }: Props) {
   const now = new Date();
   const view = parseTeamActivityView(searchParams.activityView);
-  const salesUsers = await listTeamSalesMembers();
-  const salesUserIds = salesUsers.map((u) => u.id);
-  const selectedUserId = resolveTeamActivityUserId(searchParams.salesUserId, salesUserIds);
+  const allMembers = await listTeamActivityMembers();
+  const salesUsers = allMembers
+    .filter((u) => u.role === "SALES")
+    .map(({ id, name }) => ({ id, name }));
+  const allowedIds = allMembers.map((u) => u.id);
+  const filter = resolveTeamActivityUserFilter(searchParams.salesUserId, allowedIds);
   const { start, end } = getTeamActivityDateRange(view, now);
 
   const items = await listTeamWorkActivity({
     start,
     end,
-    userId: selectedUserId,
+    filter,
   });
   const summary = summarizeTeamWorkActivity(items);
   const groups = view === "day" ? [] : groupTeamWorkByDay(items);
@@ -58,26 +61,26 @@ export async function TeamWorkActivityPanel({ searchParams }: Props) {
           </div>
           <TeamWorkActivityTabs view={view} />
         </div>
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex flex-wrap gap-4 text-sm">
-            <div>
-              <p className="text-2xl font-bold tabular-nums">{summary.checkIns}</p>
-              <p className="text-xs text-muted-foreground">打卡</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold tabular-nums">{summary.followUps}</p>
-              <p className="text-xs text-muted-foreground">往来</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold tabular-nums">{summary.logsSubmitted}</p>
-              <p className="text-xs text-muted-foreground">已交日报</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold tabular-nums">{summary.salesActive}</p>
-              <p className="text-xs text-muted-foreground">有记录销售</p>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex min-w-0 flex-1 justify-center">
+            <div className="flex flex-wrap items-end justify-center gap-10 sm:gap-14">
+              {(
+                [
+                  { value: summary.checkIns, label: "打卡" },
+                  { value: summary.followUps, label: "往来" },
+                  { value: summary.logsSubmitted, label: "已交日报" },
+                ] as const
+              ).map((stat) => (
+                <div key={stat.label} className="flex min-w-[4rem] flex-col items-center gap-1.5 text-center">
+                  <p className="text-4xl font-bold leading-none tabular-nums tracking-tight">
+                    {stat.value}
+                  </p>
+                  <p className="text-sm leading-none text-muted-foreground">{stat.label}</p>
+                </div>
+              ))}
             </div>
           </div>
-          <TeamSalesUserSelect value={selectedUserId} salesUsers={salesUsers} />
+          <TeamSalesUserSelect value={filter} salesUsers={salesUsers} />
         </div>
       </CardHeader>
       <CardContent>

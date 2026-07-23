@@ -77,7 +77,7 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
 
   if (checkIns.length === 0 && followUps.length === 0) {
     lines.push("### 系统内尚无今日打卡或往来");
-    lines.push("- 销售自述后，按描述落库即可。");
+    lines.push("- 销售自述后，按描述记进系统即可。");
     lines.push("");
   }
 
@@ -89,7 +89,7 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
 
   const customerBriefs = await fetchCustomerBriefsForAgent(briefCustomerIds, role, userId);
   if (customerBriefs.length > 0) {
-    lines.push("### 相关客户档案摘要（落库或追问前参考，不必在开场播报）");
+    lines.push("### 相关客户档案摘要（写入或追问前参考，不必在开场播报）");
     for (const brief of customerBriefs) {
       lines.push(formatCustomerBriefForPrompt(brief));
       lines.push("");
@@ -97,9 +97,10 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
   }
 
   lines.push("### 使用说明");
-  lines.push("- 销售先自述；自述后再对照本快照匹配打卡与落库。");
-  lines.push("- 信息清楚则直接落库；仅缺失、矛盾、无权限、建档改商机时才追问。");
-  lines.push("- 非本人负责客户不可落库。");
+  lines.push("- 销售先自述；自述后再对照本快照匹配打卡并写入。");
+  lines.push("- 打卡与权限自己看本快照/工具，禁止问销售「有没有打卡」「能不能写」。");
+  lines.push("- 信息清楚则直接写入；仅缺失、矛盾、无权限、建档改商机时才追问（每次一个问题）。");
+  lines.push("- 可写时不要向销售汇报负责人/协助负责人等正常事实；仅不可写时才说明需联系负责人。");
 
   return lines.join("\n");
 }

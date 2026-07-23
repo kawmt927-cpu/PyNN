@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { CONFIG_CATEGORY } from "@/lib/config-options";
 import { normalizeCustomerGrade } from "@/lib/customers/grade";
+import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 
 const DEFAULT_GRADE_INTERVALS: Record<string, number> = {
   STAR_3: 14,
@@ -15,9 +16,9 @@ export type GradeIntervalOption = {
   followUpIntervalDays: number;
 };
 
-export async function getCustomerGradeIntervalMap(): Promise<Map<string, number>> {
+async function loadIntervalMapForCategory(category: string): Promise<Map<string, number>> {
   const rows = await prisma.configOption.findMany({
-    where: { category: CONFIG_CATEGORY.CUSTOMER_GRADE, enabled: true },
+    where: { category, enabled: true },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
 
@@ -34,6 +35,32 @@ export async function getCustomerGradeIntervalMap(): Promise<Map<string, number>
   }
 
   return map;
+}
+
+export async function getCustomerGradeIntervalMap(): Promise<Map<string, number>> {
+  return loadIntervalMapForCategory(CONFIG_CATEGORY.CUSTOMER_GRADE);
+}
+
+export async function getChannelCustomerGradeIntervalMap(): Promise<Map<string, number>> {
+  return loadIntervalMapForCategory(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE);
+}
+
+export async function getGradeIntervalMaps(): Promise<{
+  direct: Map<string, number>;
+  channel: Map<string, number>;
+}> {
+  const [direct, channel] = await Promise.all([
+    getCustomerGradeIntervalMap(),
+    getChannelCustomerGradeIntervalMap(),
+  ]);
+  return { direct, channel };
+}
+
+export function pickGradeIntervalMap(
+  customerType: string | null | undefined,
+  maps: { direct: Map<string, number>; channel: Map<string, number> }
+) {
+  return isChannelCustomerType(customerType) ? maps.channel : maps.direct;
 }
 
 export async function getCustomerGradeIntervalOptions(): Promise<GradeIntervalOption[]> {

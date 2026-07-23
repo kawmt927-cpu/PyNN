@@ -19,6 +19,7 @@ import {
   OPPORTUNITY_ABANDON_REASON_LABELS,
   canSignOpportunity,
 } from "@/lib/opportunities/status";
+import { canEditContract } from "@/lib/contracts/access";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
 import { getOpportunityActivity } from "@/lib/opportunities/activity";
@@ -32,6 +33,11 @@ import {
   selfReturnPath,
   withReturnTo,
 } from "@/lib/navigation/return-to";
+import {
+  ENTITY_TYPES,
+  listEntityOperationLogs,
+} from "@/lib/audit/entity-operation-log";
+import { EntityOperationLogList } from "@/components/audit/entity-operation-log-list";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -45,7 +51,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
 
-  const [full, activity, contracts, labelMaps, stageOptions] = await Promise.all([
+  const [full, activity, contracts, labelMaps, stageOptions, operationLogs] = await Promise.all([
       prisma.opportunity.findUnique({
         where: { id },
         include: {
@@ -61,6 +67,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
       }),
       getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]),
       getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+      listEntityOperationLogs(ENTITY_TYPES.OPPORTUNITY, id),
     ]);
 
   if (!full) notFound();
@@ -72,7 +79,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const canFollowUp = canFollowUpOpportunity(session.user.role, session.user.id, full);
   const canManageStatus = canManageOpportunityStatus(session.user.role);
   const isAbandoned = full.status === "ABANDONED";
-  const canSign = canSignOpportunity(full.status);
+  const canSign = canSignOpportunity(full.status) && canEditContract(session.user.role);
   const opportunitySnapshot = {
     stage: full.stage,
     expectedAmount: Number(full.expectedAmount),
@@ -233,6 +240,15 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
             opportunity={opportunitySnapshot}
             stageOptions={stageOptions}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">操作日志</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EntityOperationLogList logs={operationLogs} />
         </CardContent>
       </Card>
     </div>

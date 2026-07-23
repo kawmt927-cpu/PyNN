@@ -68,6 +68,13 @@ export function InstallmentProgressChart({ rows, totalPaid, totalAmount, now = n
               <div className="flex items-center gap-3 text-muted-foreground">
                 <span>
                   {formatAmount(row.allocatedAmount)} / {formatAmount(row.amount)}
+                  <span className="ml-1.5 text-xs">
+                    （本期占合同{" "}
+                    {totalAmount > 0
+                      ? ((row.amount / totalAmount) * 100).toFixed(1)
+                      : "0.0"}
+                    % · 本期已回 {row.percentComplete.toFixed(0)}%）
+                  </span>
                 </span>
                 <span
                   className={cn(
@@ -78,7 +85,7 @@ export function InstallmentProgressChart({ rows, totalPaid, totalAmount, now = n
                     !isOverdue && row.statusLabel === "未开始" && "bg-muted text-muted-foreground"
                   )}
                 >
-                  {isOverdue ? "已逾期" : row.statusLabel} · {row.percentComplete.toFixed(0)}%
+                  {isOverdue ? "已逾期" : row.statusLabel}
                 </span>
               </div>
             </div>

@@ -14,21 +14,24 @@ type Props = {
   now?: Date;
 };
 
+const thClass = "whitespace-nowrap pb-2 pr-4";
+const tdClass = "whitespace-nowrap py-3 pr-4";
+
 export function FollowUpPendingTable({ items, listPath, gradeLabels, now = new Date() }: Props) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full min-w-[1080px] border-collapse text-sm">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
-            <th className="pb-2 pr-4">客户</th>
-            <th className="pb-2 pr-4">关联商机</th>
-            <th className="pb-2 pr-4">等级</th>
-            <th className="pb-2 pr-4">方式</th>
-            <th className="pb-2 pr-4">跟进摘要</th>
-            <th className="pb-2 pr-4">负责人</th>
-            <th className="pb-2 pr-4">剩余天数</th>
-            <th className="pb-2 pr-4">计划时间</th>
-            <th className="pb-2">操作</th>
+            <th className={thClass}>客户</th>
+            <th className={thClass}>关联商机</th>
+            <th className={thClass}>等级</th>
+            <th className={thClass}>方式</th>
+            <th className={thClass}>跟进摘要</th>
+            <th className={thClass}>负责人</th>
+            <th className={thClass}>剩余天数</th>
+            <th className={thClass}>计划时间</th>
+            <th className="whitespace-nowrap pb-2">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -36,12 +39,20 @@ export function FollowUpPendingTable({ items, listPath, gradeLabels, now = new D
             const remaining = formatPendingFollowUpRemainingDays(f.nextFollowUpAt, now);
             return (
               <tr key={`${f.source}-${f.id}`} className="border-b">
-                <td className="py-3 pr-4 font-medium">{f.customer.name}</td>
-                <td className="py-3 pr-4">
+                <td className={cn(tdClass, "max-w-[14rem] truncate font-medium")} title={f.customer.name}>
+                  <Link
+                    href={withReturnTo(`/customers/${f.customer.id}`, listPath)}
+                    className="text-primary hover:underline"
+                  >
+                    {f.customer.name}
+                  </Link>
+                </td>
+                <td className={cn(tdClass, "max-w-[12rem] truncate")}>
                   {f.opportunity ? (
                     <Link
                       href={withReturnTo(`/opportunities/${f.opportunity.id}`, listPath)}
                       className="text-primary hover:underline"
+                      title={f.opportunity.title}
                     >
                       {f.opportunity.title}
                     </Link>
@@ -49,30 +60,35 @@ export function FollowUpPendingTable({ items, listPath, gradeLabels, now = new D
                     "—"
                   )}
                 </td>
-                <td className="py-3 pr-4">
+                <td className={tdClass}>
                   <CustomerGradeIcon grade={f.customer.customerGrade} labelMap={gradeLabels} />
                 </td>
-                <td className="py-3 pr-4">
-                  {f.method ? FOLLOW_UP_METHOD_LABELS[f.method] : "—"}
-                  {f.source === "opportunity" && (
-                    <span className="ml-1 text-xs text-muted-foreground">(商机)</span>
-                  )}
-                  {f.source === "grade_expiry" && (
-                    <span className="ml-1 text-xs text-orange-600">(等级到期)</span>
-                  )}
+                <td className={tdClass}>
+                  <span className="inline-flex items-center gap-1">
+                    <span>{f.method ? FOLLOW_UP_METHOD_LABELS[f.method] : "—"}</span>
+                    {f.source === "opportunity" ? (
+                      <span className="text-xs text-muted-foreground">(商机)</span>
+                    ) : null}
+                    {f.source === "grade_expiry" ? (
+                      <span className="text-xs text-orange-600">(等级到期)</span>
+                    ) : null}
+                  </span>
                 </td>
-                <td className="max-w-xs truncate py-3 pr-4">{f.content}</td>
-                <td className="py-3 pr-4">{f.user?.name ?? f.owner.name ?? "—"}</td>
+                <td className={cn(tdClass, "max-w-[18rem] truncate")} title={f.content}>
+                  {f.content}
+                </td>
+                <td className={tdClass}>{f.user?.name ?? f.owner.name ?? "—"}</td>
                 <td
                   className={cn(
-                    "py-3 pr-4 font-medium",
+                    tdClass,
+                    "font-medium",
                     remaining.overdue ? "text-destructive" : "text-foreground"
                   )}
                 >
                   {remaining.label}
                 </td>
-                <td className="py-3 pr-4">{format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}</td>
-                <td className="py-3">
+                <td className={tdClass}>{format(f.nextFollowUpAt, "yyyy-MM-dd HH:mm")}</td>
+                <td className="whitespace-nowrap py-3">
                   <Link
                     href={
                       f.opportunity

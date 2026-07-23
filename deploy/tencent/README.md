@@ -3,7 +3,7 @@
 ## 安全组
 
 - 放行 TCP **3001**（CRM 直连，过渡期）
-- 放行 TCP **80** / **443**（`crm.pynntech.com` Nginx 反代）
+- 放行 TCP **80** / **443**（`crm.pynntech.com` Nginx 反代）——**正式 HTTPS 必须放行 443**
 - **80 端口 beproj 勿动**
 
 ## 部署命令
@@ -12,22 +12,31 @@
 ./scripts/deploy-tencent.sh ubuntu@122.51.86.223 "/path/to/Pynn.pem"
 ```
 
-## 当前状态（2026-07）
+部署脚本**不会覆盖**远端已有 `.env.production`。若改域名/HTTPS，需单独改 `NEXTAUTH_URL` 后：
+
+```bash
+cd /home/ubuntu/hospital-crm-pm
+sudo docker compose -p hospital-crm -f docker-compose.tencent.yml up -d --force-recreate app
+```
+
+## 当前状态（2026-07-15）
 
 | 项 | 状态 |
 |----|------|
-| CRM 服务 | `http://122.51.86.223:3001` 可用 |
+| CRM 服务 | Docker `hospital-crm-app-1` 在跑，宿主机 `3001→3000` |
 | 域名 `crm.pynntech.com` DNS | 阿里云 A 记录 → `122.51.86.223` |
-| Nginx 反代 | 已配置（服务器本机可访问） |
-| HTTPS | 待备案接入通过后申请证书 |
-| 腾讯云接入备案 | 审核中（订单见备案控制台） |
-| `NEXTAUTH_URL` | 备案+HTTPS 后改为 `https://crm.pynntech.com` |
+| Nginx HTTP | 已配置；访问 80 会 **301 → HTTPS** |
+| HTTPS 证书 | Let's Encrypt 已签发（至 2026-10-13），`certbot.timer` 自动续期 |
+| Nginx HTTPS | `listen 443 ssl` 已启用；本机 `https://127.0.0.1` + Host 头测 **/login = 200** |
+| 外网 443 | 安全组已放行；`https://crm.pynntech.com/login` = 200 |
+| 腾讯云接入备案 | 已通过 |
+| `NEXTAUTH_URL` | `https://crm.pynntech.com`（容器内已生效） |
 
 ---
 
 ## 线上部署成功后 — 待测清单
 
-> 以下功能代码已实现，**需等 `https://crm.pynntech.com` 可用后再测**。
+> 以下在外网 `https://crm.pynntech.com` 可达后验证。
 
 ### 1. 企微扫码登录全流程（优先）
 
@@ -43,21 +52,23 @@
 
 ### 2. 生产环境配置
 
-- [ ] `NEXTAUTH_URL=https://crm.pynntech.com`
+- [x] `NEXTAUTH_URL=https://crm.pynntech.com`
 - [ ] 企微后台可信域名 / JS 安全域名
 - [ ] AI Key、高德 Key（管理后台或 `.env.production`）
-- [ ] 安全组 443 已放行
+- [x] 安全组 **443** 已放行
 
 ### 3. 核心业务冒烟
 
-- [ ] 邮箱密码登录
+- [ ] 邮箱密码登录（请在浏览器打开站点确认）
 - [ ] 今日工作 / 销售日志 / 打卡定位
 - [ ] 客户、商机、合同、日报
 
 ---
 
-## 备案通过后联系我方操作
+## 备案通过后操作
 
-1. 申请 Let's Encrypt 证书并开启 HTTPS
-2. 更新 `NEXTAUTH_URL` 并重启容器
-3. 协助验证企微扫码登录
+1. [x] 申请 Let's Encrypt 证书并开启 HTTPS（Nginx + certbot）
+2. [x] 更新 `NEXTAUTH_URL` 并重启容器
+3. [x] 腾讯云安全组放行 TCP 443
+4. [x] 外网 `https://crm.pynntech.com/login` = 200（Let's Encrypt 证书有效至 2026-10-13）
+5. [ ] 企微扫码登录全流程（需配置 `WECOM_*` 与企微后台域名）

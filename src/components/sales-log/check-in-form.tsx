@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,12 @@ import type { ConfigOptionItem } from "@/lib/config-options";
 import { cn } from "@/lib/utils";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import { useCheckInDialogClose } from "@/components/today-work/check-in-dialog-context";
+import {
+  CHECK_IN_GUIDE_TIPS,
+  CheckInGuideBanner,
+  CheckInGuideSection,
+  type CheckInGuideStepId,
+} from "@/components/sales-log/check-in-guide";
 
 type EntryTiming = "later" | "now";
 
@@ -74,11 +81,17 @@ export function CheckInForm({
   geocodeReady,
   customerFormOptions,
   customerContext,
+  guided = false,
+  guidePortalId,
 }: {
   mapKey: string | null;
   geocodeReady: boolean;
   customerFormOptions: CheckInCustomerFormOptions;
   customerContext?: CheckInCustomerContext;
+  /** 手机端分步高亮引导 */
+  guided?: boolean;
+  /** 将引导条渲染到页面顶部插槽（滚动区外固定显示） */
+  guidePortalId?: string;
 }) {
   const router = useRouter();
   const closeCheckInDialog = useCheckInDialogClose();
@@ -120,10 +133,132 @@ export function CheckInForm({
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
   const [queuedPayload, setQueuedPayload] = useState<Record<string, unknown> | null>(null);
+  const [guideDismissed, setGuideDismissed] = useState(false);
+  const [modeAcknowledged, setModeAcknowledged] = useState(lockedCustomer);
+  const [entryAcknowledged, setEntryAcknowledged] = useState(lockedCustomer);
+  const [locationSkipped, setLocationSkipped] = useState(false);
+  const [guidePortalEl, setGuidePortalEl] = useState<HTMLElement | null>(null);
 
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
   const customerReady = Boolean(customerId);
+  /** 客户 + 至少一位联系人就绪后，才可操作下方字段 */
+  const partyReady = customerReady && contactIds.length > 0;
+  const belowLocked = isInteraction && !partyReady;
+  const contentReady = !completeNow || Boolean(content.trim());
+  const nextPlanError = completeNow
+    ? validateNextFollowUpPlan(
+        suggestedGrade,
+        nextFollowUpAt,
+        nextFollowUpMethod,
+        currentCustomerGrade,
+        nextFollowUpContent
+      )
+    : null;
+  const nextPlanReady = !nextPlanError;
+  /** 往来内容/下次计划未完成前，不可操作定位及之后 */
+  const afterContentLocked = completeNow && (!contentReady || !nextPlanReady);
+
+  const guideActive = guided && !guideDismissed;
+
+  useEffect(() => {
+    if (!guidePortalId) {
+      setGuidePortalEl(null);
+      return;
+    }
+    setGuidePortalEl(document.getElementById(guidePortalId));
+  }, [guidePortalId, guideActive]);
+
+  const guideSteps = useMemo((): CheckInGuideStepId[] => {
+    if (lockedCustomer) {
+      const steps: CheckInGuideStepId[] = [];
+      if (completeNow) steps.push("content", "nextPlan");
+      steps.push("location", "submit");
+      return steps;
+    }
+    if (!isInteraction) {
+      return ["mode", "location", "submit"];
+    }
+    const steps: CheckInGuideStepId[] = ["mode", "customer", "entry"];
+    if (completeNow) steps.push("content", "nextPlan");
+    steps.push("location", "submit");
+    return steps;
+  }, [lockedCustomer, isInteraction, completeNow]);
+
+  const activeGuideStep = useMemo((): CheckInGuideStepId | null => {
+    if (!guideActive) return null;
+    for (const step of guideSteps) {
+      if (step === "mode" && !modeAcknowledged) return "mode";
+      if (step === "customer" && (!customerId || contactIds.length === 0)) return "customer";
+      if (step === "entry" && !entryAcknowledged) return "entry";
+      if (step === "content" && !contentReady) return "content";
+      if (step === "nextPlan" && !nextPlanReady) return "nextPlan";
+      if (step === "location" && !location && !locationSkipped && isInteraction) return "location";
+      if (step === "location" && !location && !isInteraction) return "location";
+      if (step === "submit") return "submit";
+    }
+    return "submit";
+  }, [
+    guideActive,
+    guideSteps,
+    modeAcknowledged,
+    customerId,
+    contactIds.length,
+    entryAcknowledged,
+    contentReady,
+    nextPlanReady,
+    location,
+    locationSkipped,
+    isInteraction,
+  ]);
+
+  const guideStepIndex =
+    activeGuideStep && guideSteps.includes(activeGuideStep)
+      ? guideSteps.indexOf(activeGuideStep) + 1
+      : 0;
+
+  /** 用户跳过已默认的前置步骤、直接操作后续区块时，自动推进引导 */
+  function advanceGuideTo(step: CheckInGuideStepId) {
+    if (!guideActive) return;
+    const targetIdx = guideSteps.indexOf(step);
+    if (targetIdx <= 0) return;
+
+    // 未选好客户+联系人前，只确认打卡类型，不跳过客户步骤
+    if (belowLocked) {
+      const customerIdx = guideSteps.indexOf("customer");
+      if (customerIdx >= 0 && targetIdx > customerIdx) {
+        if (!modeAcknowledged) setModeAcknowledged(true);
+        return;
+      }
+    }
+
+    // 往来内容 / 下次计划未完成前，不允许跳到定位之后
+    if (afterContentLocked) {
+      const contentIdx = guideSteps.indexOf("content");
+      const nextPlanIdx = guideSteps.indexOf("nextPlan");
+      const gateIdx = !contentReady
+        ? contentIdx
+        : nextPlanIdx >= 0
+          ? nextPlanIdx
+          : contentIdx;
+      if (gateIdx >= 0 && targetIdx > gateIdx) {
+        if (!modeAcknowledged) setModeAcknowledged(true);
+        if (!entryAcknowledged) setEntryAcknowledged(true);
+        return;
+      }
+    }
+
+    const prior = guideSteps.slice(0, targetIdx);
+    if (prior.includes("mode") && !modeAcknowledged) setModeAcknowledged(true);
+    if (prior.includes("entry") && !entryAcknowledged) setEntryAcknowledged(true);
+    // 定位不自动跳过：须获取定位或点「暂时跳过定位」
+  }
+
+  useEffect(() => {
+    if (!partyReady) return;
+    if (!modeAcknowledged) setModeAcknowledged(true);
+    if (!entryAcknowledged) setEntryAcknowledged(true);
+  }, [partyReady, modeAcknowledged, entryAcknowledged]);
 
   useEffect(() => {
     if (!isInteraction || !customerId) {
@@ -338,11 +473,51 @@ export function CheckInForm({
     proceedSubmit(pendingPayload);
   }
 
+  const guideBanner =
+    guideActive && activeGuideStep ? (
+      <CheckInGuideBanner
+        tip={
+          activeGuideStep === "location" && !isInteraction
+            ? "下一步：请获取定位（无客户打卡必填）"
+            : activeGuideStep === "nextPlan" && nextPlanError
+              ? `请先完善下次往来计划：${nextPlanError}`
+              : CHECK_IN_GUIDE_TIPS[activeGuideStep]
+        }
+        stepIndex={guideStepIndex}
+        stepCount={guideSteps.length}
+        onSkip={() => setGuideDismissed(true)}
+      >
+        {activeGuideStep === "location" && isInteraction ? (
+          <div className="flex justify-end px-3 pb-2">
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline underline-offset-2"
+              onClick={() => setLocationSkipped(true)}
+            >
+              暂时跳过定位
+            </button>
+          </div>
+        ) : null}
+      </CheckInGuideBanner>
+    ) : null;
+
   return (
     <>
+      {guideBanner
+        ? guidePortalEl
+          ? createPortal(guideBanner, guidePortalEl)
+          : (
+              <div className="sticky top-0 z-30 -mx-4 mb-1">{guideBanner}</div>
+            )
+        : null}
+
       <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
         {!lockedCustomer ? (
-          <div className="space-y-2 md:col-span-2">
+          <CheckInGuideSection
+            stepId="mode"
+            active={activeGuideStep === "mode"}
+            className="space-y-2 md:col-span-2"
+          >
             <Label>打卡类型</Label>
             <div className="flex flex-wrap gap-4">
               <label className="flex cursor-pointer items-center gap-2 text-sm">
@@ -352,6 +527,7 @@ export function CheckInForm({
                   checked={isInteraction}
                   onChange={() => {
                     setCheckInMode("interaction");
+                    setModeAcknowledged(true);
                     setError(null);
                   }}
                   className="h-4 w-4"
@@ -365,6 +541,7 @@ export function CheckInForm({
                   checked={!isInteraction}
                   onChange={() => {
                     setCheckInMode("without_customer");
+                    setModeAcknowledged(true);
                     setCustomerId("");
                     setCustomerLabel("");
                     setContactIds([]);
@@ -375,79 +552,105 @@ export function CheckInForm({
                 无客户打卡（仅记录定位）
               </label>
             </div>
-          </div>
+          </CheckInGuideSection>
         ) : null}
 
         {isInteraction ? (
           <>
-            <div className="space-y-2 md:col-span-2">
-              {lockedCustomer ? (
-                <div className="space-y-2">
-                  <Label>客户</Label>
-                  <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-medium">
-                    {customerLabel}
+            <CheckInGuideSection
+              stepId="customer"
+              active={activeGuideStep === "customer"}
+              onEngage={() => advanceGuideTo("customer")}
+              className="space-y-4 md:col-span-2"
+            >
+              <div className="space-y-2">
+                {lockedCustomer ? (
+                  <div className="space-y-2">
+                    <Label>客户</Label>
+                    <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-medium">
+                      {customerLabel}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-end justify-between gap-2">
-                  <div className="min-w-[240px] flex-1">
-                    <CustomerSearchSelect
-                      ref={customerSelectRef}
-                      id="checkInCustomer"
-                      name="customerId"
-                      label="客户"
-                      required
-                      writableOnly
-                      value={customerId}
-                      selectedLabel={customerLabel}
-                      onValueChange={(id, option) => {
-                        setCustomerId(id);
-                        setCustomerLabel(option?.label ?? "");
-                        const grade = option?.customerGrade ?? null;
-                        setCurrentCustomerGrade(grade);
-                        setSuggestedGrade(customerGradeFormValue(grade));
-                        setContactIds([]);
-                        setOpportunityId("");
-                        setOpportunityLabel("");
-                      }}
-                      onCreateNew={openCreateCustomer}
-                    />
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="checkInCustomer">客户</Label>
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <CustomerSearchSelect
+                          ref={customerSelectRef}
+                          id="checkInCustomer"
+                          name="customerId"
+                          label=""
+                          required
+                          writableOnly
+                          value={customerId}
+                          selectedLabel={customerLabel}
+                          onValueChange={(id, option) => {
+                            setCustomerId(id);
+                            setCustomerLabel(option?.label ?? "");
+                            const grade = option?.customerGrade ?? null;
+                            setCurrentCustomerGrade(grade);
+                            setSuggestedGrade(customerGradeFormValue(grade));
+                            setContactIds([]);
+                            setOpportunityId("");
+                            setOpportunityLabel("");
+                          }}
+                          onCreateNew={openCreateCustomer}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 shrink-0"
+                        onClick={() => openCreateCustomer()}
+                      >
+                        新增客户
+                      </Button>
+                    </div>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => openCreateCustomer()}>
-                    新增客户
-                  </Button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {hasPendingPlans ? <CustomerPendingFollowPlansPanel items={pendingPlans} /> : null}
+              {hasPendingPlans ? <CustomerPendingFollowPlansPanel items={pendingPlans} /> : null}
 
-            <div className="space-y-2">
-              <ContactSelectField
-                customerId={customerId}
-                multiple
-                value={contactIds}
-                onChange={setContactIds}
-                required
-              />
-            </div>
+              <div className="space-y-2">
+                <ContactSelectField
+                  customerId={customerId}
+                  multiple
+                  value={contactIds}
+                  onChange={setContactIds}
+                  required
+                />
+              </div>
+            </CheckInGuideSection>
 
             {!lockedCustomer ? (
-              <div className={cn("space-y-2 md:col-span-2", !customerReady && "opacity-60")}>
+              <CheckInGuideSection
+                stepId="entry"
+                active={activeGuideStep === "entry"}
+                onEngage={() => advanceGuideTo("entry")}
+                className={cn(
+                  "space-y-2 md:col-span-2",
+                  belowLocked && "pointer-events-none opacity-60"
+                )}
+              >
                 <Label>往来录入</Label>
                 <div className="flex flex-wrap gap-4">
                   <label
                     className={cn(
                       "flex items-center gap-2 text-sm",
-                      customerReady ? "cursor-pointer" : "cursor-not-allowed"
+                      belowLocked ? "cursor-not-allowed" : "cursor-pointer"
                     )}
                   >
                     <input
                       type="radio"
                       name="entryTiming"
                       checked={entryTiming === "now"}
-                      disabled={!customerReady}
-                      onChange={() => setEntryTiming("now")}
+                      disabled={belowLocked}
+                      onChange={() => {
+                        setEntryTiming("now");
+                        setEntryAcknowledged(true);
+                      }}
                       className="h-4 w-4"
                     />
                     同时录入往来内容
@@ -455,31 +658,40 @@ export function CheckInForm({
                   <label
                     className={cn(
                       "flex items-center gap-2 text-sm",
-                      customerReady ? "cursor-pointer" : "cursor-not-allowed"
+                      belowLocked ? "cursor-not-allowed" : "cursor-pointer"
                     )}
                   >
                     <input
                       type="radio"
                       name="entryTiming"
                       checked={entryTiming === "later"}
-                      disabled={!customerReady}
-                      onChange={() => setEntryTiming("later")}
+                      disabled={belowLocked}
+                      onChange={() => {
+                        setEntryTiming("later");
+                        setEntryAcknowledged(true);
+                      }}
                       className="h-4 w-4"
                     />
                     仅打卡，收工后与 AI 补全往来
                   </label>
                 </div>
-                {!customerReady ? (
-                  <p className="text-xs text-muted-foreground">请先选择客户后再选择往来录入方式</p>
+                {belowLocked ? (
+                  <p className="text-xs text-muted-foreground">
+                    请先选择客户并至少选择一位联系人后再操作
+                  </p>
                 ) : null}
-              </div>
+              </CheckInGuideSection>
             ) : null}
 
             {completeNow && (
-              <div
+              <>
+              <CheckInGuideSection
+                stepId="content"
+                active={activeGuideStep === "content"}
+                onEngage={() => advanceGuideTo("content")}
                 className={cn(
                   "space-y-4 rounded-md border bg-muted/30 p-4 md:col-span-2",
-                  !customerReady && "opacity-60"
+                  belowLocked && "pointer-events-none opacity-60"
                 )}
               >
                 <p className="text-sm font-medium">往来内容</p>
@@ -489,12 +701,12 @@ export function CheckInForm({
                     <select
                       id="checkInMethod"
                       value={method}
-                      disabled={!customerReady}
-                      required={customerReady}
+                      disabled={belowLocked}
+                      required={partyReady}
                       onChange={(e) => setMethod(e.target.value as SalesLogMethod)}
                       className={cn(
                         "flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm",
-                        customerReady ? "bg-background" : disabledFieldClass
+                        belowLocked ? disabledFieldClass : "bg-background"
                       )}
                     >
                       {SALES_LOG_METHOD_OPTIONS.map((opt) => (
@@ -510,11 +722,13 @@ export function CheckInForm({
                       id="checkInContent"
                       rows={3}
                       value={content}
-                      disabled={!customerReady}
-                      required={customerReady}
+                      disabled={belowLocked}
+                      required={partyReady}
                       onChange={(e) => setContent(e.target.value)}
-                      placeholder={customerReady ? "沟通要点、客户反馈…" : "请先选择客户"}
-                      className={cn(!customerReady && disabledFieldClass)}
+                      placeholder={
+                        partyReady ? "沟通要点、客户反馈…" : "请先选择客户和联系人"
+                      }
+                      className={cn(belowLocked && disabledFieldClass)}
                     />
                   </div>
                   <div className="space-y-2">
@@ -524,13 +738,13 @@ export function CheckInForm({
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={!customerReady}
+                        disabled={belowLocked}
                         onClick={() => setOpportunityDialogOpen(true)}
                       >
                         新建商机
                       </Button>
                     </div>
-                    {customerReady ? (
+                    {partyReady ? (
                       <OpportunitySearchSelect
                         id="checkInOpportunity"
                         name="opportunityId"
@@ -547,7 +761,7 @@ export function CheckInForm({
                       />
                     ) : (
                       <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm text-muted-foreground">
-                        请先选择客户
+                        请先选择客户和联系人
                       </div>
                     )}
                   </div>
@@ -558,30 +772,47 @@ export function CheckInForm({
                     onValueChange={setSuggestedGrade}
                     options={customerFormOptions.gradeOptions}
                     labelClassName={alignedFieldLabelClass}
-                    disabled={!customerReady}
+                    disabled={belowLocked}
                   />
-                  <div className="space-y-3 rounded-md border bg-background/60 p-3 md:col-span-2">
-                    <p className="text-sm font-medium">下次往来计划</p>
-                    <NextFollowUpPlanFields
-                      methodId="checkInNextMethod"
-                      methodValue={nextFollowUpMethod}
-                      onMethodChange={setNextFollowUpMethod}
-                      dateId="checkInNextAt"
-                      dateValue={nextFollowUpAt}
-                      onDateChange={setNextFollowUpAt}
-                      contentId="checkInNextContent"
-                      contentValue={nextFollowUpContent}
-                      onContentChange={setNextFollowUpContent}
-                      suggestedGrade={suggestedGrade}
-                      currentCustomerGrade={currentCustomerGrade}
-                      gradeOptions={customerFormOptions.gradeOptions}
-                      disabled={!customerReady}
-                      methodSelectClassName={cn(!customerReady && disabledFieldClass)}
-                      dateInputClassName={cn(!customerReady && disabledFieldClass)}
-                    />
-                  </div>
                 </div>
-              </div>
+              </CheckInGuideSection>
+
+              <CheckInGuideSection
+                stepId="nextPlan"
+                active={activeGuideStep === "nextPlan"}
+                onEngage={() => advanceGuideTo("nextPlan")}
+                className={cn(
+                  "space-y-3 rounded-md border bg-muted/30 p-4 md:col-span-2",
+                  (belowLocked || !contentReady) && "pointer-events-none opacity-60"
+                )}
+              >
+                <p className="text-sm font-medium">下次往来计划</p>
+                {!contentReady ? (
+                  <p className="text-xs text-muted-foreground">请先填写往来内容后再填写下次计划</p>
+                ) : null}
+                <NextFollowUpPlanFields
+                  methodId="checkInNextMethod"
+                  methodValue={nextFollowUpMethod}
+                  onMethodChange={setNextFollowUpMethod}
+                  dateId="checkInNextAt"
+                  dateValue={nextFollowUpAt}
+                  onDateChange={setNextFollowUpAt}
+                  contentId="checkInNextContent"
+                  contentValue={nextFollowUpContent}
+                  onContentChange={setNextFollowUpContent}
+                  suggestedGrade={suggestedGrade}
+                  currentCustomerGrade={currentCustomerGrade}
+                  gradeOptions={customerFormOptions.gradeOptions}
+                  disabled={belowLocked || !contentReady}
+                  methodSelectClassName={cn(
+                    (belowLocked || !contentReady) && disabledFieldClass
+                  )}
+                  dateInputClassName={cn(
+                    (belowLocked || !contentReady) && disabledFieldClass
+                  )}
+                />
+              </CheckInGuideSection>
+              </>
             )}
           </>
         ) : (
@@ -590,33 +821,95 @@ export function CheckInForm({
           </p>
         )}
 
-        <CheckInLocationPicker
-          value={location}
-          onChange={setLocation}
-          mapKey={mapKey}
-          geocodeReady={geocodeReady}
-          disabled={pending}
-          optional={isInteraction}
-        />
-        <div className="space-y-2 md:col-span-2">
+        <CheckInGuideSection
+          stepId="location"
+          active={activeGuideStep === "location"}
+          onEngage={() => advanceGuideTo("location")}
+          className={cn(
+            "md:col-span-2",
+            (belowLocked || afterContentLocked) && "pointer-events-none opacity-60"
+          )}
+        >
+          <CheckInLocationPicker
+            value={location}
+            onChange={(value) => {
+              setLocation(value);
+              if (value) setLocationSkipped(false);
+            }}
+            mapKey={mapKey}
+            geocodeReady={geocodeReady}
+            disabled={pending || belowLocked || afterContentLocked}
+            optional={isInteraction}
+            skipped={locationSkipped}
+            onSkip={
+              isInteraction
+                ? () => {
+                    setLocationSkipped(true);
+                    setLocation(null);
+                  }
+                : undefined
+            }
+          />
+        </CheckInGuideSection>
+        <div
+          className={cn(
+            "space-y-2 md:col-span-2",
+            (belowLocked || afterContentLocked) && "pointer-events-none opacity-60"
+          )}
+        >
           <Label htmlFor="checkInNotes">备注（可选）</Label>
-          <Input id="checkInNotes" name="notes" placeholder="如：拜访目的、同行人员" />
+          <Input
+            id="checkInNotes"
+            name="notes"
+            placeholder="如：拜访目的、同行人员"
+            disabled={belowLocked || afterContentLocked}
+            onFocus={() => advanceGuideTo("submit")}
+          />
         </div>
         {error && <p className="text-sm text-destructive md:col-span-2">{error}</p>}
-        <div className="md:col-span-2">
+        <CheckInGuideSection
+          stepId="submit"
+          active={activeGuideStep === "submit"}
+          onEngage={() => advanceGuideTo("submit")}
+          className={cn(
+            "md:col-span-2",
+            (belowLocked || afterContentLocked) && "pointer-events-none opacity-60"
+          )}
+        >
           <Button
             type="submit"
             disabled={
               pending ||
               pendingPlansLoading ||
+              belowLocked ||
+              afterContentLocked ||
               (!isInteraction && !location) ||
-              (isInteraction && (!customerId || contactIds.length === 0)) ||
+              (isInteraction && !partyReady) ||
               (completeNow && !content.trim())
             }
           >
             {pending ? "提交中…" : pendingPlansLoading ? "加载计划…" : completeNow ? "提交往来打卡" : "提交打卡"}
           </Button>
-        </div>
+          {belowLocked ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              请先选择客户并至少选择一位联系人。
+            </p>
+          ) : afterContentLocked ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {completeNow && !content.trim()
+                ? "请先填写往来内容。"
+                : nextPlanError
+                  ? `请完善下次往来计划：${nextPlanError}`
+                  : "请先完善往来内容与下次计划。"}
+            </p>
+          ) : !isInteraction && !location ? (
+            <p className="mt-2 text-xs text-muted-foreground">无客户打卡须先获取定位。</p>
+          ) : isInteraction && !location && !locationSkipped ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              定位可选。可点「暂时跳过定位」，或直接提交后确认不记录地点。
+            </p>
+          ) : null}
+        </CheckInGuideSection>
       </form>
 
       <Dialog open={noLocationConfirmOpen} onOpenChange={setNoLocationConfirmOpen}>

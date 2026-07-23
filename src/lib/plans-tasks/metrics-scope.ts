@@ -1,6 +1,9 @@
 export type MetricsPeriod = "annual" | "monthly";
 
-export type AnnualSubject = "team" | string;
+/** team=全员汇总；others=非普通销售合计；其余为普通销售 userId */
+export type AnnualSubject = "team" | "others" | string;
+
+export const ANNUAL_SUBJECT_OTHERS = "others" as const;
 
 const METRICS_YEAR_MIN = 2020;
 
@@ -49,13 +52,37 @@ export function metricsYearOptions(now = new Date()): number[] {
   return Array.from({ length: current - METRICS_YEAR_MIN + 1 }, (_, index) => current - index);
 }
 
+/** 手机端可选年份：今年与去年 */
+export function metricsRecentYearOptions(now = new Date()): number[] {
+  const current = now.getFullYear();
+  return [current, current - 1];
+}
+
+/** 手机端年份：仅允许今年或去年，非法则回退今年 */
+export function parseMetricsYearRecent(
+  params: { year?: string },
+  now = new Date()
+): number {
+  const allowed = metricsRecentYearOptions(now);
+  const parsed = Number.parseInt(params.year ?? "", 10);
+  if (Number.isFinite(parsed) && allowed.includes(parsed)) {
+    return parsed;
+  }
+  return allowed[0]!;
+}
+
 export function parseAnnualSubject(
   params: { subject?: string; userId?: string },
-  salesUserIds: string[]
+  /** 普通销售（role=SALES）的 id 列表 */
+  regularSalesUserIds: string[],
+  options?: { hasOthers?: boolean }
 ): AnnualSubject {
   const raw = params.subject ?? params.userId;
   if (!raw || raw === "team" || raw === "all") return "team";
-  if (salesUserIds.includes(raw)) return raw;
+  if (raw === ANNUAL_SUBJECT_OTHERS) {
+    return options?.hasOthers ? ANNUAL_SUBJECT_OTHERS : "team";
+  }
+  if (regularSalesUserIds.includes(raw)) return raw;
   return "team";
 }
 

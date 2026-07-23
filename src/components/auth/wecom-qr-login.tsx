@@ -23,7 +23,7 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-export function WeComQrLogin({ returnTo = "/mobile" }: Props) {
+export function WeComQrLogin({ returnTo = "/" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,7 +106,7 @@ export function WeComQrLogin({ returnTo = "/mobile" }: Props) {
         suppressHydrationWarning
       />
       <Button asChild variant="outline" className="w-full" type="button">
-        <a href={`/api/auth/wecom?returnTo=${encodeURIComponent(returnTo === "/" ? "/mobile" : returnTo)}`}>
+        <a href={`/api/auth/wecom?returnTo=${encodeURIComponent(returnTo || "/")}`}>
           已在企业微信内打开？点此授权登录
         </a>
       </Button>

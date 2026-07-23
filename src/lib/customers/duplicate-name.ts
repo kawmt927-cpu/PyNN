@@ -53,7 +53,14 @@ export async function findDuplicateCustomerByName(name: string) {
 }
 
 export async function assertCustomerNameAvailable(name: string): Promise<void> {
-  const duplicate = await findDuplicateCustomerByName(name);
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("请输入客户名称");
+  }
+  if (trimmed.length > 100) {
+    throw new Error("客户名称不超过 100 字");
+  }
+  const duplicate = await findDuplicateCustomerByName(trimmed);
   if (duplicate) {
     throw new Error(`客户「${duplicate.name}」已存在，请直接搜索选择`);
   }

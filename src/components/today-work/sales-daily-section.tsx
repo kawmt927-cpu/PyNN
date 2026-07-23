@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { format } from "date-fns";
-import { canManageCustomerOwner } from "@/lib/customers/access";
+import { canManageCustomerOwner, listCustomerAssignableUsers } from "@/lib/customers/access";
 import { loadInteractionFormOptions } from "@/lib/config-options";
-import { prisma } from "@/lib/prisma";
 import {
   listMyTodayCheckIns,
   checkInStatusLabel,
@@ -28,13 +27,7 @@ export async function CheckInSection({ role, userId, mapKey, geocodeReady }: Sec
   const [checkIns, interactionFormOptions, salesUsers] = await Promise.all([
     listMyTodayCheckIns(userId),
     loadInteractionFormOptions(),
-    canManageCustomerOwner(role)
-      ? prisma.user.findMany({
-          where: { role: { in: ["SALES", "SALES_MANAGER"] } },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        })
-      : Promise.resolve([]),
+    canManageCustomerOwner(role) ? listCustomerAssignableUsers() : Promise.resolve([]),
   ]);
 
   return (

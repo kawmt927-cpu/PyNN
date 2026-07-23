@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ContractApprovalActions } from "@/components/contracts/contract-approval-actions";
+import { APPROVAL_TYPE_LABELS } from "@/lib/approvals/constants";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import type { ActionResult } from "@/lib/action-result";
 
@@ -23,21 +24,34 @@ type RejectAction = (formData: FormData) => Promise<ActionResult>;
 type Props = {
   items: ContractApprovalItem[];
   showActions?: boolean;
+  /** 与客户认领混排时展示类型标签 */
+  showTypeBadge?: boolean;
   onApprove?: ApproveAction;
   onReject?: RejectAction;
 };
 
-export function ContractApprovalList({ items, showActions, onApprove, onReject }: Props) {
+export function ContractApprovalList({
+  items,
+  showActions,
+  showTypeBadge,
+  onApprove,
+  onReject,
+}: Props) {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">暂无记录。</p>;
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {items.map((item) => (
-        <div key={item.id} className="rounded-lg border p-4">
+        <div key={item.id} className="rounded-md border p-4 text-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
+              {showTypeBadge ? (
+                <span className="mb-1 inline-block rounded bg-muted px-2 py-0.5 text-xs">
+                  {APPROVAL_TYPE_LABELS.CONTRACT}
+                </span>
+              ) : null}
               <p className="font-medium">
                 <Link href={`/contracts/${item.id}`} className="text-primary hover:underline">
                   {item.title}

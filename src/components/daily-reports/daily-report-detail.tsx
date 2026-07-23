@@ -13,6 +13,7 @@ import {
   resolveDailyReportDisplayStatus,
 } from "@/lib/sales-log/daily-report-submission";
 import { DailyReportStatusBadge } from "@/components/daily-reports/daily-report-status-badge";
+import { DailyReportBody } from "@/components/daily-reports/daily-report-body";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -122,14 +123,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
           <div>
             <p className={cn("mb-2 font-medium", hasIssue && issueTone)}>日报正文</p>
             {report.dailyReport?.trim() ? (
-              <div
-                className={cn(
-                  "rounded-md border px-4 py-3 whitespace-pre-wrap",
-                  hasIssue ? issueBodyClass : "bg-muted/30"
-                )}
-              >
-                {report.dailyReport}
-              </div>
+              <DailyReportBody content={report.dailyReport} />
             ) : (
               <div
                 className={cn(
@@ -139,9 +133,11 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
               >
                 {display.overdue
                   ? `当日日报未提交（已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00 截止时间）。`
-                  : report.status === "IN_PROGRESS" || report.status === "PENDING_CONFIRM"
-                    ? "当日日报尚未提交。"
-                    : "暂无日报正文。"}
+                  : display.label === "当日无日报"
+                    ? "当日无日报。"
+                    : report.status === "IN_PROGRESS" || report.status === "PENDING_CONFIRM"
+                      ? "当日日报尚未提交。"
+                      : "暂无日报正文。"}
               </div>
             )}
           </div>
@@ -214,56 +210,56 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
           {report.followUps.length === 0 ? (
             <p className="text-sm text-muted-foreground">当日无往来记录。</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">时间</th>
-                    <th className="pb-2 pr-4">客户</th>
-                    <th className="pb-2 pr-4">联系人</th>
-                    <th className="pb-2 pr-4">方式</th>
-                    <th className="pb-2 pr-4">内容</th>
-                    <th className="pb-2 pr-4">商机</th>
-                    <th className="pb-2 pr-4">下次计划</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.followUps.map((row) => (
-                    <tr key={row.id} className="border-b align-top">
-                      <td className="whitespace-nowrap py-3 pr-4">
-                        {format(row.followUpAt, "HH:mm")}
-                      </td>
-                      <td className="py-3 pr-4">
+            <ul className="space-y-3">
+              {report.followUps.map((row) => (
+                <li key={row.id} className="rounded-md border p-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                          {salesLogMethodLabel(row.method)}
+                        </span>
                         <Link
                           href={`/customers/${row.customer.id}`}
-                          className="text-primary hover:underline"
+                          className="font-medium text-primary hover:underline"
                         >
                           {row.customer.name}
                         </Link>
-                      </td>
-                      <td className="py-3 pr-4">{row.contact?.name ?? "—"}</td>
-                      <td className="py-3 pr-4">{salesLogMethodLabel(row.method)}</td>
-                      <td className="max-w-md py-3 pr-4 whitespace-pre-wrap">{row.content}</td>
-                      <td className="py-3 pr-4">
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {row.contact?.name ? (
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            联系人 · {row.contact.name}
+                          </span>
+                        ) : null}
                         {row.opportunity ? (
                           <Link
                             href={`/opportunities/${row.opportunity.id}`}
-                            className="text-primary hover:underline"
+                            className="rounded-md bg-muted px-2 py-0.5 text-xs text-primary hover:underline"
                           >
-                            {row.opportunity.title}
+                            商机 · {row.opportunity.title}
                           </Link>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
-                        {row.nextFollowUpAt ? format(row.nextFollowUpAt, "MM-dd") : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        ) : null}
+                        {row.nextFollowUpAt ? (
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            下次 · {format(row.nextFollowUpAt, "MM-dd")}
+                          </span>
+                        ) : null}
+                      </div>
+                      {row.content?.trim() ? (
+                        <p className="whitespace-pre-wrap text-muted-foreground">{row.content}</p>
+                      ) : null}
+                    </div>
+                    <time
+                      dateTime={row.followUpAt.toISOString()}
+                      className="shrink-0 pt-0.5 text-sm font-semibold tabular-nums text-foreground"
+                    >
+                      {format(row.followUpAt, "HH:mm")}
+                    </time>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>

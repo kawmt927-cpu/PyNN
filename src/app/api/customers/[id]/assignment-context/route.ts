@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { UserRole } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { prisma } from "@/lib/prisma";
 
 const ALLOWED_ROLES: UserRole[] = ["SALES_MANAGER", "ADMIN"];
@@ -40,19 +41,29 @@ export async function GET(
     return Response.json({ error: "客户不存在" }, { status: 404 });
   }
 
-  const eligibleAssignees: { id: string; name: string }[] = [];
-  if (customer.owner) {
-    eligibleAssignees.push(customer.owner);
-  }
-  for (const row of customer.assistantOwners) {
-    if (!eligibleAssignees.some((item) => item.id === row.user.id)) {
-      eligibleAssignees.push(row.user);
+  const inPool = customer.ownerId === null;
+  let eligibleAssignees: { id: string; name: string }[] = [];
+
+  if (inPool) {
+    eligibleAssignees = await listSalesUsersForSelect({
+      viewer: { id: session.user.id, role: session.user.role },
+    });
+  } else {
+    if (customer.owner) {
+      eligibleAssignees.push(customer.owner);
+    }
+    for (const row of customer.assistantOwners) {
+      if (!eligibleAssignees.some((item) => item.id === row.user.id)) {
+        eligibleAssignees.push(row.user);
+      }
     }
   }
 
   return Response.json({
     customerId: customer.id,
     customerName: customer.name,
+    inPool,
+    claimOwnerOnAssign: inPool,
     eligibleAssignees,
     canAssign: eligibleAssignees.length > 0,
   });

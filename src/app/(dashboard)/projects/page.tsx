@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProjectListTable } from "@/components/projects/project-list-table";
-import { buildProjectListWhere } from "@/lib/projects/access";
+import { buildProjectListWhere, canCreateProject } from "@/lib/projects/access";
 import { attachCostsToProjectList } from "@/lib/projects/cost-summary";
 
 export default async function ProjectsPage() {
@@ -16,6 +16,7 @@ export default async function ProjectsPage() {
   ]);
 
   const where = buildProjectListWhere(session.user.role, session.user.id);
+  const canCreate = canCreateProject(session.user.role);
   const projects = await prisma.project.findMany({
     where,
     orderBy: { updatedAt: "desc" },
@@ -33,9 +34,16 @@ export default async function ProjectsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">项目管理</h1>
-        <Button asChild>
-          <Link href="/projects/schedule">资源排班</Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {canCreate ? (
+            <Button asChild>
+              <Link href="/projects/new">新建项目</Link>
+            </Button>
+          ) : null}
+          <Button asChild variant={canCreate ? "outline" : "default"}>
+            <Link href="/projects/schedule">资源排班</Link>
+          </Button>
+        </div>
       </div>
       <Card>
         <CardHeader>
@@ -48,7 +56,12 @@ export default async function ProjectsPage() {
         </CardHeader>
         <CardContent>
           {items.length === 0 ? (
-            <p className="text-muted-foreground">暂无项目。合同签署通过后会自动创建项目。</p>
+            <p className="text-muted-foreground">
+              暂无项目。
+              {canCreate
+                ? "请点击「新建项目」；合同与客户均可选，都不填即为内部项目。"
+                : null}
+            </p>
           ) : (
             <ProjectListTable items={items} />
           )}

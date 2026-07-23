@@ -39,6 +39,11 @@ export type UpcomingActionItem =
       customerName: string | null;
       opportunityId: string | null;
       opportunityTitle: string | null;
+      /** 被指派人（执行人） */
+      assignee: UpcomingActionOwner;
+      /** 指派人 */
+      assignedBy: UpcomingActionOwner;
+      /** @deprecated 兼容旧展示，等同 assignee */
       owner: UpcomingActionOwner;
       overdue: boolean;
     }
@@ -124,19 +129,27 @@ export async function listUpcomingActionsThisWeek(
       })),
     ...assignments
       .filter((task) => isDueThisWeek(task.dueAt, week.weekStart, week.weekEnd))
-      .map((task) => ({
-        kind: "assignment" as const,
-        id: task.id,
-        title: task.title,
-        subtitle: task.description ?? task.customer?.name ?? task.opportunity?.title ?? "",
-        dueAt: task.dueAt,
-        customerId: task.customer?.id ?? null,
-        customerName: task.customer?.name ?? null,
-        opportunityId: task.opportunity?.id ?? null,
-        opportunityTitle: task.opportunity?.title ?? null,
-        owner: { id: task.assignee.id, name: task.assignee.name },
-        overdue: task.dueAt <= now,
-      })),
+      .map((task) => {
+        const assignee = { id: task.assignee.id, name: task.assignee.name };
+        const assignedBy = { id: task.createdBy.id, name: task.createdBy.name };
+        return {
+          kind: "assignment" as const,
+          id: task.id,
+          title: task.customer?.name ?? task.title,
+          subtitle: task.customer?.name
+            ? task.title + (task.description ? ` · ${task.description}` : "")
+            : (task.description ?? ""),
+          dueAt: task.dueAt,
+          customerId: task.customer?.id ?? null,
+          customerName: task.customer?.name ?? null,
+          opportunityId: task.opportunity?.id ?? null,
+          opportunityTitle: task.opportunity?.title ?? null,
+          assignee,
+          assignedBy,
+          owner: assignee,
+          overdue: task.dueAt <= now,
+        };
+      }),
     ...paymentDueItems.map((row) => ({
       kind: "payment_collection" as const,
       id: row.installmentId,

@@ -2,29 +2,37 @@
 
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import type { TeamActivityView } from "@/lib/today-work/activity-view-scope";
+import {
+  TEAM_ACTIVITY_OTHER_FILTER,
+  type TeamActivityUserFilter,
+  type TeamActivityView,
+} from "@/lib/today-work/activity-view-scope";
 
 type SalesUser = { id: string; name: string };
 
-function buildUrl(view: TeamActivityView, salesUserId: string | null) {
+function buildUrl(view: TeamActivityView, filter: TeamActivityUserFilter) {
   const params = new URLSearchParams(window.location.search);
   params.set("activityView", view);
-  if (salesUserId) {
-    params.set("salesUserId", salesUserId);
-  } else {
+  if (filter === null) {
     params.delete("salesUserId");
+  } else {
+    params.set("salesUserId", filter);
   }
   return `/today-work?${params.toString()}`;
+}
+
+function readFilterFromUrl(): TeamActivityUserFilter {
+  const raw = new URLSearchParams(window.location.search).get("salesUserId");
+  if (!raw || raw === "all") return null;
+  if (raw === TEAM_ACTIVITY_OTHER_FILTER) return TEAM_ACTIVITY_OTHER_FILTER;
+  return raw;
 }
 
 export function TeamWorkActivityTabs({ view }: { view: TeamActivityView }) {
   const router = useRouter();
 
   function switchView(next: TeamActivityView) {
-    const salesUserId = new URLSearchParams(window.location.search).get("salesUserId");
-    router.replace(buildUrl(next, salesUserId && salesUserId !== "all" ? salesUserId : null), {
-      scroll: false,
-    });
+    router.replace(buildUrl(next, readFilterFromUrl()), { scroll: false });
   }
 
   const tabs: { id: TeamActivityView; label: string }[] = [
@@ -58,7 +66,7 @@ export function TeamSalesUserSelect({
   value,
   salesUsers,
 }: {
-  value: string | null;
+  value: TeamActivityUserFilter;
   salesUsers: SalesUser[];
 }) {
   const router = useRouter();
@@ -66,17 +74,22 @@ export function TeamSalesUserSelect({
   function onChange(next: string) {
     const view = (new URLSearchParams(window.location.search).get("activityView") ??
       "day") as TeamActivityView;
-    router.replace(buildUrl(view, next === "all" ? null : next), { scroll: false });
+    const filter: TeamActivityUserFilter =
+      next === "all" ? null : next === TEAM_ACTIVITY_OTHER_FILTER ? TEAM_ACTIVITY_OTHER_FILTER : next;
+    router.replace(buildUrl(view, filter), { scroll: false });
   }
 
+  const selectValue =
+    value === null ? "all" : value === TEAM_ACTIVITY_OTHER_FILTER ? TEAM_ACTIVITY_OTHER_FILTER : value;
+
   return (
-    <div className="space-y-2 min-w-[160px]">
+    <div className="min-w-[160px] shrink-0 space-y-2">
       <label htmlFor="team-sales-user" className="text-sm font-medium leading-none">
         查看销售
       </label>
       <select
         id="team-sales-user"
-        value={value ?? "all"}
+        value={selectValue}
         onChange={(e) => onChange(e.target.value)}
         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
       >
@@ -86,6 +99,7 @@ export function TeamSalesUserSelect({
             {user.name}
           </option>
         ))}
+        <option value={TEAM_ACTIVITY_OTHER_FILTER}>其他（销售管理/管理员）</option>
       </select>
     </div>
   );

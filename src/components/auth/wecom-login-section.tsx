@@ -16,13 +16,16 @@ type Props = {
   error?: string | null;
 };
 
-export function WeComLoginSection({ returnTo = "/mobile", error = null }: Props) {
+export function WeComLoginSection({ returnTo = "/", error = null }: Props) {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [inWeCom, setInWeCom] = useState(false);
-  const effectiveReturnTo = returnTo === "/" ? "/mobile" : returnTo;
+  const [onPhone, setOnPhone] = useState(false);
 
   useEffect(() => {
-    setInWeCom(/wxwork/i.test(navigator.userAgent));
+    const ua = navigator.userAgent;
+    setInWeCom(/wxwork/i.test(ua));
+    // 仅手机/平板；PC 企微不含 Mobile/Android/iPhone，走电脑端
+    setOnPhone(/android|iphone|ipod|ipad|mobile/i.test(ua));
   }, []);
 
   useEffect(() => {
@@ -34,13 +37,28 @@ export function WeComLoginSection({ returnTo = "/mobile", error = null }: Props)
 
   if (configured !== true) return null;
 
-  if (inWeCom) {
-    const href = `/api/auth/wecom?returnTo=${encodeURIComponent(effectiveReturnTo)}`;
+  // 手机（含手机企微）→ 手机端；PC 企微 / PC 扫码 → 电脑端
+  const wecomReturnTo = onPhone
+    ? "/mobile"
+    : returnTo.startsWith("/mobile")
+      ? returnTo
+      : returnTo === "/" || !returnTo
+        ? "/"
+        : returnTo;
+  const href = `/api/auth/wecom?returnTo=${encodeURIComponent(wecomReturnTo)}`;
+
+  if (inWeCom || onPhone) {
     return (
       <div className="space-y-4 border-t pt-4">
         <div className="space-y-1 text-center">
           <p className="text-sm font-medium">企业微信登录</p>
-          <p className="text-xs text-muted-foreground">检测到你在企业微信内，请点击下方一键登录</p>
+          <p className="text-xs text-muted-foreground">
+            {inWeCom
+              ? onPhone
+                ? "检测到手机企业微信，将进入手机端"
+                : "检测到电脑企业微信，将进入电脑端"
+              : "手机浏览器将进入手机端"}
+          </p>
         </div>
         {error ? (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -58,14 +76,16 @@ export function WeComLoginSection({ returnTo = "/mobile", error = null }: Props)
     <div className="space-y-4 border-t pt-4">
       <div className="space-y-1 text-center">
         <p className="text-sm font-medium">企业微信登录</p>
-        <p className="text-xs text-muted-foreground">PC 浏览器请扫码；企微内打开可点下方授权链接</p>
+        <p className="text-xs text-muted-foreground">
+          PC 扫码或电脑企微进入电脑端；手机企微 / 手机浏览器进入手机端
+        </p>
       </div>
       {error ? (
         <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {ERROR_MESSAGES[error] ?? "登录失败，请重试。"}
         </p>
       ) : null}
-      <WeComQrLogin returnTo={effectiveReturnTo} />
+      <WeComQrLogin returnTo={wecomReturnTo} />
     </div>
   );
 }

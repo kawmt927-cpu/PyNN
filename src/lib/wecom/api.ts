@@ -189,40 +189,11 @@ export function buildOAuthUrl(redirectUri: string, state: string) {
 
 export async function createWeComSessionCookie(user: {
   id: string;
-  email: string;
+  email: string | null;
   name: string;
   role: UserRole;
+  phone?: string | null;
 }) {
-  const { encode } = await import("next-auth/jwt");
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET 未配置");
-
-  const sessionToken = await encode({
-    token: {
-      sub: user.id,
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    },
-    secret,
-    maxAge: 30 * 24 * 60 * 60,
-  });
-
-  const secure = process.env.NODE_ENV === "production";
-  const cookieName = secure
-    ? "__Secure-next-auth.session-token"
-    : "next-auth.session-token";
-
-  return {
-    name: cookieName,
-    value: sessionToken,
-    options: {
-      httpOnly: true,
-      secure,
-      sameSite: "lax" as const,
-      path: "/",
-      maxAge: 30 * 24 * 60 * 60,
-    },
-  };
+  const { createSessionCookie } = await import("@/lib/auth/session-cookie");
+  return createSessionCookie(user);
 }

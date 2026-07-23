@@ -11,10 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 type Props = {
   wecomUserId: string;
   defaultName?: string;
-  defaultEmail?: string;
+  defaultPhone?: string;
 };
 
-export function WeComApplyForm({ wecomUserId, defaultName = "", defaultEmail = "" }: Props) {
+export function WeComApplyForm({ wecomUserId, defaultName = "", defaultPhone = "" }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -39,14 +39,41 @@ export function WeComApplyForm({ wecomUserId, defaultName = "", defaultEmail = "
         <Input id="name" name="name" defaultValue={defaultName} required placeholder="您的姓名" />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="email">企业邮箱</Label>
+        <Label htmlFor="phone">手机号（登录账号）</Label>
         <Input
-          id="email"
-          name="email"
-          type="email"
-          defaultValue={defaultEmail}
+          id="phone"
+          name="phone"
+          type="tel"
+          inputMode="numeric"
+          autoComplete="tel"
+          defaultValue={defaultPhone}
           required
-          placeholder="name@company.com"
+          placeholder="11 位手机号"
+          pattern="1[3-9]\d{9}"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="password">登录密码</Label>
+        <Input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={6}
+          placeholder="至少 6 位"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="passwordConfirm">确认密码</Label>
+        <Input
+          id="passwordConfirm"
+          name="passwordConfirm"
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={6}
+          placeholder="再次输入密码"
         />
       </div>
       <div className="space-y-2">

@@ -74,7 +74,7 @@ export async function fetchCustomerBriefForAgent(
     name: customer.name,
     writable: canEditCustomerFollowUp(role, userId, customer),
     customerGrade: customer.customerGrade,
-    customerGradeLabel: getCustomerGradeLabel(customer.customerGrade) ?? "未评级",
+    customerGradeLabel: getCustomerGradeLabel(customer.customerGrade) ?? "长期无意向客户",
     ownerName: customer.owner?.name ?? null,
     assistants: customer.assistantOwners.map((row) => row.user.name),
     lastFollowUp: lastRow
@@ -106,7 +106,7 @@ export async function fetchCustomerBriefForAgent(
 export function formatCustomerBriefForPrompt(brief: CustomerBriefForAgent): string {
   const lines = [
     `#### ${brief.name}（customerId: ${brief.customerId}）`,
-    `- 当前等级：${brief.customerGradeLabel}${brief.writable ? "" : " · ⚠️ 非本人负责，不可落库"}`,
+    `- 当前等级：${brief.customerGradeLabel}${brief.writable ? "" : " · ⚠️ 非本人负责，不可代录"}`,
     `- 负责人：${brief.ownerName ?? "公海（无负责人）"}${brief.assistants.length ? ` · 协助：${brief.assistants.join("、")}` : ""}`,
   ];
 
@@ -148,7 +148,7 @@ export function customerBriefToToolPayload(brief: CustomerBriefForAgent) {
     lastFollowUp: brief.lastFollowUp,
     nextFollowUp: brief.nextFollowUp,
     pendingPlanCount: brief.pendingPlanCount,
-    displayHint: "销售自述后对照理解；落库或追问前可参考等级与跟进计划",
+    displayHint: "销售自述后对照理解；写入或追问前可参考等级与跟进计划",
   };
 }
 

@@ -14,6 +14,14 @@ import {
 } from "@/lib/dates/local-date";
 import { cn } from "@/lib/utils";
 
+function openNativePicker(input: HTMLInputElement) {
+  try {
+    input.showPicker?.();
+  } catch {
+    // 部分环境不支持或非用户手势时会抛错，忽略即可
+  }
+}
+
 type QuickButtonsProps = {
   value: string;
   onChange: (value: string) => void;
@@ -82,7 +90,7 @@ export function PlannedFollowUpDateTimeInputs({
   }
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_7.5rem] gap-2">
+    <div className="flex flex-wrap gap-2">
       <Input
         id={id}
         type="date"
@@ -90,19 +98,32 @@ export function PlannedFollowUpDateTimeInputs({
         value={date}
         disabled={disabled}
         required={required && !disabled}
+        onClick={(e) => {
+          if (!disabled) openNativePicker(e.currentTarget);
+        }}
         onChange={(e) => {
           updateDate(e.target.value);
           e.currentTarget.blur();
         }}
-        className={inputClassName}
+        className={cn(
+          "min-w-[11rem] flex-1 basis-[11rem] cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer",
+          inputClassName
+        )}
       />
       <Input
         id={timeId}
         type="time"
         value={date ? time : PLANNED_FOLLOW_UP_DEFAULT_TIME}
         disabled={disabled || !date}
+        onClick={(e) => {
+          if (!disabled && date) openNativePicker(e.currentTarget);
+        }}
         onChange={(e) => updateTime(e.target.value)}
-        className={inputClassName}
+        className={cn(
+          "w-[7.5rem] shrink-0 cursor-pointer [&::-webkit-calendar-picker-indicator]:cursor-pointer",
+          (disabled || !date) && "cursor-not-allowed",
+          inputClassName
+        )}
       />
     </div>
   );

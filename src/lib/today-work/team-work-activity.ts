@@ -1,10 +1,16 @@
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
-import { SalesDailyLogStatus } from "@prisma/client";
+import { SalesDailyLogStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkInStatusLabel } from "@/lib/sales-log/check-in";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
 import { salesLogMethodLabel } from "@/lib/sales-log/methods";
+import {
+  TEAM_ACTIVITY_OTHER_FILTER,
+  TEAM_ACTIVITY_OTHER_ROLES,
+  type TeamActivityUserFilter,
+} from "@/lib/today-work/activity-view-scope";
+import { teamPerformanceMemberWhere } from "@/lib/sales/team-performance";
 
 export type TeamWorkActivityKind = "check_in" | "follow_up" | "daily_log";
 
@@ -57,27 +63,49 @@ function kindLabel(kind: TeamWorkActivityKind) {
   return "日报";
 }
 
-export async function listTeamSalesMembers() {
+export type TeamActivityMember = {
+  id: string;
+  name: string;
+  role: UserRole;
+};
+
+/** 可出现在团队工作记录中的账号：参与团队业绩的销售功能人员 */
+export async function listTeamActivityMembers(): Promise<TeamActivityMember[]> {
   return prisma.user.findMany({
-    where: { role: "SALES", personnelProfile: { enabled: true } },
-    select: { id: true, name: true },
+    where: teamPerformanceMemberWhere(),
+    select: { id: true, name: true, role: true },
     orderBy: { name: "asc" },
   });
+}
+
+export async function listTeamSalesMembers() {
+  const members = await listTeamActivityMembers();
+  return members
+    .filter((u) => u.role === "SALES")
+    .map(({ id, name }) => ({ id, name }));
 }
 
 export async function listTeamWorkActivity(options: {
   start: Date;
   end: Date;
-  userId?: string | null;
+  /** null=全员；other=销售管理+管理员；string=指定用户 */
+  filter?: TeamActivityUserFilter;
 }): Promise<TeamWorkActivityItem[]> {
-  const members = await listTeamSalesMembers();
-  const userIds = options.userId
-    ? members.filter((u) => u.id === options.userId).map((u) => u.id)
-    : members.map((u) => u.id);
+  const members = await listTeamActivityMembers();
+  const filter = options.filter ?? null;
+
+  let userIds: string[];
+  if (filter === TEAM_ACTIVITY_OTHER_FILTER) {
+    userIds = members
+      .filter((u) => TEAM_ACTIVITY_OTHER_ROLES.includes(u.role))
+      .map((u) => u.id);
+  } else if (typeof filter === "string") {
+    userIds = members.filter((u) => u.id === filter).map((u) => u.id);
+  } else {
+    userIds = members.map((u) => u.id);
+  }
 
   if (userIds.length === 0) return [];
-
-  const userNameMap = new Map(members.map((u) => [u.id, u.name]));
 
   const [checkIns, followUps, dailyLogs] = await Promise.all([
     prisma.salesCheckIn.findMany({
@@ -96,6 +124,7 @@ export async function listTeamWorkActivity(options: {
       where: {
         userId: { in: userIds },
         followUpAt: { gte: options.start, lt: options.end },
+        weeklyAssignment: null,
       },
       orderBy: { followUpAt: "desc" },
       include: {
@@ -109,6 +138,11 @@ export async function listTeamWorkActivity(options: {
       where: {
         userId: { in: userIds },
         logDate: { gte: options.start, lt: options.end },
+        OR: [
+          { status: { not: SalesDailyLogStatus.IN_PROGRESS } },
+          { dailyReport: { not: null } },
+          // 有实际日报正文的才展示；纯打卡/往来触发的空草稿不占列表
+        ],
       },
       orderBy: [{ logDate: "desc" }, { updatedAt: "desc" }],
       include: {
@@ -116,6 +150,11 @@ export async function listTeamWorkActivity(options: {
       },
     }),
   ]);
+
+  const meaningfulDailyLogs = dailyLogs.filter((row) => {
+    if (row.status !== SalesDailyLogStatus.IN_PROGRESS) return true;
+    return Boolean(row.dailyReport?.trim());
+  });
 
   const items: TeamWorkActivityItem[] = [
     ...checkIns.map((row) => {
@@ -137,6 +176,8 @@ export async function listTeamWorkActivity(options: {
     }),
     ...followUps.map((row) => {
       const at = row.followUpAt;
+      const method = salesLogMethodLabel(row.method);
+      const subtitle = row.contact?.name ? `${method} · ${row.contact.name}` : method;
       return {
         id: row.id,
         kind: "follow_up" as const,
@@ -145,14 +186,14 @@ export async function listTeamWorkActivity(options: {
         userId: row.user.id,
         userName: row.user.name,
         title: row.customer.name,
-        subtitle: salesLogMethodLabel(row.method),
+        subtitle,
         detail: row.content,
         customerId: row.customer.id,
         customerName: row.customer.name,
         meta: row.opportunity?.title ? `商机：${row.opportunity.title}` : null,
       };
     }),
-    ...dailyLogs.map((row) => {
+    ...meaningfulDailyLogs.map((row) => {
       const at = row.submittedAt ?? row.logDate;
       const logSubmitted =
         row.status === SalesDailyLogStatus.SUBMITTED ||
@@ -205,7 +246,6 @@ export function summarizeTeamWorkActivity(items: TeamWorkActivityItem[]) {
     checkIns: items.filter((i) => i.kind === "check_in").length,
     followUps: items.filter((i) => i.kind === "follow_up").length,
     logsSubmitted: items.filter((i) => i.kind === "daily_log" && i.logSubmitted).length,
-    salesActive: new Set(items.map((i) => i.userId)).size,
   };
 }
 
