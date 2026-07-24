@@ -36,6 +36,26 @@ export async function saveContractAttachmentFile(params: {
   };
 }
 
+/** 开票附件：contracts/<contractId>/invoices/<invoiceRecordId>/<uuid>-name */
+export async function saveContractInvoiceAttachmentFile(params: {
+  contractId: string;
+  invoiceRecordId: string;
+  fileName: string;
+  bytes: Buffer;
+}): Promise<{ storageKey: string; sizeBytes: number }> {
+  const safeName = sanitizeAttachmentFileName(params.fileName);
+  const dir = path.join(UPLOAD_ROOT, params.contractId, "invoices", params.invoiceRecordId);
+  await mkdir(dir, { recursive: true });
+  const id = crypto.randomUUID();
+  const storedName = `${id}-${safeName}`;
+  const abs = path.join(dir, storedName);
+  await writeFile(abs, params.bytes);
+  return {
+    storageKey: `contracts/${params.contractId}/invoices/${params.invoiceRecordId}/${storedName}`,
+    sizeBytes: params.bytes.length,
+  };
+}
+
 export async function deleteContractAttachmentFile(storageKey: string): Promise<void> {
   try {
     await unlink(contractAttachmentAbsolutePath(storageKey));

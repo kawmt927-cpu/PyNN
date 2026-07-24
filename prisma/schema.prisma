@@ -224,6 +224,7 @@ model User {
 
   personnelProfile   PersonnelProfile?
   contractAttachmentsUploaded ContractAttachment[]
+  contractInvoiceAttachmentsUploaded ContractInvoiceAttachment[] @relation("ContractInvoiceAttachmentUploader")
   ownedCustomers     Customer[]           @relation("CustomerOwner")
   followUps          FollowUp[]
   contracts          Contract[]           @relation("ContractOwner")
@@ -251,6 +252,7 @@ model User {
   contractsSubmitted      Contract[]             @relation("ContractSubmitter")
   contractsApproved       Contract[]             @relation("ContractApprover")
   contractPaymentsRecorded ContractPaymentRecord[] @relation("ContractPaymentRecorder")
+  contractInvoicesRecorded ContractInvoiceRecord[] @relation("ContractInvoiceRecorder")
   externalCostPayoutsRecorded ExternalCostPayoutRecord[] @relation("ExternalCostPayoutRecorder")
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
   opportunityStageLogs    OpportunityStageLog[]
@@ -618,6 +620,7 @@ model Contract {
   products          ContractProduct[]
   installments      PaymentInstallment[]
   paymentRecords    ContractPaymentRecord[]
+  invoiceRecords    ContractInvoiceRecord[]
   externalPayoutRecords ExternalCostPayoutRecord[]
   attachments       ContractAttachment[]
   project           Project?
@@ -712,6 +715,43 @@ model ContractPaymentRecord {
 
   @@index([contractId])
   @@index([paidAt])
+}
+
+/** 合同开票记录：可多条登记；合计允许超过合同金额 */
+model ContractInvoiceRecord {
+  id              String   @id @default(cuid())
+  contractId      String
+  amount          Decimal
+  /** 税率「几个点」，如 6 表示 6% */
+  taxRatePercent  Decimal
+  invoicedAt      DateTime
+  invoiceNo       String?
+  notes           String?
+  recordedById    String
+  createdAt       DateTime @default(now())
+
+  contract    Contract                    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  recordedBy  User                        @relation("ContractInvoiceRecorder", fields: [recordedById], references: [id])
+  attachments ContractInvoiceAttachment[]
+
+  @@index([contractId])
+  @@index([invoicedAt])
+}
+
+model ContractInvoiceAttachment {
+  id              String   @id @default(cuid())
+  invoiceRecordId String
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageKey      String
+  uploadedById    String
+  createdAt       DateTime @default(now())
+
+  invoiceRecord ContractInvoiceRecord @relation(fields: [invoiceRecordId], references: [id], onDelete: Cascade)
+  uploadedBy    User                @relation("ContractInvoiceAttachmentUploader", fields: [uploadedById], references: [id])
+
+  @@index([invoiceRecordId])
 }
 
 model PaymentInstallment {

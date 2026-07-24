@@ -5,6 +5,7 @@ import {
   createAppNotification,
   NOTIFICATION_TYPES,
 } from "@/lib/notifications/app-notifications";
+import { AUTO_DAILY_LOG_CHECK_IN_NOTES, isAutoDailyLogCheckIn } from "@/lib/sales-log/auto-log-check-in";
 
 function normalizeRegion(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -82,12 +83,18 @@ export async function applyCheckInIpAudit(input: {
     .filter(Boolean)
     .join("") || checkIn.locationText || "未知定位";
   const ipText = [ipProvince, ipCity].filter(Boolean).join("") || "未知";
-  const customerPart = checkIn.customer?.name ? `客户「${checkIn.customer.name}」` : "无客户往来打卡";
+  const customerPart = checkIn.customer?.name
+    ? `客户「${checkIn.customer.name}」`
+    : isAutoDailyLogCheckIn(checkIn)
+      ? "写日报时的定位打卡"
+      : "无客户往来打卡";
+
+  const whenLabel = isAutoDailyLogCheckIn(checkIn) ? "写日报打卡时" : "打卡时";
 
   await createAppNotification({
     type: NOTIFICATION_TYPES.CHECK_IN_LOCATION_IP_MISMATCH,
     title: "打卡定位与 IP 不一致",
-    body: `${checkIn.user.name} 于打卡时 GPS 显示「${gpsText}」，设备 IP 归属「${ipText}」（${customerPart}）。请关注是否存在虚拟定位。`,
+    body: `${checkIn.user.name} 于${whenLabel} GPS 显示「${gpsText}」，设备 IP 归属「${ipText}」（${customerPart}）。请关注是否存在虚拟定位。`,
     linkHref: "/sales-log",
     meta: {
       checkInId: checkIn.id,
@@ -95,6 +102,7 @@ export async function applyCheckInIpAudit(input: {
       clientIp,
       gpsText,
       ipText,
+      autoDailyLogCheckIn: isAutoDailyLogCheckIn(checkIn),
     },
   });
 }

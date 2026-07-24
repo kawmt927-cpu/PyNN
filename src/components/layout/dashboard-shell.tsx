@@ -49,11 +49,11 @@ function DashboardShellInner({
   const fullscreen = fullscreenByPath || fullscreenByPlan;
 
   if (fullscreen) {
-    return <main className="h-screen overflow-hidden bg-background">{children}</main>;
+    return <main className="h-dvh overflow-hidden overscroll-none bg-background">{children}</main>;
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden overscroll-none">
       <AppSidebarClient
         nav={nav}
         userName={userName}
@@ -64,7 +64,7 @@ function DashboardShellInner({
         impersonatorName={impersonatorName}
         showMobileSwitch={showMobileSwitch}
       />
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
     </div>
   );
 }
@@ -81,7 +81,7 @@ function DashboardShellFallback({
   children,
 }: Props) {
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden overscroll-none">
       <AppSidebarClient
         nav={nav}
         userName={userName}
@@ -92,7 +92,7 @@ function DashboardShellFallback({
         impersonatorName={impersonatorName}
         showMobileSwitch={showMobileSwitch}
       />
-      <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
     </div>
   );
 }

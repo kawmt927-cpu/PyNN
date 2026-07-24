@@ -44,13 +44,30 @@ export function validateNextFollowUpPlan(
   if (isNextFollowUpPlanExempt(suggestedGrade, currentCustomerGrade)) return null;
   if (!nextFollowUpMethod?.trim()) return "请选择下次往来计划方式";
   if (!nextFollowUpAt?.trim()) return "请填写下次往来计划时间";
-  if (!nextFollowUpContent?.trim()) return "请填写下次往来目的和内容";
+  const content = nextFollowUpContent?.trim() ?? "";
+  if (!content) return "请填写下次往来目的和内容";
+  // 拒绝仅标点/逗号占位（如「，，，，」），避免待跟进列表出现无意义内容
+  if (!hasMeaningfulFollowUpText(content)) {
+    return "下次往来内容请写具体目的，不要只填标点或逗号";
+  }
   return null;
+}
+
+/** 是否含有效汉字/字母/数字（排除纯标点占位） */
+export function hasMeaningfulFollowUpText(value: string | null | undefined): boolean {
+  const text = value?.trim() ?? "";
+  if (!text) return false;
+  return /[\u4e00-\u9fffA-Za-z0-9]/.test(text);
 }
 
 export function pendingFollowUpPlanContent(
   nextFollowUpContent: string | null | undefined,
   fallbackContent: string
 ): string {
-  return nextFollowUpContent?.trim() || fallbackContent;
+  const primary = nextFollowUpContent?.trim() || "";
+  if (primary && hasMeaningfulFollowUpText(primary)) return primary;
+  const fallback = fallbackContent?.trim() || "";
+  if (fallback && hasMeaningfulFollowUpText(fallback)) return fallback;
+  if (primary) return "（未填写具体内容）";
+  return fallback || "（未填写具体内容）";
 }

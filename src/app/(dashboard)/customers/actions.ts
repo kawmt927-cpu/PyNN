@@ -204,21 +204,101 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const canSetAssistants =
       canManageCustomerOwner(session.user.role) || existing.ownerId === session.user.id;
 
+    const tagValues = parseTagValues(formData);
+    const nextAssistants = canSetAssistants ? data.assistantOwnerIds : existing.assistantOwners.map((a) => a.userId);
+
+    const hospitalLevel =
+      data.category === "HOSPITAL" ? (data.hospitalLevel ?? null) : null;
+    const notesNormalized =
+      data.notes?.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim() || null;
+    const nextData = {
+      name: data.name,
+      category: data.category,
+      hospitalLevel,
+      province: data.province ?? null,
+      city: data.city ?? null,
+      district: data.district ?? null,
+      bedCount: data.bedCount ?? null,
+      existingSystem: data.existingSystem ?? null,
+      source: configFields.source,
+      customerType: configFields.customerType,
+      customerGrade: configFields.customerGrade,
+      notes: notesNormalized,
+      ownerId,
+    };
+
+    const {
+      CONFIG_CATEGORY,
+      getConfigOptionMaps,
+    } = await import("@/lib/config-options");
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { getCustomerTagDefinitions } = await import("@/lib/customers/tags");
+    const { buildCustomerEditChanges } = await import("@/lib/customers/edit-log");
+    const { HOSPITAL_LEVEL_LABELS } = await import("@/lib/permissions");
+
+    const [optionMaps, tagDefinitions, ownerUser, assistantUsers] = await Promise.all([
+      getConfigOptionMaps([
+        CONFIG_CATEGORY.CUSTOMER_SOURCE,
+        CONFIG_CATEGORY.CUSTOMER_TYPE,
+        CONFIG_CATEGORY.CUSTOMER_GRADE,
+        CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
+      ]),
+      getCustomerTagDefinitions(),
+      ownerId
+        ? prisma.user.findUnique({ where: { id: ownerId }, select: { name: true } })
+        : Promise.resolve(null),
+      nextAssistants.length > 0
+        ? prisma.user.findMany({
+            where: { id: { in: nextAssistants } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as { id: string; name: string }[]),
+    ]);
+
+    const tagLabelByValue = Object.fromEntries(
+      tagDefinitions.map((t) => [t.value, t.label])
+    );
+    const assistantNameById = new Map(assistantUsers.map((u) => [u.id, u.name]));
+    const nextAssistantNames = nextAssistants
+      .map((aid) => assistantNameById.get(aid))
+      .filter((n): n is string => Boolean(n));
+    const typeLabels = optionMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
+    const changes = buildCustomerEditChanges(
+      existing,
+      {
+        ...nextData,
+        ownerName: ownerUser?.name ?? null,
+        assistantOwnerIds: nextAssistants,
+        assistantNames: nextAssistantNames,
+        tagValues,
+        tagLabels: tagValues.map((v) => tagLabelByValue[v] ?? v),
+      },
+      {
+        typeLabels,
+        gradeLabels: optionMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {},
+        channelGradeLabels: optionMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE] ?? {},
+        hospitalLevelLabels: { ...HOSPITAL_LEVEL_LABELS },
+        sourceLabels: optionMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {},
+        tagLabelByValue,
+        isChannelType: (customerType) => isChannelCustomerType(customerType, typeLabels),
+      }
+    );
+
     await prisma.customer.update({
       where: { id },
       data: {
-        name: data.name,
-        category: data.category,
-        hospitalLevel: data.category === "HOSPITAL" ? (data.hospitalLevel ?? undefined) : null,
-        province: data.province,
-        city: data.city,
-        district: data.district,
-        bedCount: data.bedCount ?? undefined,
-        existingSystem: data.existingSystem,
-        source: configFields.source,
-        customerType: configFields.customerType,
-        customerGrade: configFields.customerGrade,
-        notes: data.notes,
+        name: nextData.name,
+        category: nextData.category,
+        hospitalLevel: nextData.hospitalLevel,
+        province: nextData.province ?? undefined,
+        city: nextData.city ?? undefined,
+        district: nextData.district ?? undefined,
+        bedCount: nextData.bedCount ?? undefined,
+        existingSystem: nextData.existingSystem,
+        source: nextData.source,
+        customerType: nextData.customerType,
+        customerGrade: nextData.customerGrade,
+        notes: nextData.notes,
         ownerId,
       },
     });
@@ -228,18 +308,21 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     }
 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
-    await replaceCustomerTags(id, parseTagValues(formData));
+    await replaceCustomerTags(id, tagValues);
 
-    const { recordEntityOperation, ENTITY_TYPES } = await import(
-      "@/lib/audit/entity-operation-log"
-    );
-    await recordEntityOperation({
-      entityType: ENTITY_TYPES.CUSTOMER,
-      entityId: id,
-      userId: session.user.id,
-      action: "更新",
-      summary: `更新客户「${data.name}」`,
-    });
+    if (changes.length > 0) {
+      const { recordEntityOperation, ENTITY_TYPES } = await import(
+        "@/lib/audit/entity-operation-log"
+      );
+      await recordEntityOperation({
+        entityType: ENTITY_TYPES.CUSTOMER,
+        entityId: id,
+        userId: session.user.id,
+        action: "更新",
+        summary: `更新客户「${data.name}」`,
+        detail: changes.join("\n"),
+      });
+    }
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);

@@ -87,7 +87,7 @@ export function ContractAttachmentsPanel({
         });
         if (!res.ok) {
           if (res.status === 413) {
-            failures.push(`${file.name}：文件过大`);
+            failures.push(`${file.name}：上传被网关拒绝（体积过大），请确认单文件 ≤20MB 后重试`);
             continue;
           }
           const data = (await res.json().catch(() => null)) as { error?: string } | null;

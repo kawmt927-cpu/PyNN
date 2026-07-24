@@ -14,6 +14,7 @@ import {
   isSalesLogDraftConfirmationRequest,
   type CapturedLocation,
 } from "@/lib/mobile/capture-location";
+import { AUTO_DAILY_LOG_CHECK_IN_NOTES } from "@/lib/sales-log/auto-log-check-in";
 
 type DailyLogStatus =
   | "IN_PROGRESS"
@@ -30,6 +31,7 @@ const STATUS_LABEL: Record<Exclude<DailyLogStatus, null>, string> = {
 };
 
 const PENDING_LOCATION_KEY = "mobile-log-pending-location";
+const FLUSHED_CHECK_IN_KEY = "mobile-log-checkin-flushed";
 
 type PendingLocation = CapturedLocation;
 
@@ -53,6 +55,21 @@ function savePendingLocation(location: PendingLocation | null) {
   sessionStorage.setItem(PENDING_LOCATION_KEY, JSON.stringify(location));
 }
 
+function todayFlushKey() {
+  const d = new Date();
+  return `${FLUSHED_CHECK_IN_KEY}-${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function hasFlushedCheckInToday() {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(todayFlushKey()) === "1";
+}
+
+function markFlushedCheckInToday() {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(todayFlushKey(), "1");
+}
+
 async function writePendingLocationCheckIn(location: PendingLocation) {
   const res = await fetch("/api/sales-log/check-ins", {
     method: "POST",
@@ -67,7 +84,7 @@ async function writePendingLocationCheckIn(location: PendingLocation) {
       addressCity: location.addressCity,
       addressDistrict: location.addressDistrict,
       addressStreet: location.addressStreet,
-      notes: "销售日志确认后自动定位打卡",
+      notes: AUTO_DAILY_LOG_CHECK_IN_NOTES,
       completeInteractionNow: false,
     }),
   });
@@ -142,13 +159,34 @@ export function SalesLogAiChat({
   const flushPendingCheckInIfNeeded = useCallback(async (status: DailyLogStatus) => {
     if (!enableLocationAssist) return;
     if (status !== "SUBMITTED" && status !== "RISK_SUBMITTED") return;
+    // 先占锁，避免 sync 并发各写一条
     if (checkInFlushingRef.current) return;
-    const pending = loadPendingLocation();
-    if (!pending) return;
-
+    if (hasFlushedCheckInToday()) return;
     checkInFlushingRef.current = true;
+
     try {
-      await writePendingLocationCheckIn(pending);
+      // 以「确认写入日报」当下的 GPS 与请求 IP 比对，不沿用拟稿时的旧定位
+      let location: PendingLocation | null = null;
+      try {
+        if (inWeCom && !wecomReadyRef.current) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+        location = await captureMobileLocation({
+          wecomReady: wecomReadyRef.current,
+          getWeComLocation: getLocationRef.current,
+        });
+        savePendingLocation(location);
+        setPendingLocation(location);
+      } catch {
+        location = loadPendingLocation();
+      }
+      if (!location) {
+        setSyncHint("今日日报已写入系统（提交时未能重新定位，可到「往来打卡」补录）");
+        return;
+      }
+
+      await writePendingLocationCheckIn(location);
+      markFlushedCheckInToday();
       savePendingLocation(null);
       setPendingLocation(null);
       setSyncHint("今日日报已写入系统，定位打卡已一并完成");
@@ -161,7 +199,7 @@ export function SalesLogAiChat({
     } finally {
       checkInFlushingRef.current = false;
     }
-  }, [enableLocationAssist]);
+  }, [enableLocationAssist, inWeCom]);
 
   const syncConversation = useCallback(
     async (items: { role: string; content: string }[]) => {

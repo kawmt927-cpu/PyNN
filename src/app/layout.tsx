@@ -8,8 +8,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
-      <body className="min-h-screen antialiased">{children}</body>
+    // 企微 WebView 中 100vh/min-h-screen 常高于可视区，会滚出底部大片空白；
+    // 用 dvh + overflow-hidden 把滚动限制在业务容器内。
+    <html lang="zh-CN" className="h-dvh overflow-hidden overscroll-none">
+      <body className="h-dvh overflow-hidden overscroll-none antialiased">{children}</body>
     </html>
   );
 }

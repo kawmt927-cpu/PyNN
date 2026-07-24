@@ -19,6 +19,7 @@ import { revalidateApprovalSurfaces } from "@/lib/approvals/revalidate";
 import {
   contractFormSchema,
   contractPaymentRecordSchema,
+  contractInvoiceRecordSchema,
   contractRejectSchema,
 } from "@/lib/validations/contract";
 import {
@@ -561,6 +562,127 @@ export async function deleteContractPaymentRecord(recordId: string): Promise<Act
     revalidatePath("/plans-tasks");
     revalidatePath("/contracts/external-costs");
 
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function addContractInvoiceRecord(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    if (!canRecordContractPayment(session.user.role)) {
+      return { error: "无权登记开票" };
+    }
+
+    const parsed = contractInvoiceRecordSchema.parse({
+      contractId: formData.get("contractId"),
+      amount: formData.get("amount"),
+      taxRatePercent: formData.get("taxRatePercent"),
+      invoicedAt: formData.get("invoicedAt"),
+      invoiceNo: formData.get("invoiceNo") || undefined,
+      notes: formData.get("notes") || undefined,
+    });
+
+    const contract = await getContractForUser(
+      parsed.contractId,
+      session.user.role,
+      session.user.id
+    );
+    if (!contract) return { error: "合同不存在或无权访问" };
+    if (!isSignedContractStatus(contract.status)) {
+      return { error: "仅已签署合同可登记开票" };
+    }
+
+    const created = await prisma.contractInvoiceRecord.create({
+      data: {
+        contractId: parsed.contractId,
+        amount: parsed.amount,
+        taxRatePercent: parsed.taxRatePercent,
+        invoicedAt: new Date(parsed.invoicedAt),
+        invoiceNo: parsed.invoiceNo?.trim() || undefined,
+        notes: parsed.notes?.trim() || undefined,
+        recordedById: session.user.id,
+      },
+    });
+
+    const file = formData.get("file");
+    if (file instanceof File && file.size > 0) {
+      const { saveContractInvoiceAttachmentFile } = await import(
+        "@/lib/contracts/attachments"
+      );
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const { storageKey, sizeBytes } = await saveContractInvoiceAttachmentFile({
+        contractId: parsed.contractId,
+        invoiceRecordId: created.id,
+        fileName: file.name,
+        bytes,
+      });
+      await prisma.contractInvoiceAttachment.create({
+        data: {
+          invoiceRecordId: created.id,
+          fileName: file.name.slice(0, 200),
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes,
+          storageKey,
+          uploadedById: session.user.id,
+        },
+      });
+    }
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: parsed.contractId,
+      userId: session.user.id,
+      action: "开票",
+      summary: `登记开票 ${parsed.amount.toFixed(2)} 元 · ${parsed.taxRatePercent} 个点（合同「${contract.title}」）`,
+      detail: parsed.invoiceNo?.trim()
+        ? `发票号码 ${parsed.invoiceNo.trim()}${parsed.notes?.trim() ? `；${parsed.notes.trim()}` : ""}`
+        : parsed.notes?.trim() || undefined,
+    });
+
+    revalidatePath(`/contracts/${parsed.contractId}`);
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function deleteContractInvoiceRecord(recordId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+
+    const record = await prisma.contractInvoiceRecord.findUnique({
+      where: { id: recordId },
+      include: {
+        contract: { select: { id: true, title: true } },
+        attachments: { select: { storageKey: true } },
+      },
+    });
+    if (!record) return { error: "开票记录不存在" };
+
+    const { deleteContractAttachmentFile } = await import("@/lib/contracts/attachments");
+    for (const att of record.attachments) {
+      await deleteContractAttachmentFile(att.storageKey);
+    }
+
+    await prisma.contractInvoiceRecord.delete({ where: { id: recordId } });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CONTRACT,
+      entityId: record.contract.id,
+      userId: session.user.id,
+      action: "删除开票",
+      summary: `删除开票 ${Number(record.amount).toFixed(2)} 元 · ${Number(record.taxRatePercent)} 个点（合同「${record.contract.title}」）`,
+    });
+
+    revalidatePath(`/contracts/${record.contract.id}`);
     return {};
   } catch (error) {
     return formatActionError(error);

@@ -111,6 +111,18 @@ export const contractPaymentRecordSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const contractInvoiceRecordSchema = z.object({
+  contractId: z.string().min(1),
+  amount: money.positive("开票金额须大于 0"),
+  taxRatePercent: z.coerce
+    .number({ invalid_type_error: "请填写税率" })
+    .min(0, "税率不能为负")
+    .max(100, "税率不能超过 100"),
+  invoicedAt: z.string().min(1, "请选择开票日期"),
+  invoiceNo: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const externalCostPayoutRecordSchema = z.object({
   contractProductId: z.string().min(1),
   amount: money.positive("实付金额须大于 0"),

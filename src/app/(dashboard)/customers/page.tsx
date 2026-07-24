@@ -214,29 +214,38 @@ export default async function CustomersPage({ searchParams }: Props) {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[56rem] text-sm">
                   <thead>
                     <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2 pr-4">客户名称</th>
-                      <th className="pb-2 pr-4">类别</th>
-                      <th className="pb-2 pr-4">关系类型</th>
-                      <th className="pb-2 pr-4">等级</th>
-                      <th className="pb-2 pr-4">标签</th>
-                      <th className="pb-2 pr-4">负责人</th>
-                      <th className="pb-2 pr-4">最近联系</th>
-                      <th className="pb-2 pr-4">最近联系内容</th>
-                      <th className="pb-2">操作</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">客户名称</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">类别</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">关系类型</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">等级</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">标签</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">负责人</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">最近联系</th>
+                      <th className="whitespace-nowrap pb-2">操作</th>
                     </tr>
                   </thead>
                   <tbody>
                     {customers.map((c) => {
                       const latest = latestContactByCustomerId.get(c.id);
+                      const latestAt = latest
+                        ? latest.at.toLocaleDateString("zh-CN", {
+                            timeZone: "Asia/Shanghai",
+                            year: "numeric",
+                            month: "2-digit",
+                            day: "2-digit",
+                          })
+                        : null;
                       return (
                       <tr key={c.id} className="border-b">
-                        <td className="py-3 pr-4 font-medium">{c.name}</td>
-                        <td className="py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
-                        <td className="py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>
-                        <td className="py-3 pr-4">
+                        <td className="max-w-[14rem] truncate whitespace-nowrap py-3 pr-4 font-medium" title={c.name}>
+                          {c.name}
+                        </td>
+                        <td className="whitespace-nowrap py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
+                        <td className="whitespace-nowrap py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>
+                        <td className="whitespace-nowrap py-3 pr-4">
                           <CustomerGradeIcon
                             grade={c.customerGrade}
                             labelMap={
@@ -251,29 +260,20 @@ export default async function CustomersPage({ searchParams }: Props) {
                             }
                           />
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="whitespace-nowrap py-3 pr-4">
                           <CustomerTagList
                             tags={c.tags.map((item) => item.tagValue)}
                             definitions={tagDefinitions}
                           />
                         </td>
-                        <td className="py-3 pr-4">{c.owner?.name ?? "公海池"}</td>
-                        <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
-                          {latest
-                            ? latest.at.toLocaleString("zh-CN", {
-                                timeZone: "Asia/Shanghai",
-                                year: "numeric",
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "—"}
+                        <td className="whitespace-nowrap py-3 pr-4">{c.owner?.name ?? "公海池"}</td>
+                        <td className="whitespace-nowrap py-3 pr-4">
+                          <TruncatedTextPopover
+                            label={latestAt}
+                            text={latest?.content}
+                          />
                         </td>
-                        <td className="py-3 pr-4">
-                          <TruncatedTextPopover text={latest?.content} />
-                        </td>
-                        <td className="py-3">
+                        <td className="whitespace-nowrap py-3">
                           <Link
                             href={withReturnTo(`/customers/${c.id}`, listPath)}
                             className="text-primary hover:underline"

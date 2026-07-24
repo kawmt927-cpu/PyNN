@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
 type Props = {
   text: string | null | undefined;
+  /** 触发区展示文案；缺省则用 text 截断展示 */
+  label?: ReactNode;
   emptyLabel?: string;
   className?: string;
   contentClassName?: string;
@@ -14,6 +16,7 @@ type Props = {
 /** 列表截断文案：悬停弹出全文（不用原生 title，兼容内置浏览器） */
 export function TruncatedTextPopover({
   text,
+  label,
   emptyLabel = "—",
   className,
   contentClassName,
@@ -45,8 +48,18 @@ export function TruncatedTextPopover({
     closeTimer.current = setTimeout(() => setOpen(false), 120);
   }
 
+  const triggerContent = label ?? value;
+
+  if (!triggerContent && !value) {
+    return <span className={cn("whitespace-nowrap text-muted-foreground", className)}>{emptyLabel}</span>;
+  }
+
   if (!value) {
-    return <span className={cn("text-muted-foreground", className)}>{emptyLabel}</span>;
+    return (
+      <span className={cn("whitespace-nowrap text-muted-foreground", className)}>
+        {triggerContent || emptyLabel}
+      </span>
+    );
   }
 
   return (
@@ -54,7 +67,8 @@ export function TruncatedTextPopover({
       <PopoverTrigger asChild>
         <span
           className={cn(
-            "inline-block max-w-[16rem] cursor-default truncate text-left text-muted-foreground",
+            "inline-block cursor-default text-left text-muted-foreground",
+            label ? "whitespace-nowrap" : "max-w-[16rem] truncate",
             className
           )}
           onMouseEnter={openNow}
@@ -63,7 +77,7 @@ export function TruncatedTextPopover({
           onBlur={scheduleClose}
           tabIndex={0}
         >
-          {value}
+          {triggerContent}
         </span>
       </PopoverTrigger>
       <PopoverContent

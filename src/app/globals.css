@@ -29,7 +29,10 @@
   * {
     @apply border-border;
   }
+  html,
   body {
     @apply bg-background text-foreground;
+    /* 企微内嵌浏览器：禁止整页弹性滚动带出底部空白 */
+    overscroll-behavior: none;
   }
 }

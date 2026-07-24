@@ -71,7 +71,7 @@ export function LoginForm({ returnTo, forceMobileUi = false, wecomError = null }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
+    <div className="flex h-full min-h-0 items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>培安 CRM 登录</CardTitle>

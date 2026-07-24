@@ -271,6 +271,22 @@ export async function createFollowUpFromAgent(
   const followUpAt = new Date(input.followUpAt);
   if (Number.isNaN(followUpAt.getTime())) throw new Error("跟进时间格式无效");
 
+  // 防止无定位确认/弱网下连点导致并行写入多条相同往来与下次计划
+  const duplicateSince = new Date(Date.now() - 60_000);
+  const duplicate = await prisma.followUp.findFirst({
+    where: {
+      userId: ctx.userId,
+      customerId,
+      content,
+      createdAt: { gte: duplicateSince },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (duplicate) {
+    throw new Error("相同往来刚提交成功，请勿重复点击。若页面未刷新，请返回列表查看");
+  }
+
   const followUp = await prisma.$transaction(async (tx) => {
     const created = await tx.followUp.create({
       data: {

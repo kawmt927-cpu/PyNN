@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallmentProgressChart } from "@/components/contracts/installment-progress-chart";
 import { ContractPaymentPanel } from "@/components/contracts/contract-payment-panel";
+import { ContractInvoicePanel } from "@/components/contracts/contract-invoice-panel";
 import { ExternalCostPayoutPanel } from "@/components/contracts/external-cost-payout-panel";
 import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
 import { ContractForm } from "@/components/contracts/contract-form";
@@ -37,6 +38,8 @@ import {
   rejectContract,
   addContractPaymentRecord,
   deleteContractPaymentRecord,
+  addContractInvoiceRecord,
+  deleteContractInvoiceRecord,
   addExternalCostPayoutRecord,
   deleteExternalCostPayoutRecord,
 } from "@/app/(dashboard)/contracts/actions";
@@ -83,6 +86,21 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       paymentRecords: {
         orderBy: { paidAt: "desc" },
         include: { recordedBy: { select: { name: true } } },
+      },
+      invoiceRecords: {
+        orderBy: { invoicedAt: "desc" },
+        include: {
+          recordedBy: { select: { name: true } },
+          attachments: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              fileName: true,
+              mimeType: true,
+              sizeBytes: true,
+            },
+          },
+        },
       },
     },
   });
@@ -539,6 +557,31 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             paidAt: row.paidAt.toISOString(),
             notes: row.notes,
             recordedBy: row.recordedBy,
+          }))}
+        />
+      )}
+
+      {signed && canRecordContractPayment(session.user.role) && (
+        <ContractInvoicePanel
+          contractId={contract.id}
+          totalAmount={totalAmount}
+          canDelete={canManageContractApproval(session.user.role)}
+          onAdd={addContractInvoiceRecord}
+          onDelete={deleteContractInvoiceRecord}
+          records={contract.invoiceRecords.map((row) => ({
+            id: row.id,
+            amount: Number(row.amount),
+            taxRatePercent: Number(row.taxRatePercent),
+            invoicedAt: row.invoicedAt.toISOString(),
+            invoiceNo: row.invoiceNo,
+            notes: row.notes,
+            recordedBy: row.recordedBy,
+            attachments: row.attachments.map((a) => ({
+              id: a.id,
+              fileName: a.fileName,
+              mimeType: a.mimeType,
+              sizeBytes: a.sizeBytes,
+            })),
           }))}
         />
       )}

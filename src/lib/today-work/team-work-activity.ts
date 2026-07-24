@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { checkInStatusLabel } from "@/lib/sales-log/check-in";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
 import { salesLogMethodLabel } from "@/lib/sales-log/methods";
+import { isAutoDailyLogCheckIn } from "@/lib/sales-log/auto-log-check-in";
 import {
   TEAM_ACTIVITY_OTHER_FILTER,
   TEAM_ACTIVITY_OTHER_ROLES,
@@ -28,6 +29,8 @@ export type TeamWorkActivityItem = {
   customerName: string | null;
   meta: string | null;
   logSubmitted?: boolean;
+  /** 日报合并的自动定位文案 */
+  locationLabel?: string | null;
 };
 
 export type TeamWorkDayGroup = {
@@ -156,8 +159,27 @@ export async function listTeamWorkActivity(options: {
     return Boolean(row.dailyReport?.trim());
   });
 
+  const autoCheckInsByLogId = new Map<string, (typeof checkIns)[number]>();
+  const autoCheckInsByUserDay = new Map<string, (typeof checkIns)[number]>();
+  for (const row of checkIns) {
+    if (!isAutoDailyLogCheckIn(row)) continue;
+    if (row.salesDailyLogId) {
+      const prev = autoCheckInsByLogId.get(row.salesDailyLogId);
+      if (!prev || row.checkedInAt > prev.checkedInAt) {
+        autoCheckInsByLogId.set(row.salesDailyLogId, row);
+      }
+    }
+    const key = `${row.userId}:${dayKeyOf(row.checkedInAt)}`;
+    const prev = autoCheckInsByUserDay.get(key);
+    if (!prev || row.checkedInAt > prev.checkedInAt) {
+      autoCheckInsByUserDay.set(key, row);
+    }
+  }
+
+  const standaloneCheckIns = checkIns.filter((row) => !isAutoDailyLogCheckIn(row));
+
   const items: TeamWorkActivityItem[] = [
-    ...checkIns.map((row) => {
+    ...standaloneCheckIns.map((row) => {
       const at = row.checkedInAt;
       return {
         id: row.id,
@@ -198,6 +220,15 @@ export async function listTeamWorkActivity(options: {
       const logSubmitted =
         row.status === SalesDailyLogStatus.SUBMITTED ||
         row.status === SalesDailyLogStatus.RISK_SUBMITTED;
+      const auto =
+        autoCheckInsByLogId.get(row.id) ??
+        autoCheckInsByUserDay.get(`${row.userId}:${dayKeyOf(row.logDate)}`) ??
+        null;
+      const locationLabel = auto ? formatCheckInLocation(auto) : null;
+      const metaParts = [
+        row.submittedAt ? `提交于 ${format(row.submittedAt, "HH:mm")}` : null,
+        locationLabel && locationLabel !== "—" ? `定位：${locationLabel}` : null,
+      ].filter(Boolean);
       return {
         id: row.id,
         kind: "daily_log" as const,
@@ -210,8 +241,9 @@ export async function listTeamWorkActivity(options: {
         detail: row.dailyReport?.trim() || null,
         customerId: null,
         customerName: null,
-        meta: row.submittedAt ? `提交于 ${format(row.submittedAt, "HH:mm")}` : null,
+        meta: metaParts.length > 0 ? metaParts.join(" · ") : null,
         logSubmitted,
+        locationLabel,
       };
     }),
   ];

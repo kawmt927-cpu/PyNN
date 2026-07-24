@@ -6,6 +6,17 @@
 - 放行 TCP **80** / **443**（`crm.pynntech.com` Nginx 反代）——**正式 HTTPS 必须放行 443**
 - **80 端口 beproj 勿动**
 
+## Nginx 上传限制
+
+CRM 站点（`/etc/nginx/sites-available/crm.pynntech.com`）须设置：
+
+```nginx
+client_max_body_size 25m;
+```
+
+（应用侧上限 20MB；Nginx 默认仅 1m，未配置时企微/浏览器上传稍大文件会 HTTP 413。）
+修改后：`sudo nginx -t && sudo systemctl reload nginx`。
+
 ## 部署命令
 
 ```bash

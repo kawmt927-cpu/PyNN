@@ -14,7 +14,7 @@ export default async function WeComUnboundPage({ searchParams }: Props) {
   const request = wecomUserId ? await getLatestWeComAccessRequest(wecomUserId) : null;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-lg items-center p-6">
+    <div className="mx-auto flex h-full min-h-0 max-w-lg items-center overflow-y-auto overscroll-contain p-6">
       <Card className="w-full">
         <CardHeader>
           <CardTitle>

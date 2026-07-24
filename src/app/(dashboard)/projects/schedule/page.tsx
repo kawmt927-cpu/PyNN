@@ -91,7 +91,7 @@ export default async function SchedulePage({ searchParams }: Props) {
   const returnTaskId = params.returnTask?.trim() || null;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh flex-col overflow-hidden overscroll-none">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-3 py-1.5">
         <div className="flex items-center gap-4">
           {planProjectId ? (

@@ -138,6 +138,7 @@ export function CheckInForm({
   const [entryAcknowledged, setEntryAcknowledged] = useState(lockedCustomer);
   const [locationSkipped, setLocationSkipped] = useState(false);
   const [guidePortalEl, setGuidePortalEl] = useState<HTMLElement | null>(null);
+  const submittingRef = useRef(false);
 
   const isInteraction = checkInMode === "interaction";
   const completeNow = isInteraction && entryTiming === "now";
@@ -380,6 +381,7 @@ export function CheckInForm({
   }
 
   function finishSubmitSuccess() {
+    submittingRef.current = false;
     setNoLocationConfirmOpen(false);
     setPendingPayload(null);
     setCompleteDialogOpen(false);
@@ -397,10 +399,13 @@ export function CheckInForm({
     updateCheckInId?: string,
     completedKeys: string[] = []
   ) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     startTransition(async () => {
       try {
         await submitCheckIn({ ...payload, completedPendingKeys: completedKeys }, updateCheckInId);
       } catch (err) {
+        submittingRef.current = false;
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
         return;
       }
@@ -409,6 +414,7 @@ export function CheckInForm({
   }
 
   function proceedSubmit(payload: Record<string, unknown>, completedKeys: string[] = []) {
+    if (submittingRef.current) return;
     if (pendingPlansLoading) return;
     if (hasPendingPlans && completeNow && completedKeys.length === 0) {
       setQueuedPayload(payload);
@@ -419,12 +425,14 @@ export function CheckInForm({
   }
 
   function handleConfirmCompletePending() {
+    if (submittingRef.current) return;
     if (!queuedPayload || selectedPendingKeys.length === 0) return;
     runSubmit(queuedPayload, undefined, selectedPendingKeys);
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (submittingRef.current || pending) return;
     setError(null);
     if (!isInteraction && !location) {
       setError("请先获取定位并解析地址");
@@ -459,7 +467,8 @@ export function CheckInForm({
     const notes = (new FormData(e.currentTarget).get("notes") as string | null)?.trim() || null;
     const payload = buildPayload(notes);
 
-    if (isInteraction && !location) {
+    // 已点「暂时跳过定位」则不再弹确认窗；未跳过且无定位时二次确认
+    if (isInteraction && !location && !locationSkipped) {
       setPendingPayload(payload);
       setNoLocationConfirmOpen(true);
       return;
@@ -469,7 +478,9 @@ export function CheckInForm({
   }
 
   function handleConfirmNoLocation() {
+    if (submittingRef.current || pending) return;
     if (!pendingPayload) return;
+    setNoLocationConfirmOpen(false);
     proceedSubmit(pendingPayload);
   }
 

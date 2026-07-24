@@ -121,7 +121,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
   if (activeTab === "plan") {
     return (
-      <div className="flex h-screen flex-col">
+      <div className="flex h-dvh flex-col overflow-hidden overscroll-none">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
           <div className="flex min-w-0 items-center gap-4">
             <Button variant="outline" size="sm" className="h-8 shrink-0" asChild>

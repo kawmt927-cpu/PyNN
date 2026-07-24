@@ -19,6 +19,7 @@ import {
   pendingPlanSelectionKey,
 } from "@/lib/follow-ups/unified";
 import { applyCheckInIpAudit } from "@/lib/sales-log/check-in-ip-guard";
+import { AUTO_DAILY_LOG_CHECK_IN_NOTES, isAutoDailyLogCheckIn } from "@/lib/sales-log/auto-log-check-in";
 
 export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInStatus) {
   const { start, end } = getTodayRange();
@@ -331,6 +332,51 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
       new Date()
     );
     return null;
+  }
+
+  // 日报自动定位打卡：同一天同一日报只保留一条，避免 sync 并发写双份
+  if (!isInteraction && isAutoDailyLogCheckIn({ customerId: null, notes: input.notes })) {
+    const { start, end } = getTodayRange();
+    const existingAuto = await prisma.salesCheckIn.findFirst({
+      where: {
+        userId: input.userId,
+        customerId: null,
+        salesDailyLogId: dailyLog.id,
+        notes: AUTO_DAILY_LOG_CHECK_IN_NOTES,
+        checkedInAt: { gte: start, lt: end },
+      },
+      orderBy: { checkedInAt: "desc" },
+      include: {
+        customer: { select: { name: true } },
+        contact: { select: { name: true, title: true } },
+      },
+    });
+    if (existingAuto) {
+      const updated = await prisma.salesCheckIn.update({
+        where: { id: existingAuto.id },
+        data: {
+          latitude: input.latitude ?? undefined,
+          longitude: input.longitude ?? undefined,
+          locationText: input.locationText?.trim() || undefined,
+          addressProvince: input.addressProvince?.trim() || undefined,
+          addressCity: input.addressCity?.trim() || undefined,
+          addressDistrict: input.addressDistrict?.trim() || undefined,
+          addressStreet: input.addressStreet?.trim() || undefined,
+          checkedInAt: new Date(),
+        },
+        include: {
+          customer: { select: { name: true } },
+          contact: { select: { name: true, title: true } },
+        },
+      });
+      if (hasCheckInLocation(updated) || input.clientIp) {
+        await applyCheckInIpAudit({
+          checkInId: updated.id,
+          clientIp: input.clientIp ?? null,
+        });
+      }
+      return updated;
+    }
   }
 
   const checkIn = await prisma.salesCheckIn.create({

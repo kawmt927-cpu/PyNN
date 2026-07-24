@@ -20,6 +20,8 @@
     "db:export-roster": "tsx prisma/export-roster.ts",
     "db:upsert-roster": "tsx prisma/upsert-roster-from-json.ts",
     "db:seed:project-models": "tsx prisma/seed-project-models.ts",
+    "db:clean:legacy-daily-log": "tsx scripts/legacy-daily-log-clean.ts",
+    "db:import:legacy-daily-log": "tsx scripts/legacy-daily-log-import.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },
