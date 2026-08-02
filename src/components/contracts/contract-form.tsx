@@ -40,6 +40,11 @@ import {
 } from "@/components/contracts/contract-cost-composition";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { nextClientKey } from "@/lib/ui/stable-client-key";
+import {
+  DealPartiesEditor,
+  partiesToJson,
+} from "@/components/deals/deal-parties-editor";
+import type { DealPartyDraft } from "@/lib/deals/party-roles";
 
 type SalesOption = { id: string; name: string };
 type InstallmentLine = {
@@ -101,6 +106,7 @@ type Props = {
     }>;
   };
   submitLabel?: string;
+  initialParties?: DealPartyDraft[];
 };
 
 const signingOptions = Object.entries(SIGNING_TYPE_LABELS).map(([value, label]) => ({
@@ -148,6 +154,7 @@ export function ContractForm({
   currentUserId,
   defaultValues,
   submitLabel = "提交销售合同",
+  initialParties = [],
 }: Props) {
   const router = useRouter();
   const [error, setError] = useState<UserFacingActionError | null>(null);
@@ -167,6 +174,13 @@ export function ContractForm({
   );
   const [endUserCustomerLabel, setEndUserCustomerLabel] = useState(
     defaultValues?.endUserCustomerName ?? defaultValues?.signCustomerName ?? ""
+  );
+  const [signingType, setSigningType] = useState(
+    defaultValues?.signingType === "INDIRECT" ? "INDIRECT" : "DIRECT"
+  );
+  const isDirectSign = signingType === "DIRECT";
+  const [parties, setParties] = useState<DealPartyDraft[]>(() =>
+    initialParties.map((p) => ({ ...p, key: p.key || nextClientKey("party") }))
   );
   const [signContactId, setSignContactId] = useState(defaultValues?.signContactId ?? "");
   const [totalAmount, setTotalAmount] = useState(
@@ -276,6 +290,7 @@ export function ContractForm({
 
     formData.set("productsJson", JSON.stringify(productsPayload));
     formData.set("installmentsJson", JSON.stringify(installmentsPayload));
+    formData.set("partiesJson", partiesToJson(parties));
 
     const coverageError = validateInstallmentCoverage(contractAmountNum, installmentsPayload);
     if (coverageError) {
@@ -368,7 +383,22 @@ export function ContractForm({
             label="签约类型 *"
             name="signingType"
             options={signingOptions}
-            defaultValue={defaultValues?.signingType ?? "DIRECT"}
+            value={signingType}
+            onValueChange={(next) => {
+              const typed = next === "INDIRECT" ? "INDIRECT" : "DIRECT";
+              setSigningType(typed);
+              if (typed === "DIRECT" && signCustomerId) {
+                setEndUserCustomerId(signCustomerId);
+                setEndUserCustomerLabel(signCustomerLabel);
+              } else if (
+                typed === "INDIRECT" &&
+                signCustomerId &&
+                endUserCustomerId === signCustomerId
+              ) {
+                setEndUserCustomerId("");
+                setEndUserCustomerLabel("");
+              }
+            }}
             className={FORM_GRID_CELL}
             labelClassName={FORM_GRID_LABEL}
           />
@@ -386,7 +416,16 @@ export function ContractForm({
               setSignCustomerId(id);
               setSignCustomerLabel(option?.label ?? "");
               setSignContactId("");
+              if (isDirectSign) {
+                setEndUserCustomerId(id);
+                setEndUserCustomerLabel(option?.label ?? "");
+              }
             }}
+            excludeIds={
+              isDirectSign
+                ? parties.map((p) => p.customerId).filter(Boolean)
+                : [endUserCustomerId, ...parties.map((p) => p.customerId)].filter(Boolean)
+            }
           />
 
           <CustomerSearchSelect
@@ -398,11 +437,37 @@ export function ContractForm({
             labelClassName={FORM_GRID_LABEL}
             value={endUserCustomerId}
             selectedLabel={endUserCustomerLabel}
+            disabled={isDirectSign}
+            excludeIds={
+              isDirectSign
+                ? parties.map((p) => p.customerId).filter(Boolean)
+                : [signCustomerId, ...parties.map((p) => p.customerId)].filter(Boolean)
+            }
             onValueChange={(id, option) => {
+              if (isDirectSign) return;
               setEndUserCustomerId(id);
               setEndUserCustomerLabel(option?.label ?? "");
             }}
           />
+          {isDirectSign ? (
+            <p className="-mt-1 text-xs text-muted-foreground md:col-span-2">
+              直签：最终用户自动与签约客户保持一致。
+            </p>
+          ) : (
+            <p className="-mt-1 text-xs text-muted-foreground md:col-span-2">
+              非直签：最终用户须与签约客户不同。
+            </p>
+          )}
+
+          <div className="md:col-span-2">
+            <DealPartiesEditor
+              parties={parties}
+              onChange={setParties}
+              excludeCustomerIds={[signCustomerId, endUserCustomerId].filter(Boolean)}
+              title="关联其他客户（渠道/第三方）"
+              description="签约客户与最终用户之外的渠道、第三方等；不可与上述两方重复。"
+            />
+          </div>
 
           <div className={FORM_GRID_CELL}>
             <Label htmlFor="signContactId" className={FORM_GRID_LABEL}>

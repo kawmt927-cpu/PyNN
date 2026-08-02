@@ -207,6 +207,37 @@ export async function createCustomerFromAgent(
   };
 }
 
+function resolveFollowUpOpportunityIds(input: {
+  opportunityId?: string;
+  opportunityIds?: string[];
+}): string[] {
+  return [
+    ...new Set(
+      [
+        ...(input.opportunityIds ?? []),
+        ...(input.opportunityId?.trim() ? [input.opportunityId.trim()] : []),
+      ]
+        .map((id) => id.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+async function assertOpportunitiesBelongToCustomer(customerId: string, opportunityIds: string[]) {
+  if (opportunityIds.length === 0) return;
+
+  const opportunities = await prisma.opportunity.findMany({
+    where: {
+      id: { in: opportunityIds },
+      OR: [{ customerId }, { parties: { some: { customerId } } }],
+    },
+    select: { id: true },
+  });
+  if (opportunities.length !== opportunityIds.length) {
+    throw new Error("商机不存在或不属于该客户");
+  }
+}
+
 export async function createFollowUpFromAgent(
   ctx: AgentWriteContext,
   input: {
@@ -215,6 +246,7 @@ export async function createFollowUpFromAgent(
     contactId?: string;
     contactIds?: string[];
     opportunityId?: string;
+    opportunityIds?: string[];
     method: FollowUpMethod;
     content: string;
     result?: string;
@@ -258,11 +290,10 @@ export async function createFollowUpFromAgent(
     if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
   }
 
-  if (input.opportunityId) {
-    const opportunity = await prisma.opportunity.findFirst({
-      where: { id: input.opportunityId, customerId },
-    });
-    if (!opportunity) throw new Error("商机不存在或不属于该客户");
+  const opportunityIds = resolveFollowUpOpportunityIds(input);
+  await assertOpportunitiesBelongToCustomer(customerId, opportunityIds);
+  if (opportunityIds.length > 0 && !input.nextFollowUpAt?.trim()) {
+    throw new Error("已关联商机时须填写下次拜访时间");
   }
 
   const suggestedGrade = assertCustomerGrade(input.suggestedGrade);
@@ -292,7 +323,7 @@ export async function createFollowUpFromAgent(
       data: {
         customerId,
         contactId: contactIds[0] || undefined,
-        opportunityId: input.opportunityId || undefined,
+        opportunityId: opportunityIds[0] ?? undefined,
         userId: ctx.userId,
         method: input.method,
         content,
@@ -311,6 +342,13 @@ export async function createFollowUpFromAgent(
               },
             }
           : {}),
+        ...(opportunityIds.length > 0
+          ? {
+              linkedOpportunities: {
+                create: opportunityIds.map((opportunityId) => ({ opportunityId })),
+              },
+            }
+          : {}),
       },
       include: { customer: { select: { name: true } } },
     });
@@ -325,6 +363,19 @@ export async function createFollowUpFromAgent(
     return created;
   });
 
+  void notifyFollowUpWeCom({
+    userId: ctx.userId,
+    role: ctx.role,
+    followUpId: followUp.id,
+    customerId,
+    customerName: followUp.customer.name,
+    method: input.method,
+    content,
+    nextFollowUpAt: input.nextFollowUpAt,
+    nextFollowUpMethod: input.nextFollowUpMethod,
+    nextFollowUpContent: input.nextFollowUpContent,
+  });
+
   return {
     success: true as const,
     followUpId: followUp.id,
@@ -332,6 +383,42 @@ export async function createFollowUpFromAgent(
     customerName: followUp.customer.name,
     message: `已为「${followUp.customer.name}」写入跟进记录`,
   };
+}
+
+async function notifyFollowUpWeCom(input: {
+  userId: string;
+  role: UserRole;
+  followUpId: string;
+  customerId: string;
+  customerName: string;
+  method: FollowUpMethod;
+  content: string;
+  nextFollowUpAt?: string;
+  nextFollowUpMethod?: FollowUpMethod;
+  nextFollowUpContent?: string;
+}) {
+  try {
+    const actor = await prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { name: true },
+    });
+    const { notifyWeComFollowUpCreated } = await import("@/lib/wecom/notify");
+    await notifyWeComFollowUpCreated({
+      actorUserId: input.userId,
+      actorRole: input.role,
+      actorName: actor?.name ?? "销售",
+      followUpId: input.followUpId,
+      customerId: input.customerId,
+      customerName: input.customerName,
+      method: input.method,
+      content: input.content,
+      nextFollowUpAt: input.nextFollowUpAt,
+      nextFollowUpMethod: input.nextFollowUpMethod,
+      nextFollowUpContent: input.nextFollowUpContent,
+    });
+  } catch (error) {
+    console.error("[wecom-notify] follow-up hook", error);
+  }
 }
 
 export async function submitDailyLogFromAgent(
@@ -361,26 +448,68 @@ export async function submitDailyLogFromAgent(
     throw new Error("带风险提交也须在 riskNotes 中说明明日计划缺失原因，并尽量补问销售");
   }
 
-  const structuredOutput: Prisma.InputJsonValue = {
-    dailyReport,
-    tomorrowPlan: tomorrowPlanText || null,
-    summary: input.summary ?? null,
-    submittedAt: new Date().toISOString(),
-  };
+  const existing = await prisma.salesDailyLog.findUnique({
+    where: { id: ctx.dailyLogId },
+    select: { logDate: true, lateMarkedAt: true, structuredOutput: true },
+  });
+  if (!existing) throw new Error("日报记录不存在");
+
+  const now = new Date();
+  const { getDailyReportDeadline } = await import("@/lib/sales-log/daily-report-submission");
+  const shouldLockLate =
+    !existing.lateMarkedAt &&
+    now.getTime() > getDailyReportDeadline(existing.logDate).getTime();
+
+  const prevStructured =
+    existing.structuredOutput &&
+    typeof existing.structuredOutput === "object" &&
+    !Array.isArray(existing.structuredOutput)
+      ? (existing.structuredOutput as Record<string, unknown>)
+      : {};
 
   const log = await prisma.salesDailyLog.update({
     where: { id: ctx.dailyLogId },
     data: {
       dailyReport,
-      structuredOutput,
-      submittedAt: new Date(),
+      structuredOutput: {
+        ...prevStructured,
+        dailyReport,
+        tomorrowPlan: tomorrowPlanText || null,
+        summary: input.summary ?? null,
+        submittedAt: now.toISOString(),
+        unsubmittedPlaceholder: false,
+      },
+      submittedAt: now,
       status: input.riskFlag
         ? SalesDailyLogStatus.RISK_SUBMITTED
         : SalesDailyLogStatus.SUBMITTED,
       riskFlag: Boolean(input.riskFlag),
       riskNotes: input.riskNotes?.trim() || null,
+      // 过截止补录：锁定迟交，不清除已有 lateMarkedAt（统计不变）
+      ...(shouldLockLate ? { lateMarkedAt: now } : {}),
     },
   });
+
+  void (async () => {
+    try {
+      const actor = await prisma.user.findUnique({
+        where: { id: ctx.userId },
+        select: { name: true },
+      });
+      const { notifyWeComDailyLogSubmitted } = await import("@/lib/wecom/notify");
+      await notifyWeComDailyLogSubmitted({
+        actorUserId: ctx.userId,
+        actorRole: ctx.role,
+        actorName: actor?.name ?? "销售",
+        dailyLogId: log.id,
+        dailyReport,
+        tomorrowPlan: tomorrowPlanText,
+        riskFlag: Boolean(input.riskFlag),
+      });
+    } catch (error) {
+      console.error("[wecom-notify] daily log hook", error);
+    }
+  })();
 
   return {
     success: true as const,

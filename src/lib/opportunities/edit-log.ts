@@ -2,6 +2,7 @@ import type { Opportunity } from "@prisma/client";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { labelForConfig } from "@/lib/config-options";
 import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
+import { getOpportunityGradeLabel } from "@/lib/opportunities/grade";
 
 type EditInput = {
   title: string;
@@ -10,6 +11,7 @@ type EditInput = {
   expectedAmount: number;
   expectedCloseDate: string;
   stage: string;
+  grade: string | null;
   requirementDesc: string | null;
   winProbability: number | null;
   competitor: string | null;
@@ -125,7 +127,8 @@ export function buildFollowUpOpportunityChanges(
 export function buildOpportunityEditChanges(
   existing: Opportunity & { owner: { name: string } },
   next: EditInput,
-  stageLabels: Record<string, string>
+  stageLabels: Record<string, string>,
+  gradeLabels: Record<string, string> = {}
 ): string[] {
   const changes: string[] = [];
 
@@ -135,6 +138,15 @@ export function buildOpportunityEditChanges(
 
   if (existing.ownerId !== next.ownerId) {
     pushChange(changes, "负责销售", existing.owner.name, next.ownerName);
+  }
+
+  if ((existing.grade ?? null) !== next.grade) {
+    pushChange(
+      changes,
+      "商机等级",
+      getOpportunityGradeLabel(existing.grade, gradeLabels),
+      getOpportunityGradeLabel(next.grade, gradeLabels)
+    );
   }
 
   changes.push(

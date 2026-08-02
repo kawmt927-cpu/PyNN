@@ -7,18 +7,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
+import { OpportunityGradeSelect } from "@/components/opportunities/opportunity-grade-select";
 import { CustomerSearchSelect } from "@/components/customers/customer-search-select";
 import {
   CustomerFieldsSection,
   emptyCustomerDraft,
   type CustomerDraftValues,
 } from "@/components/opportunities/customer-fields-section";
+import {
+  DealPartiesEditor,
+  partiesToJson,
+} from "@/components/deals/deal-parties-editor";
+import type { DealPartyDraft } from "@/lib/deals/party-roles";
 import { createOpportunity, updateOpportunity } from "@/app/(dashboard)/opportunities/actions";
 import { toExpectedCloseMonthInput } from "@/lib/opportunities/expected-close-date";
+import { OPPORTUNITY_GRADE } from "@/lib/opportunities/grade";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { ActionResult } from "@/lib/action-result";
 import type { OpportunityStatus } from "@prisma/client";
 import { cn } from "@/lib/utils";
+import { nextClientKey } from "@/lib/ui/stable-client-key";
 
 type SalesOption = { id: string; name: string };
 
@@ -28,6 +36,7 @@ export type OpportunityFormValues = {
   expectedAmount: number;
   expectedCloseDate: string;
   stage: string;
+  grade: string;
   requirementDesc: string | null;
   winProbability: number | null;
   competitor: string | null;
@@ -44,6 +53,7 @@ type Props = {
   /** 用于编辑时展示已选客户名称 */
   initialCustomerName?: string;
   stageOptions: ConfigOptionItem[];
+  opportunityGradeOptions: ConfigOptionItem[];
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
@@ -54,6 +64,7 @@ type Props = {
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
   initial?: Partial<OpportunityFormValues>;
+  initialParties?: DealPartyDraft[];
 };
 
 function withEmptyOption(options: ConfigOptionItem[] | undefined, label = "请选择") {
@@ -76,6 +87,7 @@ function buildInitialState(
       ? toExpectedCloseMonthInput(initial.expectedCloseDate)
       : "",
     stage: initial?.stage ?? "",
+    grade: initial?.grade || OPPORTUNITY_GRADE.P3,
     requirementDesc: initial?.requirementDesc ?? "",
     winProbability:
       initial?.winProbability != null ? String(initial.winProbability) : "",
@@ -107,6 +119,7 @@ export function OpportunityForm({
   submitLabel,
   initialCustomerName,
   stageOptions = [],
+  opportunityGradeOptions = [],
   sourceOptions = [],
   typeOptions = [],
   gradeOptions = [],
@@ -116,12 +129,16 @@ export function OpportunityForm({
   showOwnerSelect,
   salesUsers = [],
   initial,
+  initialParties = [],
 }: Props) {
   const router = useRouter();
   const [customerMode, setCustomerMode] = useState<"existing" | "new">("existing");
   const [form, setForm] = useState(() => buildInitialState(currentUser.id, initial));
   const [customerLabel, setCustomerLabel] = useState(initialCustomerName ?? "");
   const [customerDraft, setCustomerDraft] = useState<CustomerDraftValues>(emptyCustomerDraft());
+  const [parties, setParties] = useState<DealPartyDraft[]>(() =>
+    initialParties.map((p) => ({ ...p, key: p.key || nextClientKey("party") }))
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -135,24 +152,25 @@ export function OpportunityForm({
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData();
-    formData.set("customerMode", customerMode);
+    formData.set("customerMode", mode === "edit" ? "existing" : customerMode);
     formData.set("title", form.title);
     formData.set("expectedAmount", form.expectedAmount);
     formData.set("expectedCloseDate", form.expectedCloseDate);
     formData.set("stage", form.stage);
+    formData.set("grade", form.grade);
     formData.set("requirementDesc", form.requirementDesc);
     formData.set("winProbability", form.winProbability);
     formData.set("competitor", form.competitor);
     formData.set("notes", form.notes);
     formData.set("ownerId", showOwnerSelect ? form.ownerId : fixedOwner.id);
+    formData.set("partiesJson", partiesToJson(parties));
 
     if (mode === "create" && customerMode === "existing") {
       formData.set("customerId", form.customerId);
     } else if (mode === "create" && customerMode === "new") {
       appendCustomerDraft(formData, customerDraft);
-    } else if (mode === "edit" && initial?.customerId) {
-      formData.set("customerMode", "existing");
-      formData.set("customerId", initial.customerId);
+    } else if (mode === "edit") {
+      formData.set("customerId", form.customerId);
     }
 
     startTransition(async () => {
@@ -178,37 +196,42 @@ export function OpportunityForm({
 
   return (
     <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
-      {mode === "create" && (
+      {(mode === "create" || mode === "edit") && (
         <div className="space-y-3">
-          <Label>销售对象</Label>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="customerModeRadio"
-                checked={customerMode === "existing"}
-                onChange={() => setCustomerMode("existing")}
-              />
-              选择已有客户
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="customerModeRadio"
-                checked={customerMode === "new"}
-                onChange={() => setCustomerMode("new")}
-              />
-              新建客户
-            </label>
-          </div>
-          {customerMode === "existing" ? (
+          <Label>主要客户（可选）</Label>
+          <p className="text-xs text-muted-foreground">
+            可不选主要客户；渠道、第三方等请在下方「关联其他客户」中添加。
+          </p>
+          {mode === "create" ? (
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="customerModeRadio"
+                  checked={customerMode === "existing"}
+                  onChange={() => setCustomerMode("existing")}
+                />
+                选择已有客户
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="customerModeRadio"
+                  checked={customerMode === "new"}
+                  onChange={() => setCustomerMode("new")}
+                />
+                新建客户
+              </label>
+            </div>
+          ) : null}
+          {mode === "edit" || customerMode === "existing" ? (
             <CustomerSearchSelect
               id="customerId"
               name="customerId"
-              label="客户 *"
-              required
+              label="主要客户"
               value={form.customerId}
               selectedLabel={customerLabel}
+              excludeIds={parties.map((p) => p.customerId).filter(Boolean)}
               onValueChange={(customerId, option) => {
                 patchForm({ customerId });
                 setCustomerLabel(option?.label ?? "");
@@ -226,6 +249,11 @@ export function OpportunityForm({
               salesUsers={salesUsers}
             />
           )}
+          <DealPartiesEditor
+            parties={parties}
+            onChange={setParties}
+            excludeCustomerIds={form.customerId ? [form.customerId] : []}
+          />
         </div>
       )}
 
@@ -310,6 +338,18 @@ export function OpportunityForm({
           options={withEmptyOption(stageOptions)}
           value={form.stage}
           onValueChange={(stage) => patchForm({ stage })}
+          className={FORM_GRID_CELL}
+          labelClassName={FORM_GRID_LABEL}
+        />
+
+        <OpportunityGradeSelect
+          id="grade"
+          name="grade"
+          label="商机等级"
+          value={form.grade}
+          onValueChange={(grade) => patchForm({ grade })}
+          options={opportunityGradeOptions}
+          required
           className={FORM_GRID_CELL}
           labelClassName={FORM_GRID_LABEL}
         />

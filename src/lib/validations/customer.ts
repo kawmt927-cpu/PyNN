@@ -47,6 +47,7 @@ export const followUpFormSchema = z.object({
   suggestedGrade: z.string().optional().nullable(),
   contactIds: z.array(z.string().min(1)).min(1, "请选择联系人"),
   opportunityId: z.string().optional().nullable(),
+  opportunityIds: z.array(z.string().min(1)).optional(),
   completedPendingKeys: z.array(z.string().min(1)).optional().default([]),
 });
 

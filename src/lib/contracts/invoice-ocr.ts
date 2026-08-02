@@ -7,6 +7,7 @@ export type InvoiceOcrResult = {
   taxRatePercent: number | null;
   invoiceNo: string | null;
   invoicedAt: string | null;
+  sellerName: string | null;
   notes: string | null;
   confidence: "high" | "medium" | "low";
   rawSummary: string | null;
@@ -18,7 +19,8 @@ const SYSTEM = `你是中国增值税发票识别助手。根据用户提供的�
 - taxRatePercent: number|null 税率「几个点」，如 6 表示 6%；若票面是 6% 则填 6
 - invoiceNo: string|null 发票号码（优先号码，不是代码）
 - invoicedAt: string|null 开票日期，格式 YYYY-MM-DD
-- notes: string|null 可简述购买方/销售方或备注，一两句内
+- sellerName: string|null 销售方名称
+- notes: string|null 可简述购买方或备注，一两句内
 - confidence: "high"|"medium"|"low"
 - rawSummary: string|null 一句话说明识别依据
 无法辨认的字段填 null。不要编造。`;
@@ -79,6 +81,7 @@ function normalizeResult(raw: unknown): InvoiceOcrResult {
     taxRatePercent: tax,
     invoiceNo: str(obj.invoiceNo),
     invoicedAt,
+    sellerName: str(obj.sellerName),
     notes: str(obj.notes),
     confidence,
     rawSummary: str(obj.rawSummary),

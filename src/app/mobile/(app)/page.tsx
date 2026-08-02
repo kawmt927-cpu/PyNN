@@ -7,12 +7,12 @@ import {
   MapPinned,
 } from "lucide-react";
 import { requireRole } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 import {
   SALES_MOBILE_ROLES,
   isMobileManagerRole,
 } from "@/lib/mobile/sales-roles";
 import { listMyTodayCheckIns, checkInRequiresFollowUp } from "@/lib/sales-log/check-in";
-import { getTodayDailyLogForUser } from "@/lib/sales-log/daily-log";
 import { listUpcomingActionsThisWeek } from "@/lib/plans-tasks/upcoming-actions";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import { countPendingApprovals } from "@/lib/approvals/pending-count";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/today-work/team-work-activity";
 import { MobileExpandableActivityFeed } from "@/components/mobile/mobile-expandable-activity-feed";
 import { cn } from "@/lib/utils";
+import { isDailyReportCountedAsLate } from "@/lib/sales-log/daily-report-submission";
 
 const DAILY_STATUS_LABEL: Record<string, string> = {
   IN_PROGRESS: "对话中",
@@ -43,13 +44,14 @@ export default async function MobileHomePage() {
     const [upcoming, dueFollowUps, pendingApprovals, activityItems] = await Promise.all([
       listUpcomingActionsThisWeek(role, userId, 30),
       getPendingFollowUps(role, userId, "due", now, 50),
-      countPendingApprovals(),
+      countPendingApprovals({ id: userId, role }),
       listTeamWorkActivity({ start, end, filter: null }),
     ]);
     const summary = summarizeTeamWorkActivity(activityItems);
     const serialized = activityItems.map((item) => ({
       ...item,
       at: item.at.toISOString(),
+      nextFollowUpAt: item.nextFollowUpAt ? item.nextFollowUpAt.toISOString() : null,
     }));
 
     return (
@@ -93,11 +95,19 @@ export default async function MobileHomePage() {
                   打卡 {summary.checkIns} · 往来 {summary.followUps} · 已交日报 {summary.logsSubmitted}
                 </p>
               </div>
-              <Link href="/mobile/reports" className="text-xs text-primary">
-                日报管理
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link href="/mobile/activity" className="text-xs text-primary">
+                  全部日志
+                </Link>
+                <Link href="/mobile/reports" className="text-xs text-primary">
+                  日报管理
+                </Link>
+              </div>
             </div>
-            <MobileExpandableActivityFeed items={serialized} />
+            <MobileExpandableActivityFeed
+              items={serialized}
+              currentUserId={session.user.id}
+            />
           </section>
         </div>
       </div>
@@ -106,15 +116,37 @@ export default async function MobileHomePage() {
 
   const [checkIns, dailyLog, upcoming, dueFollowUps] = await Promise.all([
     listMyTodayCheckIns(userId),
-    getTodayDailyLogForUser(userId),
+    prisma.salesDailyLog.findUnique({
+      where: {
+        userId_logDate: {
+          userId,
+          logDate: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+        },
+      },
+      select: {
+        status: true,
+        submittedAt: true,
+        updatedAt: true,
+        lateMarkedAt: true,
+        logDate: true,
+      },
+    }),
     listUpcomingActionsThisWeek(role, userId, 30),
     getPendingFollowUps(role, userId, "due", now, 50),
   ]);
 
   const pendingCheckIns = checkIns.filter((row) => checkInRequiresFollowUp(row)).length;
-  const dailyLabel = dailyLog?.status
-    ? DAILY_STATUS_LABEL[dailyLog.status] ?? dailyLog.status
-    : "未开始";
+  let dailyLabel = "未开始";
+  if (dailyLog) {
+    const submitted =
+      dailyLog.status === "SUBMITTED" || dailyLog.status === "RISK_SUBMITTED";
+    const late = isDailyReportCountedAsLate(dailyLog);
+    if (submitted) {
+      dailyLabel = late ? "已提交（迟交）" : DAILY_STATUS_LABEL[dailyLog.status] ?? "已提交";
+    } else {
+      dailyLabel = late ? "未提交（迟交）" : DAILY_STATUS_LABEL[dailyLog.status] ?? dailyLog.status;
+    }
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -125,6 +157,22 @@ export default async function MobileHomePage() {
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-6">
+        <Link
+          href="/mobile/activity"
+          className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-50 text-violet-700">
+            <ClipboardList className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">今日工作日志</span>
+            <span className="text-xs text-muted-foreground">
+              查看打卡、往来与日报（可切换日期）
+            </span>
+          </span>
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+
         <Link
           href="/mobile/check-in"
           className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"

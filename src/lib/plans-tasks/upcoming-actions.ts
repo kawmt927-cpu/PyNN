@@ -1,7 +1,5 @@
 import { endOfWeek, startOfWeek } from "date-fns";
 import type { UserRole } from "@prisma/client";
-import { listPaymentDueItems } from "@/lib/contracts/payment-due";
-import { formatAmount } from "@/lib/opportunities/funnel";
 import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import {
   listPendingWeeklyAssignmentsForManager,
@@ -39,6 +37,8 @@ export type UpcomingActionItem =
       customerName: string | null;
       opportunityId: string | null;
       opportunityTitle: string | null;
+      assignmentKind: string;
+      assignmentStatus: string;
       /** 被指派人（执行人） */
       assignee: UpcomingActionOwner;
       /** 指派人 */
@@ -79,6 +79,11 @@ function isDueThisWeek(dueAt: Date, weekStart: Date, weekEnd: Date) {
   return dueAt >= weekStart && dueAt <= weekEnd;
 }
 
+/** 指派任务：截止不晚于本周日（含已逾期未完成），避免普通任务被漏出本周待办 */
+function isAssignmentInThisWeekScope(dueAt: Date, weekEnd: Date) {
+  return dueAt <= weekEnd;
+}
+
 function isManagerRole(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
 }
@@ -92,15 +97,12 @@ export async function listUpcomingActionsThisWeek(
   const week = getCalendarWeekRange(now);
   const managerView = isManagerRole(role);
 
-  const [dueFollowUps, upcomingFollowUps, assignments, paymentDueItems] = await Promise.all([
+  const [dueFollowUps, upcomingFollowUps, assignments] = await Promise.all([
     getPendingFollowUps(role, userId, "due", now, take),
     getPendingFollowUps(role, userId, "upcoming", now, take * 2),
     managerView
       ? listPendingWeeklyAssignmentsForManager(take * 2)
       : listPendingWeeklyAssignmentsForUser(userId, take * 2),
-    managerView
-      ? listPaymentDueItems({ now, week, take: take * 2 })
-      : listPaymentDueItems({ ownerId: userId, now, week, take: take * 2 }),
   ]);
 
   const followUpsThisWeek = [...dueFollowUps, ...upcomingFollowUps].filter(
@@ -128,42 +130,32 @@ export async function listUpcomingActionsThisWeek(
         overdue: item.nextFollowUpAt <= now,
       })),
     ...assignments
-      .filter((task) => isDueThisWeek(task.dueAt, week.weekStart, week.weekEnd))
+      .filter((task) => isAssignmentInThisWeekScope(task.dueAt, week.weekEnd))
       .map((task) => {
         const assignee = { id: task.assignee.id, name: task.assignee.name };
         const assignedBy = { id: task.createdBy.id, name: task.createdBy.name };
+        const isGeneral = task.kind === "GENERAL";
         return {
           kind: "assignment" as const,
           id: task.id,
-          title: task.customer?.name ?? task.title,
-          subtitle: task.customer?.name
-            ? task.title + (task.description ? ` · ${task.description}` : "")
-            : (task.description ?? ""),
+          title: isGeneral ? task.title : (task.customer?.name ?? task.title),
+          subtitle: isGeneral
+            ? task.description ??
+              (task.status === "PENDING_CONFIRM" ? "待指派人确认完成" : "普通任务")
+            : task.title + (task.description ? ` · ${task.description}` : ""),
           dueAt: task.dueAt,
           customerId: task.customer?.id ?? null,
           customerName: task.customer?.name ?? null,
           opportunityId: task.opportunity?.id ?? null,
           opportunityTitle: task.opportunity?.title ?? null,
+          assignmentKind: task.kind,
+          assignmentStatus: task.status,
           assignee,
           assignedBy,
           owner: assignee,
           overdue: task.dueAt <= now,
         };
       }),
-    ...paymentDueItems.map((row) => ({
-      kind: "payment_collection" as const,
-      id: row.installmentId,
-      contractId: row.contractId,
-      title: row.contractTitle,
-      subtitle: `第 ${row.periodNumber} 期 · 待收 ${formatAmount(row.remainingAmount)} · ${row.customerName}`,
-      dueAt: row.dueAt,
-      customerId: row.customerId,
-      customerName: row.customerName,
-      periodNumber: row.periodNumber,
-      remainingAmount: row.remainingAmount,
-      owner: { id: row.ownerId, name: row.ownerName },
-      overdue: row.overdue,
-    })),
   ];
 
   return {

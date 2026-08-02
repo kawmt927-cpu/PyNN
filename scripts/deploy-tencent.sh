@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 腾讯云共存部署（不影响 beproj 占用的 80 端口）
 # 用法: ./scripts/deploy-tencent.sh user@host /path/to/key.pem
+# 部署成功后仅清理 hospital-crm-* 未使用旧镜像与悬空层，不删其它项目的 tagged 镜像。
 
 set -euo pipefail
 
@@ -42,7 +43,8 @@ if [[ ! -f .env.production ]]; then
   cat > .env.production <<ENV
 DATABASE_URL="file:/app/data/prod.db"
 NEXTAUTH_SECRET="${SECRET}"
-NEXTAUTH_URL="http://122.51.86.223:3001"
+NEXTAUTH_URL="https://crm.pynntech.com"
+PUBLIC_APP_URL="https://crm.pynntech.com"
 LLM_API_KEY=""
 LLM_API_BASE="https://api.moonshot.cn/v1"
 LLM_MODEL="kimi-k2.5"
@@ -79,4 +81,24 @@ if [[ "$ready" -ne 1 ]]; then
   sudo docker compose -p hospital-crm logs --tail=80 app
   exit 1
 fi
+
+# 仅清理本项目（hospital-crm）产生的旧镜像，不影响 beproj 等其它容器/镜像
+echo "→ 清理 CRM 旧镜像（不影响其他项目）..."
+crm_reclaimed=0
+while read -r img_id; do
+  [[ -z "$img_id" ]] && continue
+  # 仍被任意容器（含已停止）引用的镜像跳过
+  if [[ -n "$(sudo docker ps -aq --filter "ancestor=${img_id}" 2>/dev/null)" ]]; then
+    continue
+  fi
+  if sudo docker rmi -f "$img_id" >/dev/null 2>&1; then
+    crm_reclaimed=$((crm_reclaimed + 1))
+  fi
+done < <(sudo docker images --format '{{.Repository}} {{.ID}}' | awk '$1 ~ /^hospital-crm-/ { print $2 }' | sort -u)
+
+# 悬空镜像（rebuild 后失去 tag 的旧层）；带 tag 的其它项目镜像不会被删
+dangling_out="$(sudo docker image prune -f 2>/dev/null || true)"
+echo "  已删除未使用的 hospital-crm 镜像: ${crm_reclaimed} 个"
+echo "  ${dangling_out:-dangling prune: done}"
+df -h / | awk 'NR==1 || /\/$/ { print "  磁盘:", $0 }'
 REMOTE

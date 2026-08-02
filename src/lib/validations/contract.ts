@@ -86,6 +86,22 @@ export const contractFormSchema = z
     installments: z.array(contractInstallmentLineSchema).min(1, "请至少添加一期回款计划"),
   })
   .superRefine((data, ctx) => {
+    if (data.signingType === "DIRECT") {
+      if (data.signCustomerId !== data.endUserCustomerId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "直签时签约客户与最终用户必须为同一客户",
+          path: ["endUserCustomerId"],
+        });
+      }
+    } else if (data.signCustomerId === data.endUserCustomerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "非直签时签约客户与最终用户不能相同",
+        path: ["endUserCustomerId"],
+      });
+    }
+
     const coverageError = validateInstallmentCoverage(data.totalAmount, data.installments);
     if (coverageError) {
       ctx.addIssue({

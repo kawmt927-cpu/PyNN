@@ -30,6 +30,10 @@ export default async function EditContractPage({ params, searchParams }: Props) 
       signCustomer: { select: { id: true, name: true } },
       endUserCustomer: { select: { id: true, name: true } },
       opportunity: { select: { id: true, title: true } },
+      parties: {
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       products: {
         orderBy: { productName: "asc" },
         include: {
@@ -96,6 +100,13 @@ export default async function EditContractPage({ params, searchParams }: Props) 
         externalCostNameOptions={externalCostNames.map((o) => ({
           value: o.value,
           label: o.label,
+        }))}
+        initialParties={contract.parties.map((p) => ({
+          key: p.id,
+          customerId: p.customerId,
+          customerName: p.customer.name,
+          role: p.role,
+          note: p.note ?? "",
         }))}
         defaultValues={{
           title: contract.title,

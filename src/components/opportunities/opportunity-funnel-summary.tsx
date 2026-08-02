@@ -1,44 +1,88 @@
-import { CONFIG_CATEGORY, labelForConfig } from "@/lib/config-options";
-import { formatAmount } from "@/lib/opportunities/funnel";
+import { formatAmountInWan, type FunnelLayer } from "@/lib/opportunities/funnel";
+import { cn } from "@/lib/utils";
 
 type Props = {
-  rows: Array<{ stage: string; count: number; totalAmount: number | { toString(): string } }>;
-  stageLabels: Record<string, string>;
+  layers: FunnelLayer[];
 };
 
-export function OpportunityFunnelSummary({ rows, stageLabels }: Props) {
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">暂无进行中商机的漏斗数据。</p>;
+/** 层宽百分比：自上而下线性收窄，相邻层顶底对齐形成连续斜边 */
+function layerWidthPercent(index: number, total: number) {
+  if (total <= 1) return 96;
+  const top = 100;
+  const bottom = 46;
+  return top - ((top - bottom) * index) / (total - 1);
+}
+
+function stageTone(index: number, total: number, kind: FunnelLayer["kind"]) {
+  if (kind === "signed") {
+    return "bg-emerald-600 text-white";
+  }
+  const t = total <= 1 ? 0 : index / Math.max(total - 2, 1);
+  if (t < 0.34) return "bg-sky-700 text-white";
+  if (t < 0.67) return "bg-sky-600 text-white";
+  return "bg-sky-500 text-white";
+}
+
+export function OpportunityFunnelSummary({ layers }: Props) {
+  if (layers.length === 0) {
+    return <p className="text-sm text-muted-foreground">暂无漏斗数据。</p>;
   }
 
-  const totalCount = rows.reduce((sum, row) => sum + row.count, 0);
-  const totalAmount = rows.reduce((sum, row) => sum + Number(row.totalAmount), 0);
+  const totalCount = layers.reduce((sum, row) => sum + row.count, 0);
+  const totalAmount = layers.reduce((sum, row) => sum + row.totalAmount, 0);
+  const n = layers.length;
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-muted-foreground">
-            <th className="pb-2 pr-4">阶段</th>
-            <th className="pb-2 pr-4">商机数</th>
-            <th className="pb-2">预计金额合计</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.stage} className="border-b">
-              <td className="py-2 pr-4">{labelForConfig(stageLabels, row.stage)}</td>
-              <td className="py-2 pr-4">{row.count}</td>
-              <td className="py-2">{formatAmount(Number(row.totalAmount))}</td>
-            </tr>
-          ))}
-          <tr className="font-medium">
-            <td className="py-2 pr-4">合计</td>
-            <td className="py-2 pr-4">{totalCount}</td>
-            <td className="py-2">{formatAmount(totalAmount)}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-1.5">
+        {layers.map((layer, index) => {
+          const widthTop = layerWidthPercent(index, n);
+          const widthBottom =
+            index === n - 1
+              ? Math.max(widthTop - 8, 38)
+              : layerWidthPercent(index + 1, n);
+          const insetTop = (100 - widthTop) / 2;
+          const insetBottom = (100 - widthBottom) / 2;
+
+          return (
+            <div
+              key={layer.key}
+              className="w-full"
+              style={{
+                clipPath: `polygon(${insetTop}% 0%, ${100 - insetTop}% 0%, ${100 - insetBottom}% 100%, ${insetBottom}% 100%)`,
+              }}
+              title={`${layer.label}：${layer.count} 个商机 · ${formatAmountInWan(layer.totalAmount)}`}
+            >
+              <div
+                className={cn(
+                  "flex h-9 items-center justify-center gap-2 px-6 text-center sm:h-10 sm:gap-3 sm:px-10",
+                  stageTone(index, n, layer.kind)
+                )}
+              >
+                <span className="truncate text-sm font-medium tracking-wide">
+                  {layer.label}
+                </span>
+                <span className="shrink-0 text-xs tabular-nums opacity-95">
+                  {layer.count} 个 · {formatAmountInWan(layer.totalAmount)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1 border-t pt-3 text-sm text-muted-foreground">
+        <span>
+          合计商机{" "}
+          <span className="font-medium tabular-nums text-foreground">{totalCount}</span>
+        </span>
+        <span>
+          金额合计{" "}
+          <span className="font-medium tabular-nums text-foreground">
+            {formatAmountInWan(totalAmount)}
+          </span>
+        </span>
+      </div>
     </div>
   );
 }

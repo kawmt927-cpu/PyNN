@@ -9,6 +9,7 @@ import {
   requireConfigCategoryManage,
   requireAiAgentSettingsAccess,
   requireAmapSettingsAccess,
+  requireExpenseTravelSettingsAccess,
   requireWeComSettingsAccess,
   requireKpiSettingsAccess,
   requireSalesLogPromptSettingsAccess,
@@ -25,6 +26,8 @@ import { aiAgentConfigSchema, salesLogPromptSchema } from "@/lib/validations/ai-
 import { findAiAgentConfigRow } from "@/lib/agent/config";
 import { SALES_LOG_SYSTEM_PROMPT } from "@/lib/agent/sales-log-prompt";
 import { findAmapConfigRow } from "@/lib/amap/config";
+import { normalizeCityName } from "@/lib/expenses/travel-policy";
+import type { ExpenseCityTier } from "@prisma/client";
 import { resolveCheckInLocation } from "@/lib/amap/reverse-geocode";
 import { amapConfigSchema } from "@/lib/validations/amap";
 import { isKimiThinkingModel } from "@/lib/agent/moonshot-fetch";
@@ -562,6 +565,7 @@ export async function saveCustomerGradeOptions(
   const allowed = [
     CONFIG_CATEGORY.CUSTOMER_GRADE,
     CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
+    CONFIG_CATEGORY.OPPORTUNITY_GRADE,
   ] as string[];
   if (!allowed.includes(category)) {
     throw new Error("无效的等级配置类型");
@@ -628,6 +632,7 @@ export async function saveCustomerGradeOptions(
   revalidatePath("/customers");
   revalidatePath("/follow-ups");
   revalidatePath("/plans-tasks");
+  revalidatePath("/opportunities");
 }
 
 export async function toggleConfigOption(formData: FormData) {
@@ -656,4 +661,66 @@ export async function saveKpiConfig(formData: FormData) {
   await saveProjectDevMinStage(parsed.projectDevMinStageValue || null);
   revalidatePath("/admin/settings");
   revalidatePath("/plans-tasks");
+}
+
+export async function saveExpenseTravelPolicy(formData: FormData) {
+  const session = await requireExpenseTravelSettingsAccess();
+  const hotelCapTier1 = Number(String(formData.get("hotelCapTier1") ?? "").trim());
+  const hotelCapTier2 = Number(String(formData.get("hotelCapTier2") ?? "").trim());
+  const hotelCapTier3 = Number(String(formData.get("hotelCapTier3") ?? "").trim());
+  if (![hotelCapTier1, hotelCapTier2, hotelCapTier3].every((n) => Number.isFinite(n) && n >= 0)) {
+    throw new Error("住宿标准须为非负数字");
+  }
+  await prisma.expenseTravelPolicy.upsert({
+    where: { id: "default" },
+    create: {
+      id: "default",
+      hotelCapTier1,
+      hotelCapTier2,
+      hotelCapTier3,
+      updatedById: session.user.id,
+    },
+    update: {
+      hotelCapTier1,
+      hotelCapTier2,
+      hotelCapTier3,
+      updatedById: session.user.id,
+    },
+  });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
+}
+
+export async function addExpenseCityTierMapping(formData: FormData) {
+  await requireExpenseTravelSettingsAccess();
+  const cityName = normalizeCityName(String(formData.get("cityName") ?? ""));
+  const tier = String(formData.get("tier") ?? "").trim() as ExpenseCityTier;
+  if (!cityName) throw new Error("请填写城市名");
+  if (!["TIER_1", "TIER_2", "TIER_3"].includes(tier)) throw new Error("线级无效");
+
+  const all = await prisma.expenseCityTierMapping.findMany({ select: { id: true, cityName: true } });
+  const clash = all.find((row) => normalizeCityName(row.cityName) === cityName);
+  if (clash) throw new Error("该城市已在名单中");
+
+  const maxOrder = await prisma.expenseCityTierMapping.aggregate({
+    where: { tier },
+    _max: { sortOrder: true },
+  });
+  await prisma.expenseCityTierMapping.create({
+    data: {
+      cityName,
+      tier,
+      sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+    },
+  });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
+}
+
+export async function removeExpenseCityTierMapping(id: string) {
+  await requireExpenseTravelSettingsAccess();
+  if (!id) throw new Error("参数不完整");
+  await prisma.expenseCityTierMapping.delete({ where: { id } });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
 }

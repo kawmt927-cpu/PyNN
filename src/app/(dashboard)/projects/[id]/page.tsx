@@ -9,7 +9,7 @@ import { ProjectTabs } from "@/components/projects/project-tabs";
 import { CostSummaryCards } from "@/components/projects/cost-summary-cards";
 import { ProjectOverviewForm } from "@/components/projects/project-overview-form";
 import { ProjectPlanPanel } from "@/components/projects/project-plan-panel";
-import { canManageProject, buildProjectListWhere } from "@/lib/projects/access";
+import { canManageProject, buildProjectListWhere, canAccessResourceSchedule } from "@/lib/projects/access";
 import { getProjectCostSummary } from "@/lib/projects/cost-summary";
 import { clearActualStartIfNoAllocations } from "@/lib/projects/project-actual-dates";
 import { buildScheduleModuleHref } from "@/lib/projects/timeline";
@@ -57,6 +57,9 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
   if (!project) notFound();
 
   const canEdit = canManageProject(session.user.role, session.user.id, project);
+  const canSchedule = canAccessResourceSchedule(session.user.role);
+  const resolvedTab =
+    activeTab === "schedule" && !canSchedule ? "overview" : activeTab;
   // 无人力投入时不应保留实际开始（历史误填常等于计划开始）
   if (project.actualStartAt) {
     const cleared = await clearActualStartIfNoAllocations(project.id);
@@ -64,7 +67,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
   }
   const [costSummary, projectModels, allocationUsers, sourceModelPhases] = await Promise.all([
     getProjectCostSummary(project.id),
-    activeTab === "plan"
+    resolvedTab === "plan"
       ? prisma.projectModel.findMany({
           where: { enabled: true },
           orderBy: { name: "asc" },
@@ -76,7 +79,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
           },
         })
       : Promise.resolve([]),
-    activeTab === "plan"
+    resolvedTab === "plan"
       ? prisma.projectStaffAllocation.findMany({
           where: { projectId: project.id },
           distinct: ["userId"],
@@ -85,7 +88,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
           },
         })
       : Promise.resolve([]),
-    activeTab === "plan" && project.sourceModelId
+    resolvedTab === "plan" && project.sourceModelId
       ? prisma.projectModelPhase.findMany({
           where: { modelId: project.sourceModelId },
           select: {
@@ -99,10 +102,12 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
       : Promise.resolve([]),
   ]);
 
-  const scheduleHref = buildScheduleModuleHref({
-    view: "detail",
-    project: project.id,
-  });
+  const scheduleHref = canSchedule
+    ? buildScheduleModuleHref({
+        view: "detail",
+        project: project.id,
+      })
+    : null;
 
   const templateTasksByPhaseId: Record<
     string,
@@ -114,12 +119,14 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
   const assignees = allocationUsers.map((row) => row.user);
 
-  const tabs = PROJECT_TABS.map((tab) => ({
-    ...tab,
-    href: `/projects/${project.id}?tab=${tab.id}`,
-  }));
+  const tabs = PROJECT_TABS.filter((tab) => canSchedule || tab.id !== "schedule").map(
+    (tab) => ({
+      ...tab,
+      href: `/projects/${project.id}?tab=${tab.id}`,
+    })
+  );
 
-  if (activeTab === "plan") {
+  if (resolvedTab === "plan") {
     return (
       <div className="flex h-dvh flex-col overflow-hidden overscroll-none">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
@@ -218,9 +225,9 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
         </div>
       </div>
 
-      <ProjectTabs activeTab={activeTab} tabs={tabs} />
+      <ProjectTabs activeTab={resolvedTab} tabs={tabs} />
 
-      {activeTab === "overview" ? (
+      {resolvedTab === "overview" ? (
         <div className="space-y-6">
           <CostSummaryCards summary={costSummary} />
           <Card>
@@ -284,7 +291,7 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
         </div>
       ) : null}
 
-      {activeTab === "schedule" ? (
+      {resolvedTab === "schedule" && canSchedule ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">资源排班</CardTitle>
@@ -294,13 +301,13 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
               排班已独立为全屏模块：左侧人员列表（搜索/筛选），右侧按项目切换甘特图，并支持全局总览与选中人员跨项目视图。
             </p>
             <Button asChild>
-              <Link href={scheduleHref}>打开资源排班</Link>
+              <Link href={scheduleHref!}>打开资源排班</Link>
             </Button>
           </CardContent>
         </Card>
       ) : null}
 
-      {activeTab === "costs" ? (
+      {resolvedTab === "costs" ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">发生费用</CardTitle>

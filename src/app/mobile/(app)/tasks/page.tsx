@@ -7,6 +7,7 @@ import { getPendingFollowUps } from "@/lib/follow-ups/unified";
 import { getCustomerGradeLabelMap } from "@/lib/config-options";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { getRemainingTimeInfo, remainingTimeClassName } from "@/lib/today-work/remaining-time";
+import { GeneralAssignmentActionButton } from "@/components/today-work/general-assignment-action-button";
 import { cn } from "@/lib/utils";
 
 function mobileHrefForUpcoming(item: {
@@ -14,9 +15,13 @@ function mobileHrefForUpcoming(item: {
   customerId?: string | null;
   opportunityId?: string | null;
   contractId?: string;
+  assignmentKind?: string;
 }) {
   if (item.kind === "payment_collection" && item.contractId) {
     return `/mobile/contracts/${item.contractId}`;
+  }
+  if (item.kind === "assignment" && item.assignmentKind === "GENERAL") {
+    return null;
   }
   if (item.opportunityId) return `/mobile/opportunities/${item.opportunityId}`;
   if (item.customerId) return `/mobile/customers/${item.customerId}`;
@@ -25,10 +30,11 @@ function mobileHrefForUpcoming(item: {
 
 export default async function MobileTasksPage() {
   const session = await requireRole(SALES_MOBILE_ROLES);
+  const userId = session.user.id;
   const now = new Date();
   const [{ items, week }, dueFollowUps, gradeLabels] = await Promise.all([
-    listUpcomingActionsThisWeek(session.user.role, session.user.id, 50),
-    getPendingFollowUps(session.user.role, session.user.id, "due", now, 100),
+    listUpcomingActionsThisWeek(session.user.role, userId, 50),
+    getPendingFollowUps(session.user.role, userId, "due", now, 100),
     getCustomerGradeLabelMap(),
   ]);
 
@@ -38,7 +44,9 @@ export default async function MobileTasksPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <header className="shrink-0 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <h1 className="text-lg font-bold">待办</h1>
-        <p className="text-xs text-muted-foreground">本周 {weekLabel} · 含到期跟进</p>
+        <p className="text-xs text-muted-foreground">
+          本周 {weekLabel} · 含到期跟进与普通任务
+        </p>
       </header>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-4 pb-8">
@@ -92,11 +100,23 @@ export default async function MobileTasksPage() {
               {items.map((item) => {
                 const remaining = getRemainingTimeInfo(item.dueAt, now);
                 const href = mobileHrefForUpcoming(item);
+                const canMarkDone =
+                  item.kind === "assignment" &&
+                  item.assignmentKind === "GENERAL" &&
+                  item.assignmentStatus === "PENDING" &&
+                  item.assignee.id === userId;
+                const canConfirm =
+                  item.kind === "assignment" &&
+                  item.assignmentKind === "GENERAL" &&
+                  item.assignmentStatus === "PENDING_CONFIRM" &&
+                  item.assignedBy.id === userId;
                 const kindLabel =
                   item.kind === "payment_collection"
                     ? "回款"
                     : item.kind === "assignment"
-                      ? "指派"
+                      ? item.assignmentKind === "GENERAL"
+                        ? "普通任务"
+                        : "指派"
                       : "跟进";
                 const body = (
                   <>
@@ -107,7 +127,9 @@ export default async function MobileTasksPage() {
                           item.kind === "payment_collection"
                             ? "bg-emerald-100 text-emerald-800"
                             : item.kind === "assignment"
-                              ? "bg-purple-100 text-purple-800"
+                              ? item.assignmentKind === "GENERAL"
+                                ? "bg-sky-100 text-sky-800"
+                                : "bg-purple-100 text-purple-800"
                               : "bg-orange-100 text-orange-800"
                         )}
                       >
@@ -120,6 +142,12 @@ export default async function MobileTasksPage() {
                           size="sm"
                           labelMap={gradeLabels}
                         />
+                      ) : null}
+                      {item.kind === "assignment" &&
+                      item.assignmentStatus === "PENDING_CONFIRM" ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
+                          待确认
+                        </span>
                       ) : null}
                     </div>
                     {item.subtitle ? (
@@ -152,7 +180,31 @@ export default async function MobileTasksPage() {
                         {body}
                       </Link>
                     ) : (
-                      <div className="rounded-xl border bg-card p-3 shadow-sm">{body}</div>
+                      <div className="space-y-2 rounded-xl border bg-card p-3 shadow-sm">
+                        {body}
+                        {canMarkDone || canConfirm ? (
+                          <div className="flex flex-wrap gap-2">
+                            {canMarkDone ? (
+                              <GeneralAssignmentActionButton
+                                assignmentId={item.id}
+                                mode="mark_done"
+                              />
+                            ) : null}
+                            {canConfirm ? (
+                              <>
+                                <GeneralAssignmentActionButton
+                                  assignmentId={item.id}
+                                  mode="confirm"
+                                />
+                                <GeneralAssignmentActionButton
+                                  assignmentId={item.id}
+                                  mode="reject"
+                                />
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     )}
                   </li>
                 );

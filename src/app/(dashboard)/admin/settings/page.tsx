@@ -23,6 +23,7 @@ import { ConfigFieldsSettings } from "@/components/admin/config-fields-settings"
 import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
 import { SalesLogPromptSettings } from "@/components/admin/sales-log-prompt-settings";
 import { AmapSettings } from "@/components/admin/amap-settings";
+import { ExpenseTravelSettings } from "@/components/admin/expense-travel-settings";
 import { UnbindWecomButton } from "@/components/admin/unbind-wecom-button";
 import { KpiSettings } from "@/components/admin/kpi-settings";
 import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
@@ -33,6 +34,7 @@ import { PROJECT_MODELS_LIST_HREF } from "@/components/admin/project-model-types
 import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { getAiAgentConfigForAdmin, getSalesLogPromptSettings } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
+import { getExpenseTravelPolicyForAdmin } from "@/lib/expenses/travel-policy";
 
 type Props = {
   searchParams: Promise<{ tab?: string; module?: string; field?: string; model?: string }>;
@@ -67,6 +69,7 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     aiAgentConfig,
     salesLogPrompt,
     amapConfig,
+    expenseTravelPolicy,
     productTemplates,
     projectModels,
     projectModelDetail,
@@ -80,6 +83,9 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     role === "ADMIN" ? getAiAgentConfigForAdmin() : Promise.resolve(null),
     activeTab === SETTINGS_TAB.SALES_LOG ? getSalesLogPromptSettings() : Promise.resolve(null),
     role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.EXPENSE_TRAVEL
+      ? getExpenseTravelPolicyForAdmin()
+      : Promise.resolve(null),
     activeTab === SETTINGS_TAB.PRODUCTS
       ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
       : Promise.resolve([]),
@@ -268,6 +274,15 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             <AmapSettings initial={amapConfig} />
           </CardContent>
         </Card>
+      ) : activeTab === SETTINGS_TAB.EXPENSE_TRAVEL && expenseTravelPolicy ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>差旅住宿标准</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ExpenseTravelSettings initial={expenseTravelPolicy} />
+          </CardContent>
+        </Card>
       ) : activeTab === SETTINGS_TAB.WECOM ? (
         <>
           <Card>
@@ -280,19 +295,38 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
               </p>
               <WeComIntegrationOverview config={wecomConfig} />
               <div className="rounded-md bg-muted p-3 text-xs leading-relaxed">
-                <p className="font-medium text-foreground">应用主页（推荐 · 销售移动端）</p>
-                <code className="mt-1 block break-all">
-                  https://你的域名/mobile
+                <p className="font-medium text-foreground">
+                  应用主页（必改 · 勿填 IP）
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  微信/企微点开应用会先打开「应用主页」。若填
+                  <code className="mx-0.5">http://122.51.86.223:3001/...</code>
+                  ，会出现「该地址为 IP 地址」确认页。必须使用 HTTPS 域名：
+                </p>
+                <code className="mt-2 block break-all">
+                  https://crm.pynntech.com/wecom-entry.html
                 </code>
-                <p className="mt-3 font-medium text-foreground">静态跳板（企微 WebView 更稳）</p>
-                <code className="mt-1 block break-all">https://你的域名/wecom-entry.html</code>
-                <p className="mt-3 font-medium text-foreground">PC 今日工作 / 销售日志 H5</p>
-                <code className="mt-1 block break-all">https://你的域名/today-work</code>
-                <code className="mt-1 block break-all">https://你的域名/mobile/log</code>
+                <p className="mt-3 font-medium text-amber-800 dark:text-amber-200">
+                  微信里要像「赢在销客」一样进消息列表（必关）
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  企微后台 → 应用详情 → 关闭「在微工作台中始终进入主页」。
+                  若开启：微信端所有卡片都会变成「请到企业微信查看」，点击则打开应用主页（以前若配过
+                  IP，就会一直进 IP 确认页）。关掉后，点会话会进入消息对话流，再点卡片进 CRM。
+                </p>
+                <p className="mt-2 text-muted-foreground">
+                  或直接走 OAuth 进入消息列表：
+                </p>
+                <code className="mt-1 block break-all">
+                  https://crm.pynntech.com/api/auth/wecom?returnTo=%2Fmobile%2Finbox
+                </code>
+                <p className="mt-3 font-medium text-foreground">销售首页 / 今日工作（电脑端）</p>
+                <code className="mt-1 block break-all">https://crm.pynntech.com/mobile</code>
+                <code className="mt-1 block break-all">https://crm.pynntech.com/today-work</code>
               </div>
               <p className="text-muted-foreground">
                 <strong>可信域名</strong>、<strong>OAuth 回调域</strong>、<strong>JS 接口安全域名</strong>
-                均填写 CRM 域名。另需在企微后台将服务器公网 IP 加入<strong>企业可信 IP</strong>（当前生产：
+                均填写 <code>crm.pynntech.com</code>。另需在企微后台将服务器公网 IP 加入<strong>企业可信 IP</strong>（当前生产：
                 <code>122.51.86.223</code>
                 ），否则授权换票会失败。PC 浏览器登录使用「登录页 → 企业微信扫码」。
               </p>

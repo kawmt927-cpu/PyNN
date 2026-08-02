@@ -11,10 +11,14 @@ import {
   remainingTimeClassName,
 } from "@/lib/today-work/remaining-time";
 import {
+  assignmentKindLabel,
+  assignmentStatusLabel,
   listPendingWeeklyAssignmentsForUser,
   weeklyAssignmentFollowUpHref,
 } from "@/lib/today-work/weekly-assignments";
 import { withReturnTo } from "@/lib/navigation/return-to";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
+import { GeneralAssignmentActionButton } from "@/components/today-work/general-assignment-action-button";
 import type { UserRole } from "@prisma/client";
 
 type Props = {
@@ -57,7 +61,11 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                   >
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{item.customer.name}</span>
+                        <CustomerNameLink
+                          customerId={item.customer.id}
+                          name={item.customer.name}
+                          returnTo={returnPath}
+                        />
                         <CustomerGradeIcon
                           grade={item.customer.customerGrade}
                           size="sm"
@@ -96,17 +104,27 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">每周任务（{weeklyTasks.length}）</CardTitle>
-          <p className="text-sm text-muted-foreground">由销售管理员指派，请在截止前完成跟进。</p>
+          <CardTitle className="text-lg">指派任务（{weeklyTasks.length}）</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            含客户跟进与普通任务；普通任务完成后需指派人确认。
+          </p>
         </CardHeader>
         <CardContent>
           {weeklyTasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">本周暂无指派任务。</p>
+            <p className="text-sm text-muted-foreground">暂无未完成的指派任务。</p>
           ) : (
             <ul className="space-y-3">
               {weeklyTasks.map((task) => {
                 const remaining = getRemainingTimeInfo(task.dueAt, now);
                 const href = weeklyAssignmentFollowUpHref(task, returnPath);
+                const canMarkDone =
+                  task.kind === "GENERAL" &&
+                  task.status === "PENDING" &&
+                  task.assigneeId === userId;
+                const canConfirm =
+                  task.kind === "GENERAL" &&
+                  task.status === "PENDING_CONFIRM" &&
+                  task.createdById === userId;
                 return (
                   <li
                     key={task.id}
@@ -114,9 +132,29 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                   >
                     <div className="min-w-0 space-y-1">
                       <p className="font-medium">
-                        {task.customer?.name ?? task.opportunity?.title ?? "—"}
+                        {task.kind === "GENERAL" ? (
+                          task.title
+                        ) : task.customer ? (
+                          <CustomerNameLink
+                            customerId={task.customer.id}
+                            name={task.customer.name}
+                            returnTo={returnPath}
+                          />
+                        ) : (
+                          task.opportunity?.title ?? "—"
+                        )}
                       </p>
-                      <p className="text-sm text-muted-foreground">{task.title}</p>
+                      {task.kind === "GENERAL" ? null : (
+                        <p className="text-sm text-muted-foreground">{task.title}</p>
+                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                          {assignmentKindLabel(task.kind)}
+                        </span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                          {assignmentStatusLabel(task.status)}
+                        </span>
+                      </div>
                       {task.description ? (
                         <p className="text-sm text-muted-foreground line-clamp-2">{task.description}</p>
                       ) : null}
@@ -133,6 +171,15 @@ export async function TodayPendingActionsPanel({ role, userId, returnPath }: Pro
                         <Button asChild size="sm">
                           <Link href={href}>去跟进</Link>
                         </Button>
+                      ) : null}
+                      {canMarkDone ? (
+                        <GeneralAssignmentActionButton assignmentId={task.id} mode="mark_done" />
+                      ) : null}
+                      {canConfirm ? (
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <GeneralAssignmentActionButton assignmentId={task.id} mode="confirm" />
+                          <GeneralAssignmentActionButton assignmentId={task.id} mode="reject" />
+                        </div>
                       ) : null}
                     </div>
                   </li>

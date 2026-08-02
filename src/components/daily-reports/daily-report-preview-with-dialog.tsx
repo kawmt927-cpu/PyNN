@@ -18,6 +18,8 @@ type Props = {
   meta?: string | null;
   content: string;
   preview: string;
+  /** 深链打开时默认弹出详情 */
+  defaultOpen?: boolean;
 };
 
 export function DailyReportPreviewWithDialog({
@@ -27,8 +29,9 @@ export function DailyReportPreviewWithDialog({
   meta,
   content,
   preview,
+  defaultOpen = false,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const description = [subtitle, meta].filter(Boolean).join(" · ");
 
   return (

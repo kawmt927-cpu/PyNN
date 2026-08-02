@@ -1,4 +1,5 @@
 import { ContractStatus, UserRole } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 export function canManageContractApproval(role: UserRole) {
   return role === "SALES_MANAGER" || role === "ADMIN";
@@ -18,13 +19,30 @@ export function canManageContractAttachments(role: UserRole) {
   return role === "SALES" || role === "SALES_MANAGER" || role === "ADMIN" || role === "PROJECT_MANAGER";
 }
 
-export function canEditRejectedContract(
+/** 已驳回合同：发起人（提交人/负责人）或销管可改后重提 / 删除 */
+export function canHandleRejectedContract(
   role: UserRole,
-  _userId: string,
-  contract: { ownerId: string; status: ContractStatus }
+  userId: string,
+  contract: { ownerId: string; submittedById?: string | null; status: ContractStatus }
 ) {
   if (contract.status !== "REJECTED") return false;
-  return canManageContractApproval(role);
+  if (canManageContractApproval(role)) return true;
+  const initiatorId = contract.submittedById || contract.ownerId;
+  return initiatorId === userId;
+}
+
+/** @deprecated 使用 canHandleRejectedContract */
+export function canEditRejectedContract(
+  role: UserRole,
+  userId: string,
+  contract: { ownerId: string; submittedById?: string | null; status: ContractStatus }
+) {
+  return canHandleRejectedContract(role, userId, contract);
+}
+
+/** 合同列表默认排除已驳回 */
+export function excludeRejectedFromContractList(): Prisma.ContractWhereInput {
+  return { status: { not: "REJECTED" } };
 }
 
 /** 已签署及之后状态，计入 KPI */

@@ -41,16 +41,20 @@ export function FollowUpHistoryList({ followUps, linkReturnTo }: Props) {
             <span className="font-medium">
               {f.contacts.length > 0 ? `${f.contacts.map((c) => c.name).join("、")} · ` : ""}
               {followUpMethodLabel(f.method)} · {f.user.name}
-              {f.opportunity && (
-                <>
-                  {" · "}
-                  <Link
-                    href={opportunityHref(f.opportunity.id)}
-                    className="text-primary hover:underline"
-                  >
-                    商机：{f.opportunity.title}
-                  </Link>
-                </>
+              {(f.opportunities?.length ? f.opportunities : f.opportunity ? [f.opportunity] : []).map(
+                (opp, index, list) => (
+                  <span key={opp.id}>
+                    {index === 0 ? " · " : ""}
+                    {list.length > 1 ? "商机" : "商机："}
+                    <Link
+                      href={opportunityHref(opp.id)}
+                      className="text-primary hover:underline"
+                    >
+                      {list.length > 1 ? opp.title : opp.title}
+                    </Link>
+                    {index < list.length - 1 ? "、" : ""}
+                  </span>
+                )
               )}
             </span>
             <span className="text-muted-foreground">

@@ -4,9 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CustomerClaimApprovalList } from "@/components/approvals/customer-claim-approval-list";
 import { ContractApprovalList } from "@/components/approvals/contract-approval-list";
+import { ExpenseApprovalList } from "@/components/approvals/expense-approval-list";
 import { APPROVAL_TYPE, APPROVAL_TYPE_LABELS } from "@/lib/approvals/constants";
 import { pendingContractApprovalFilter } from "@/lib/contracts/approval";
 import { approveContract, rejectContract } from "@/app/(dashboard)/contracts/actions";
+import { ALL_AUTHED_ROLES, canFinanceExpense } from "@/lib/expenses/labels";
+import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -14,15 +17,48 @@ type Props = {
 };
 
 export default async function ApprovalsPage({ searchParams }: Props) {
-  await requireRole(["SALES_MANAGER", "ADMIN"]);
+  const session = await requireRole([...ALL_AUTHED_ROLES]);
   const { tab: rawTab, type: rawType, customerId } = await searchParams;
   const tab = rawTab === "done" ? "done" : "pending";
-  const type = rawType === APPROVAL_TYPE.CONTRACT ? APPROVAL_TYPE.CONTRACT : APPROVAL_TYPE.CUSTOMER_CLAIM;
+  const canSalesApprovals =
+    session.user.role === "SALES_MANAGER" || session.user.role === "ADMIN";
+  const expenseOn = isExpenseFeatureEnabled();
+  const isFinance = expenseOn && canFinanceExpense(session.user.role);
+
+  const type =
+    rawType === APPROVAL_TYPE.CONTRACT && canSalesApprovals
+      ? APPROVAL_TYPE.CONTRACT
+      : rawType === APPROVAL_TYPE.CUSTOMER_CLAIM && canSalesApprovals
+        ? APPROVAL_TYPE.CUSTOMER_CLAIM
+        : expenseOn && (rawType === APPROVAL_TYPE.EXPENSE || !canSalesApprovals)
+          ? APPROVAL_TYPE.EXPENSE
+          : APPROVAL_TYPE.CUSTOMER_CLAIM;
 
   const db = prisma;
+  const expensePendingWhere =
+    session.user.role === "ADMIN"
+      ? {
+          OR: [
+            { status: "PENDING_MANAGER" as const },
+            { status: "PENDING_PAYOUT" as const },
+          ],
+        }
+      : {
+          OR: [
+            { managerId: session.user.id, status: "PENDING_MANAGER" as const },
+            ...(isFinance ? [{ status: "PENDING_PAYOUT" as const }] : []),
+          ],
+        };
 
-  const [pendingClaims, recentClaims, pendingContracts, recentContracts] = await Promise.all([
-    type === APPROVAL_TYPE.CUSTOMER_CLAIM
+  const [
+    pendingClaims,
+    recentClaims,
+    pendingContracts,
+    recentContracts,
+    pendingExpenses,
+    recentExpenses,
+  ] = await Promise.all([
+    type === APPROVAL_TYPE.CUSTOMER_CLAIM && canSalesApprovals
       ? db.customerClaimRequest.findMany({
           where: {
             status: "PENDING",
@@ -36,7 +72,7 @@ export default async function ApprovalsPage({ searchParams }: Props) {
           orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
-    type === APPROVAL_TYPE.CUSTOMER_CLAIM
+    type === APPROVAL_TYPE.CUSTOMER_CLAIM && canSalesApprovals
       ? db.customerClaimRequest.findMany({
           where: {
             status: { not: "PENDING" },
@@ -51,7 +87,7 @@ export default async function ApprovalsPage({ searchParams }: Props) {
           take: 30,
         })
       : Promise.resolve([]),
-    type === APPROVAL_TYPE.CONTRACT
+    type === APPROVAL_TYPE.CONTRACT && canSalesApprovals
       ? db.contract.findMany({
           where: pendingContractApprovalFilter(),
           include: {
@@ -62,7 +98,7 @@ export default async function ApprovalsPage({ searchParams }: Props) {
           orderBy: [{ submittedAt: "asc" }, { createdAt: "asc" }],
         })
       : Promise.resolve([]),
-    type === APPROVAL_TYPE.CONTRACT
+    type === APPROVAL_TYPE.CONTRACT && canSalesApprovals
       ? db.contract.findMany({
           where: {
             status: { in: ["SIGNED_PENDING_IMPL", "REJECTED"] },
@@ -77,15 +113,53 @@ export default async function ApprovalsPage({ searchParams }: Props) {
           take: 30,
         })
       : Promise.resolve([]),
+    type === APPROVAL_TYPE.EXPENSE && expenseOn
+      ? db.expenseClaim.findMany({
+          where: expensePendingWhere,
+          include: {
+            applicant: { select: { name: true } },
+            manager: { select: { name: true } },
+          },
+          orderBy: { submittedAt: "asc" },
+          take: 50,
+        })
+      : Promise.resolve([]),
+    type === APPROVAL_TYPE.EXPENSE && expenseOn
+      ? db.expenseClaim.findMany({
+          where: {
+            OR: [
+              { managerId: session.user.id, status: { in: ["REJECTED", "PENDING_PAYOUT", "PAID"] } },
+              ...(isFinance
+                ? [{ status: "PAID" as const }]
+                : []),
+            ],
+          },
+          include: {
+            applicant: { select: { name: true } },
+            manager: { select: { name: true } },
+          },
+          orderBy: { updatedAt: "desc" },
+          take: 30,
+        })
+      : Promise.resolve([]),
   ]);
 
-  const [pendingClaimCount, pendingContractCount] = await Promise.all([
-    db.customerClaimRequest.count({ where: { status: "PENDING" } }),
-    db.contract.count({ where: pendingContractApprovalFilter() }),
+  const [pendingClaimCount, pendingContractCount, pendingExpenseCount] = await Promise.all([
+    canSalesApprovals
+      ? db.customerClaimRequest.count({ where: { status: "PENDING" } })
+      : Promise.resolve(0),
+    canSalesApprovals
+      ? db.contract.count({ where: pendingContractApprovalFilter() })
+      : Promise.resolve(0),
+    db.expenseClaim.count({ where: expensePendingWhere }),
   ]);
 
   const pendingCount =
-    type === APPROVAL_TYPE.CONTRACT ? pendingContracts.length : pendingClaims.length;
+    type === APPROVAL_TYPE.CONTRACT
+      ? pendingContracts.length
+      : type === APPROVAL_TYPE.EXPENSE
+        ? pendingExpenses.length
+        : pendingClaims.length;
 
   const typeQuery = (nextType: string) => {
     const params = new URLSearchParams();
@@ -108,21 +182,35 @@ export default async function ApprovalsPage({ searchParams }: Props) {
       <div>
         <h1 className="text-2xl font-bold">审批</h1>
         <p className="text-muted-foreground">
-          统一处理各类待办审批：{Object.values(APPROVAL_TYPE_LABELS).join("、")}
+          统一处理各类待办审批：
+          {canSalesApprovals
+            ? Object.values(APPROVAL_TYPE_LABELS).join("、")
+            : APPROVAL_TYPE_LABELS.EXPENSE}
         </p>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <TypeLink
-          href={typeQuery(APPROVAL_TYPE.CUSTOMER_CLAIM)}
-          active={type === APPROVAL_TYPE.CUSTOMER_CLAIM}
-          label={`${APPROVAL_TYPE_LABELS.CUSTOMER_CLAIM} (${pendingClaimCount})`}
-        />
-        <TypeLink
-          href={typeQuery(APPROVAL_TYPE.CONTRACT)}
-          active={type === APPROVAL_TYPE.CONTRACT}
-          label={`${APPROVAL_TYPE_LABELS.CONTRACT} (${pendingContractCount})`}
-        />
+        {canSalesApprovals ? (
+          <>
+            <TypeLink
+              href={typeQuery(APPROVAL_TYPE.CUSTOMER_CLAIM)}
+              active={type === APPROVAL_TYPE.CUSTOMER_CLAIM}
+              label={`${APPROVAL_TYPE_LABELS.CUSTOMER_CLAIM} (${pendingClaimCount})`}
+            />
+            <TypeLink
+              href={typeQuery(APPROVAL_TYPE.CONTRACT)}
+              active={type === APPROVAL_TYPE.CONTRACT}
+              label={`${APPROVAL_TYPE_LABELS.CONTRACT} (${pendingContractCount})`}
+            />
+          </>
+        ) : null}
+        {expenseOn ? (
+          <TypeLink
+            href={typeQuery(APPROVAL_TYPE.EXPENSE)}
+            active={type === APPROVAL_TYPE.EXPENSE}
+            label={`${APPROVAL_TYPE_LABELS.EXPENSE} (${pendingExpenseCount})`}
+          />
+        ) : null}
       </div>
 
       {customerId && type === APPROVAL_TYPE.CUSTOMER_CLAIM && (
@@ -162,6 +250,18 @@ export default async function ApprovalsPage({ searchParams }: Props) {
                   submittedBy: row.submittedBy,
                 }))}
               />
+            ) : type === APPROVAL_TYPE.EXPENSE ? (
+              <ExpenseApprovalList
+                items={pendingExpenses.map((row) => ({
+                  id: row.id,
+                  title: row.title,
+                  status: row.status,
+                  totalAmount: Number(row.totalAmount),
+                  submittedAt: row.submittedAt,
+                  applicant: row.applicant,
+                  manager: row.manager,
+                }))}
+              />
             ) : (
               <CustomerClaimApprovalList items={pendingClaims} showActions />
             )}
@@ -185,6 +285,19 @@ export default async function ApprovalsPage({ searchParams }: Props) {
                   owner: row.owner,
                   signCustomer: row.signCustomer,
                   submittedBy: row.submittedBy,
+                }))}
+              />
+            ) : type === APPROVAL_TYPE.EXPENSE ? (
+              <ExpenseApprovalList
+                items={recentExpenses.map((row) => ({
+                  id: row.id,
+                  title: row.title,
+                  status: row.status,
+                  totalAmount: Number(row.totalAmount),
+                  submittedAt: row.submittedAt,
+                  paidAt: row.paidAt,
+                  applicant: row.applicant,
+                  manager: row.manager,
                 }))}
               />
             ) : (

@@ -73,21 +73,27 @@ export default async function OpportunityFollowUpsPage({ params, searchParams }:
             {opportunity.owner.name}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            销售对象：
-            <Link
-              href={withReturnTo(`/customers/${opportunity.customerId}`, selfPath)}
-              className="ml-1 text-primary hover:underline"
-            >
-              {opportunity.customer.name}
-            </Link>
-            <span className="mx-2">·</span>
-            记录会同步计入
-            <Link
-              href={withReturnTo(`/customers/${opportunity.customerId}/follow-ups`, selfPath)}
-              className="ml-1 text-primary hover:underline"
-            >
-              客户跟进
-            </Link>
+            主要客户：
+            {opportunity.customerId && opportunity.customer ? (
+              <>
+                <Link
+                  href={withReturnTo(`/customers/${opportunity.customerId}`, selfPath)}
+                  className="ml-1 text-primary hover:underline"
+                >
+                  {opportunity.customer.name}
+                </Link>
+                <span className="mx-2">·</span>
+                记录会同步计入
+                <Link
+                  href={withReturnTo(`/customers/${opportunity.customerId}/follow-ups`, selfPath)}
+                  className="ml-1 text-primary hover:underline"
+                >
+                  客户跟进
+                </Link>
+              </>
+            ) : (
+              <span className="ml-1">未指定（跟进仅记在商机上）</span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

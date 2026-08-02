@@ -35,7 +35,6 @@ export default async function SchedulePage({ searchParams }: Props) {
   const session = await requireRole([
     "PROJECT_ADMIN",
     "PROJECT_MANAGER",
-    "PROJECT_STAFF",
     "ADMIN",
   ]);
 

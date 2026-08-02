@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CustomerListFilters } from "@/components/customers/customer-list-filters";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
 import { CustomerTagList } from "@/components/customers/customer-tag-badge";
 import {
   CustomerListPageNumbers,
@@ -224,7 +225,9 @@ export default async function CustomersPage({ searchParams }: Props) {
                       <th className="whitespace-nowrap pb-2 pr-4">标签</th>
                       <th className="whitespace-nowrap pb-2 pr-4">负责人</th>
                       <th className="whitespace-nowrap pb-2 pr-4">最近联系</th>
-                      <th className="whitespace-nowrap pb-2">操作</th>
+                      <th className="sticky right-0 z-10 whitespace-nowrap bg-card pb-2 pl-3 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.12)]">
+                        操作
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -240,8 +243,13 @@ export default async function CustomersPage({ searchParams }: Props) {
                         : null;
                       return (
                       <tr key={c.id} className="border-b">
-                        <td className="max-w-[14rem] truncate whitespace-nowrap py-3 pr-4 font-medium" title={c.name}>
-                          {c.name}
+                        <td className="max-w-[14rem] truncate whitespace-nowrap py-3 pr-4 font-medium">
+                          <CustomerNameLink
+                            customerId={c.id}
+                            name={c.name}
+                            returnTo={listPath}
+                            className="block truncate"
+                          />
                         </td>
                         <td className="whitespace-nowrap py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
                         <td className="whitespace-nowrap py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>
@@ -273,10 +281,10 @@ export default async function CustomersPage({ searchParams }: Props) {
                             text={latest?.content}
                           />
                         </td>
-                        <td className="whitespace-nowrap py-3">
+                        <td className="sticky right-0 z-10 whitespace-nowrap bg-card py-3 pl-3 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.12)]">
                           <Link
                             href={withReturnTo(`/customers/${c.id}`, listPath)}
-                            className="text-primary hover:underline"
+                            className="inline-block text-primary hover:underline"
                           >
                             详情
                           </Link>

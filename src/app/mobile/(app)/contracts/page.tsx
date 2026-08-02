@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SALES_MOBILE_ROLES } from "@/lib/mobile/sales-roles";
 import { contractListWhere } from "@/lib/opportunities/access";
+import { excludeRejectedFromContractList } from "@/lib/contracts/access";
 import { CONTRACT_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { MobileSearchForm } from "@/components/mobile/mobile-search-form";
@@ -17,7 +18,9 @@ export default async function MobileContractsPage({ searchParams }: Props) {
   const session = await requireRole(SALES_MOBILE_ROLES);
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
-  const where: Prisma.ContractWhereInput = contractListWhere(session.user.role, session.user.id);
+  const where: Prisma.ContractWhereInput = {
+    AND: [contractListWhere(session.user.role, session.user.id), excludeRejectedFromContractList()],
+  };
 
   const raw = await prisma.contract.findMany({
     where,

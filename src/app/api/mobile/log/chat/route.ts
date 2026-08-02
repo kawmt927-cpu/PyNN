@@ -3,7 +3,12 @@ import { UserRole } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { createSalesLogAgentStream, isAiAgentAvailable } from "@/lib/agent/runtime";
 import { buildTodayWorkContextForAgent } from "@/lib/agent/today-work-context";
-import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
+import {
+  ensureDailyLogForDate,
+  formatLogDateParam,
+  getTodayLogDate,
+  parseLogDateParam,
+} from "@/lib/sales-log/daily-log";
 
 export const maxDuration = 60;
 
@@ -32,8 +37,19 @@ export async function POST(req: Request) {
     );
   }
 
-  const { messages } = await req.json();
-  const dailyLog = await ensureTodayDailyLog(session.user.id);
+  const body = await req.json();
+  const messages = body.messages;
+  const logDate = parseLogDateParam(
+    typeof body.date === "string" ? body.date : undefined
+  );
+  const todayKey = formatLogDateParam(getTodayLogDate());
+  if (formatLogDateParam(logDate) !== todayKey) {
+    return new Response(
+      JSON.stringify({ error: "仅可对话改写当日日报，历史日期为只读" }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const dailyLog = await ensureDailyLogForDate(session.user.id, logDate);
   const todayWorkContext = await buildTodayWorkContextForAgent(
     session.user.role,
     session.user.id

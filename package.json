@@ -23,6 +23,7 @@
     "db:clean:legacy-daily-log": "tsx scripts/legacy-daily-log-clean.ts",
     "db:import:legacy-daily-log": "tsx scripts/legacy-daily-log-import.ts",
     "db:studio": "prisma studio",
+    "cron:daily-report-remind": "bash scripts/cron-daily-report-remind.sh",
     "postinstall": "prisma generate"
   },
   "prisma": {

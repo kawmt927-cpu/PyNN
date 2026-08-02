@@ -47,6 +47,7 @@ const SALES_ITEMS: NavItem[] = [
     icon: MoreHorizontal,
     match: (p) =>
       p.startsWith("/mobile/more") ||
+      p.startsWith("/mobile/inbox") ||
       p.startsWith("/mobile/customers") ||
       p.startsWith("/mobile/opportunities") ||
       p.startsWith("/mobile/contracts") ||
@@ -81,6 +82,7 @@ const MANAGER_ITEMS: NavItem[] = [
     icon: MoreHorizontal,
     match: (p) =>
       p.startsWith("/mobile/more") ||
+      p.startsWith("/mobile/inbox") ||
       p.startsWith("/mobile/customers") ||
       p.startsWith("/mobile/opportunities") ||
       p.startsWith("/mobile/contracts") ||

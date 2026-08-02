@@ -6,6 +6,7 @@ import {
 } from "@/lib/opportunities/access";
 import { buildOpportunityEditChanges } from "@/lib/opportunities/edit-log";
 import { parseExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
+import { assertOpportunityGrade, OPPORTUNITY_GRADE } from "@/lib/opportunities/grade";
 import { prisma } from "@/lib/prisma";
 import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
 import { searchCustomersForUser } from "@/lib/search/entity-suggest";
@@ -49,6 +50,7 @@ export async function createOpportunityFromAgent(
     expectedAmount: number;
     expectedCloseDate: string;
     stage: string;
+    grade?: string;
     requirementDesc?: string;
     winProbability?: number | null;
     competitor?: string;
@@ -58,6 +60,7 @@ export async function createOpportunityFromAgent(
   const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
   const stage = await assertConfigValue(CONFIG_CATEGORY.OPPORTUNITY_STAGE, input.stage);
   if (!stage) throw new Error("商机阶段无效");
+  const grade = assertOpportunityGrade(input.grade || OPPORTUNITY_GRADE.P3);
 
   const customerId = await resolveCustomerIdForOpportunity(
     ctx,
@@ -77,6 +80,7 @@ export async function createOpportunityFromAgent(
         expectedAmount: input.expectedAmount,
         expectedCloseDate: parseExpectedCloseMonth(input.expectedCloseDate),
         stage,
+        grade,
         requirementDesc: input.requirementDesc?.trim() || undefined,
         winProbability: input.winProbability ?? undefined,
         competitor: input.competitor?.trim() || undefined,
@@ -157,6 +161,7 @@ export async function updateOpportunityFromAgent(
     expectedCloseDate:
       input.expectedCloseDate ?? `${existing.expectedCloseDate.getFullYear()}-${String(existing.expectedCloseDate.getMonth() + 1).padStart(2, "0")}`,
     stage,
+    grade: existing.grade ?? null,
     requirementDesc:
       input.requirementDesc !== undefined
         ? input.requirementDesc.trim() || null

@@ -3,6 +3,7 @@ import {
   compareDates,
   eachCalendarDay,
   isDateInRange,
+  isWorkday,
   maxDate,
   minDate,
   toDateOnly,
@@ -63,6 +64,9 @@ export function getDailyShares(
   allAllocations: AllocationRecord[]
 ): Map<string, number> {
   const shares = new Map<string, number>();
+  // 人天/成本只计工作日；日单价=有效月成本÷当月工作日，若含周末会系统性超过月成本
+  if (!isWorkday(date)) return shares;
+
   const active = allAllocations.filter(
     (a) => a.userId === userId && allocationActiveOn(a, date)
   );

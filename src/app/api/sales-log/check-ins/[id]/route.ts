@@ -42,6 +42,7 @@ export async function PATCH(req: Request, { params }: Props) {
       result: parsed.result,
       suggestedGrade: parsed.suggestedGrade,
       opportunityId: parsed.opportunityId,
+      opportunityIds: parsed.opportunityIds,
       nextFollowUpAt: parsed.nextFollowUpAt,
       nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) ?? undefined,
       nextFollowUpContent: parsed.nextFollowUpContent,

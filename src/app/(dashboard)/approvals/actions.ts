@@ -117,6 +117,14 @@ export async function rejectCustomerClaim(formData: FormData) {
 }
 
 export async function getPendingApprovalCount() {
-  await requireRole(["SALES_MANAGER", "ADMIN"]);
-  return countPendingApprovals();
+  const session = await requireRole([
+    "SALES",
+    "SALES_MANAGER",
+    "PROJECT_ADMIN",
+    "PROJECT_MANAGER",
+    "PROJECT_STAFF",
+    "ADMIN",
+    "HR",
+  ]);
+  return countPendingApprovals({ id: session.user.id, role: session.user.role });
 }

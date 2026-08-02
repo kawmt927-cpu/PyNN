@@ -7,8 +7,24 @@ import {
   type InstallmentPlanRow,
 } from "@/lib/contracts/payment-waterfall";
 
-/** 计划到期前 N 天内纳入「待收」提醒 */
+/** 计划到期前 N 天内纳入「待收」提醒（兼容旧逻辑） */
 export const PAYMENT_DUE_WARNING_DAYS = 7;
+
+export const PAYMENT_DUE_FILTERS = [
+  { value: "overdue", label: "逾期", withinDays: null },
+  { value: "15", label: "15 天", withinDays: 15 },
+  { value: "30", label: "30 天", withinDays: 30 },
+  { value: "90", label: "3 个月", withinDays: 90 },
+] as const;
+
+export type PaymentDueFilterValue = (typeof PAYMENT_DUE_FILTERS)[number]["value"];
+
+export function parsePaymentDueFilter(
+  raw: string | undefined
+): PaymentDueFilterValue {
+  if (raw === "15" || raw === "30" || raw === "90" || raw === "overdue") return raw;
+  return "overdue";
+}
 
 export type PaymentDueWeekRange = {
   weekStart: Date;
@@ -70,11 +86,22 @@ function addDays(date: Date, days: number) {
   return d;
 }
 
-function isDueSoon(dueAt: Date, now: Date) {
+function isDueWithinDays(dueAt: Date, now: Date, days: number) {
   const today = startOfDay(now);
   const dueDay = startOfDay(dueAt);
   if (dueDay < today) return false;
-  return dueDay <= startOfDay(addDays(now, PAYMENT_DUE_WARNING_DAYS));
+  return dueDay <= startOfDay(addDays(now, days));
+}
+
+function matchesPaymentDueFilter(
+  row: ActionableInstallment,
+  filter: PaymentDueFilterValue,
+  now: Date
+) {
+  if (filter === "overdue") return row.overdue;
+  const withinDays =
+    filter === "15" ? 15 : filter === "30" ? 30 : filter === "90" ? 90 : 7;
+  return !row.overdue && isDueWithinDays(row.dueAt, now, withinDays);
 }
 
 function isOverdue(dueAt: Date, now: Date) {
@@ -130,7 +157,7 @@ export function listActionableInstallments(
         percentComplete: row.percentComplete,
         remainingAmount,
         overdue: isOverdue(dueAt, now),
-        dueSoon: isDueSoon(dueAt, now),
+        dueSoon: isDueWithinDays(dueAt, now, PAYMENT_DUE_WARNING_DAYS),
       };
     });
 }
@@ -242,7 +269,48 @@ export async function getContractPaymentDueBadgeMap(
   return map;
 }
 
-/** 销售管理：全员逾期 / 待收汇总 */
+/** 销售管理：按筛选标签列出回款期次 */
+export async function listTeamPaymentDueByFilter(
+  filter: PaymentDueFilterValue,
+  now = new Date(),
+  take = 80
+) {
+  const contracts = await fetchSignedContractsWithPayments();
+  const items: PaymentDueItem[] = [];
+
+  for (const contract of contracts) {
+    for (const row of listActionableInstallments(contract, now)) {
+      if (!matchesPaymentDueFilter(row, filter, now)) continue;
+      items.push(toPaymentDueItem(contract, row));
+    }
+  }
+
+  items.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());
+  const sliced = items.slice(0, take);
+
+  const byOwner = new Map<
+    string,
+    { ownerName: string; count: number; overdueCount: number }
+  >();
+  for (const row of sliced) {
+    const bucket = byOwner.get(row.ownerId) ?? {
+      ownerName: row.ownerName,
+      count: 0,
+      overdueCount: 0,
+    };
+    bucket.count += 1;
+    if (row.overdue) bucket.overdueCount += 1;
+    byOwner.set(row.ownerId, bucket);
+  }
+
+  return {
+    filter,
+    items: sliced,
+    byOwner: [...byOwner.entries()].map(([ownerId, data]) => ({ ownerId, ...data })),
+  };
+}
+
+/** @deprecated 保留给旧调用；新 UI 使用 listTeamPaymentDueByFilter */
 export async function listTeamPaymentDueOverview(now = new Date(), take = 50) {
   const overdue = await listPaymentDueItems({ overdueOnly: true, now, take });
   const dueSoon = await listPaymentDueItems({ now, take: take * 2 }).then((rows) =>
@@ -281,4 +349,25 @@ export async function listTeamPaymentDueOverview(now = new Date(), take = 50) {
     dueSoon: dueSoon.slice(0, take),
     byOwner: [...byOwner.entries()].map(([ownerId, data]) => ({ ownerId, ...data })),
   };
+}
+
+/** 与指派弹窗预填标题保持一致，用于识别「已指派回款任务」 */
+export function paymentCollectionAssignTitle(item: {
+  contractTitle: string;
+  periodNumber: number;
+}) {
+  return `催收回款：${item.contractTitle} 第 ${item.periodNumber} 期`;
+}
+
+/** 未完成的催收回款指派任务标题集合 */
+export async function listOpenPaymentCollectionAssignmentTitles(): Promise<string[]> {
+  const rows = await prisma.salesWeeklyAssignment.findMany({
+    where: {
+      status: { in: ["PENDING", "PENDING_CONFIRM"] },
+      kind: "CUSTOMER_FOLLOW_UP",
+      title: { startsWith: "催收回款：" },
+    },
+    select: { title: true },
+  });
+  return [...new Set(rows.map((row) => row.title))];
 }

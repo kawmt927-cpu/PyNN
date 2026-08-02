@@ -66,7 +66,46 @@ export function parseYearMonthParam(
   if (!Number.isInteger(month) || month < 1 || month > 12) {
     return { year: fallbackYear, month: fallbackMonth };
   }
+  return clampYearMonthToPresent(year, month, fallback);
+}
+
+/** 当前自然月（按 Asia/Shanghai 业务日也可直接用传入 now） */
+export function currentYearMonth(now: Date = new Date()): { year: number; month: number } {
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
+export function compareYearMonth(
+  a: { year: number; month: number },
+  b: { year: number; month: number }
+): number {
+  return a.year * 12 + a.month - (b.year * 12 + b.month);
+}
+
+/** 不允许查看/编辑尚未到达的月份 */
+export function clampYearMonthToPresent(
+  year: number,
+  month: number,
+  now: Date = new Date()
+): { year: number; month: number } {
+  const current = currentYearMonth(now);
+  if (compareYearMonth({ year, month }, current) > 0) return current;
   return { year, month };
+}
+
+export function isFutureYearMonth(
+  year: number,
+  month: number,
+  now: Date = new Date()
+): boolean {
+  return compareYearMonth({ year, month }, currentYearMonth(now)) > 0;
+}
+
+export function isCurrentYearMonth(
+  year: number,
+  month: number,
+  now: Date = new Date()
+): boolean {
+  return compareYearMonth({ year, month }, currentYearMonth(now)) === 0;
 }
 
 /**

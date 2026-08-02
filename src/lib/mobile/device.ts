@@ -18,5 +18,51 @@ export function isPhoneOrWeComUserAgent(userAgent: string): boolean {
 
 /** 企微 OAuth / 入口页的默认落地路径 */
 export function getWeComDefaultReturnTo(userAgent: string): string {
-  return isPhoneOrWeComUserAgent(userAgent) ? "/mobile" : "/";
+  return isPhoneOrWeComUserAgent(userAgent) ? "/mobile/inbox" : "/";
+}
+
+/**
+ * 将电脑端业务路径映射到手机端等价路径（保留深链，避免一律打回 /mobile 首页）。
+ */
+export function mapDesktopPathToMobile(pathname: string, search = ""): string | null {
+  if (pathname.startsWith("/mobile")) return `${pathname}${search}`;
+
+  if (pathname === "/notifications" || pathname.startsWith("/notifications/")) {
+    return "/mobile/inbox";
+  }
+
+  const customerFollow = pathname.match(/^\/customers\/([^/]+)\/follow-ups\/?$/);
+  if (customerFollow) return `/mobile/customers/${customerFollow[1]}/follow-ups`;
+
+  const customer = pathname.match(/^\/customers\/([^/]+)\/?$/);
+  if (customer) return `/mobile/customers/${customer[1]}`;
+
+  if (pathname === "/customers") return `/mobile/customers${search}`;
+
+  const contract = pathname.match(/^\/contracts\/([^/]+)\/?$/);
+  if (contract) return `/mobile/contracts/${contract[1]}`;
+  if (pathname === "/contracts") return `/mobile/contracts${search}`;
+
+  const opportunity = pathname.match(/^\/opportunities\/([^/]+)\/?$/);
+  if (opportunity) return `/mobile/opportunities/${opportunity[1]}`;
+  if (pathname === "/opportunities") return `/mobile/opportunities${search}`;
+
+  if (pathname === "/follow-ups" || pathname.startsWith("/follow-ups/")) {
+    return "/mobile/follow-ups";
+  }
+  if (pathname.startsWith("/today-work") || pathname.startsWith("/daily-reports")) {
+    // 今日工作记录/团队动态 → 手机今日日志（保留 ?open= 深链）
+    if (pathname.startsWith("/today-work")) {
+      return `/mobile/activity${search}`;
+    }
+    return "/mobile/log";
+  }
+  if (pathname.startsWith("/sales-log")) {
+    return "/mobile/check-in";
+  }
+  if (pathname.startsWith("/plans-tasks") || pathname === "/my-tasks") {
+    return "/mobile/tasks";
+  }
+
+  return null;
 }

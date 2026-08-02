@@ -159,6 +159,9 @@ export async function getContractForUser(id: string, role: UserRole, userId: str
   });
   if (!contract) return null;
   if (role === "PROJECT_MANAGER") return contract;
-  if (!canViewAllContracts(role) && contract.ownerId !== userId) return null;
-  return contract;
+  if (canViewAllContracts(role)) return contract;
+  if (contract.ownerId === userId) return contract;
+  // 已驳回：提交人也可查看以便删除/重提
+  if (contract.status === "REJECTED" && contract.submittedById === userId) return contract;
+  return null;
 }

@@ -36,7 +36,7 @@ export async function GET(req: Request) {
     id: row.id,
     title: row.title,
     status: row.status,
-    customerName: row.customer.name,
+    customerName: row.customer?.name ?? "未指定客户",
   }));
 
   return Response.json({ items });

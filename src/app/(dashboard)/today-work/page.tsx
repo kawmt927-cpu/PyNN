@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
+import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { getEffectiveAmapConfig } from "@/lib/amap/config";
 import { listTodayCheckIns, checkInRequiresFollowUp } from "@/lib/sales-log/check-in";
 import { listTodayFollowUps } from "@/lib/sales-log/today-follow-ups";
@@ -10,10 +12,19 @@ import { TodayUpcomingList } from "@/components/today-work/today-upcoming-list";
 import { PaymentDueTeamPanel } from "@/components/contracts/payment-due-team-panel";
 import { TodayWorkRecordsPanel } from "@/components/today-work/today-work-records";
 import { TeamWorkActivityPanel } from "@/components/today-work/team-work-activity-panel";
+import { TodayWorkAssignLauncher } from "@/components/today-work/today-work-assign-launcher";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 
 type Props = {
-  searchParams: Promise<{ activityView?: string; salesUserId?: string }>;
+  searchParams: Promise<{
+    activityView?: string;
+    salesUserId?: string;
+    open?: string;
+    assign?: string;
+    customerId?: string;
+    opportunityId?: string;
+    paymentDue?: string;
+  }>;
 };
 
 export default async function TodayWorkPage({ searchParams }: Props) {
@@ -21,8 +32,33 @@ export default async function TodayWorkPage({ searchParams }: Props) {
   const returnPath = "/today-work";
   const query = await searchParams;
   const isManagerView = canManageWeeklyAssignments(session.user.role);
+  const shouldOpenAssign =
+    isManagerView && query.assign === "1" && Boolean(query.customerId?.trim());
 
   if (isManagerView) {
+    const assignCustomerId = query.customerId?.trim();
+    const assignOpportunityId = query.opportunityId?.trim();
+    const [salesUsers, assignCustomer, assignOpportunity] = shouldOpenAssign
+      ? await Promise.all([
+          listSalesUsersForSelect({
+            viewer: { id: session.user.id, role: session.user.role },
+            roles: ["SALES", "SALES_MANAGER", "ADMIN"],
+          }),
+          assignCustomerId
+            ? prisma.customer.findUnique({
+                where: { id: assignCustomerId },
+                select: { id: true, name: true },
+              })
+            : Promise.resolve(null),
+          assignOpportunityId
+            ? prisma.opportunity.findUnique({
+                where: { id: assignOpportunityId },
+                select: { id: true, title: true, customerId: true },
+              })
+            : Promise.resolve(null),
+        ])
+      : [[], null, null];
+
     return (
       <div className="space-y-6">
         <div>
@@ -32,6 +68,24 @@ export default async function TodayWorkPage({ searchParams }: Props) {
           </p>
         </div>
 
+        {shouldOpenAssign && assignCustomer ? (
+          <TodayWorkAssignLauncher
+            salesUsers={salesUsers}
+            customerId={assignCustomer.id}
+            customerName={assignCustomer.name}
+            opportunityId={
+              assignOpportunity?.customerId === assignCustomer.id
+                ? assignOpportunity.id
+                : undefined
+            }
+            opportunityTitle={
+              assignOpportunity?.customerId === assignCustomer.id
+                ? assignOpportunity.title
+                : undefined
+            }
+          />
+        ) : null}
+
         <TodayUpcomingList
           role={session.user.role}
           userId={session.user.id}
@@ -40,7 +94,13 @@ export default async function TodayWorkPage({ searchParams }: Props) {
 
         <TeamWorkActivityPanel searchParams={query} />
 
-        <PaymentDueTeamPanel role={session.user.role} returnPath={returnPath} />
+        <PaymentDueTeamPanel
+          role={session.user.role}
+          userId={session.user.id}
+          returnPath={returnPath}
+          filterParam={query.paymentDue}
+          baseSearchParams={query}
+        />
       </div>
     );
   }
@@ -102,7 +162,11 @@ export default async function TodayWorkPage({ searchParams }: Props) {
         returnPath={returnPath}
       />
 
-      <TodayWorkRecordsPanel role={session.user.role} userId={session.user.id} />
+      <TodayWorkRecordsPanel
+        role={session.user.role}
+        userId={session.user.id}
+        openParam={query.open ?? null}
+      />
     </div>
   );
 }

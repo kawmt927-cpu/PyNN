@@ -11,8 +11,9 @@ import {
 } from "@/lib/customers/grade-intervals";
 import {
   isDailyReportSubmitted,
-  isLateDailyReportSubmission,
+  isDailyReportCountedAsLate,
 } from "@/lib/sales-log/daily-report-submission";
+import { isUnsubmittedDailyReportPlaceholder } from "@/lib/sales-log/unsubmitted-daily-report";
 
 export type MonthlyKpiTargets = {
   channelDev: number | null;
@@ -171,7 +172,7 @@ export async function listProjectDevSettlementItems(
       id: log.id,
       opportunityId: log.opportunity.id,
       opportunityTitle: log.opportunity.title,
-      customerName: log.opportunity.customer.name,
+      customerName: log.opportunity.customer?.name ?? "未指定客户",
       fromStage: log.fromStage!,
       toStage: log.toStage,
       fromStageLabel: stageLabel.get(log.fromStage!) ?? log.fromStage!,
@@ -198,7 +199,7 @@ async function computeProcessCompliance(
         userId,
         logDate: { gte: start, lt: end },
       },
-      select: { logDate: true, status: true, submittedAt: true, updatedAt: true },
+      select: { logDate: true, status: true, submittedAt: true, updatedAt: true, lateMarkedAt: true },
     }),
     prisma.salesCheckIn.findMany({
       where: {
@@ -223,12 +224,25 @@ async function computeProcessCompliance(
     const submitted = log && isDailyReportSubmitted(log.status);
 
     if (!submitted) {
-      if (now > dayEnd) missedCount += 1;
+      if (log && isUnsubmittedDailyReportPlaceholder(log)) {
+        // 「未提交日报」占位：不计入按时；锁定计一次迟交；补录后统计不变
+        lateCount += 1;
+      } else if (log?.lateMarkedAt) {
+        lateCount += 1;
+      } else if (now > dayEnd) {
+        missedCount += 1;
+      }
       continue;
     }
 
-    const submittedAt = log.submittedAt ?? log.updatedAt;
-    const late = isLateDailyReportSubmission(submittedAt, dayStart);
+    const late = isDailyReportCountedAsLate({
+      logDate: dayStart,
+      status: log.status,
+      submittedAt: log.submittedAt,
+      updatedAt: log.updatedAt,
+      lateMarkedAt: log.lateMarkedAt,
+    });
+    // 补录提交：已有 lateMarkedAt 时仍算迟交，不计入按时（不影响已锁定统计）
     const compliant = hasCheckIn && !late;
 
     if (compliant) {

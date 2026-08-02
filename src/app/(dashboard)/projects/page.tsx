@@ -4,7 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProjectListTable } from "@/components/projects/project-list-table";
-import { buildProjectListWhere, canCreateProject } from "@/lib/projects/access";
+import {
+  buildProjectListWhere,
+  canAccessResourceSchedule,
+  canCreateProject,
+} from "@/lib/projects/access";
 import { attachCostsToProjectList } from "@/lib/projects/cost-summary";
 
 export default async function ProjectsPage() {
@@ -17,11 +21,12 @@ export default async function ProjectsPage() {
 
   const where = buildProjectListWhere(session.user.role, session.user.id);
   const canCreate = canCreateProject(session.user.role);
+  const canSchedule = canAccessResourceSchedule(session.user.role);
   const projects = await prisma.project.findMany({
     where,
     orderBy: { updatedAt: "desc" },
     include: {
-      customer: { select: { name: true } },
+      customer: { select: { id: true, name: true } },
       projectManager: { select: { name: true } },
       contract: { select: { totalAmount: true } },
     },
@@ -40,9 +45,11 @@ export default async function ProjectsPage() {
               <Link href="/projects/new">新建项目</Link>
             </Button>
           ) : null}
-          <Button asChild variant={canCreate ? "outline" : "default"}>
-            <Link href="/projects/schedule">资源排班</Link>
-          </Button>
+          {canSchedule ? (
+            <Button asChild variant={canCreate ? "outline" : "default"}>
+              <Link href="/projects/schedule">资源排班</Link>
+            </Button>
+          ) : null}
         </div>
       </div>
       <Card>

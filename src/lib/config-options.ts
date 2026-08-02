@@ -1,6 +1,10 @@
 import { getPrismaClient } from "@/lib/prisma";
 import { DEFAULT_CUSTOMER_GRADE_CONFIG_OPTIONS, getCustomerGradeOptions } from "@/lib/customers/grade";
 import {
+  DEFAULT_OPPORTUNITY_GRADE_CONFIG_OPTIONS,
+  getOpportunityGradeOptions,
+} from "@/lib/opportunities/grade";
+import {
   DEFAULT_CHANNEL_CUSTOMER_GRADE_CONFIG_OPTIONS,
   isChannelCustomerType,
 } from "@/lib/customers/customer-type-grade";
@@ -17,6 +21,7 @@ export const CONFIG_CATEGORY = {
   CONTACT_DEPARTMENT: "contact_department",
   CONTACT_ROLE: "contact_role",
   OPPORTUNITY_STAGE: "opportunity_stage",
+  OPPORTUNITY_GRADE: "opportunity_grade",
   PROJECT_COST_CATEGORY: "project_cost_category",
   CONTRACT_PAYMENT_METHOD: "contract_payment_method",
   INTERNAL_COST_PRODUCT: "internal_cost_product",
@@ -35,6 +40,7 @@ export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CONTACT_DEPARTMENT]: "联系人科室/部门（医院）",
   [CONFIG_CATEGORY.CONTACT_ROLE]: "联系人角色",
   [CONFIG_CATEGORY.OPPORTUNITY_STAGE]: "商机阶段",
+  [CONFIG_CATEGORY.OPPORTUNITY_GRADE]: "商机等级",
   [CONFIG_CATEGORY.PROJECT_COST_CATEGORY]: "项目成本类别",
   [CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD]: "合同支付方式",
   [CONFIG_CATEGORY.INTERNAL_COST_PRODUCT]: "内部成本产品",
@@ -80,6 +86,7 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
     scope: "sales",
     fields: [
       { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_STAGE] },
+      { category: CONFIG_CATEGORY.OPPORTUNITY_GRADE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.OPPORTUNITY_GRADE] },
     ],
   },
   {
@@ -265,6 +272,7 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "PROPOSAL", label: "方案", sortOrder: 3 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "QUOTATION", label: "报价", sortOrder: 4 },
   { category: CONFIG_CATEGORY.OPPORTUNITY_STAGE, value: "NEGOTIATION", label: "谈判", sortOrder: 5 },
+  ...DEFAULT_OPPORTUNITY_GRADE_CONFIG_OPTIONS,
   { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "BANK_TRANSFER", label: "银行转账", sortOrder: 1 },
   { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "ACCEPTANCE", label: "承兑汇票", sortOrder: 2 },
   { category: CONFIG_CATEGORY.CONTRACT_PAYMENT_METHOD, value: "OTHER", label: "其他", sortOrder: 3 },
@@ -347,6 +355,23 @@ export async function loadCustomerFormOptions() {
     channelGradeOptions,
     tagOptions,
   };
+}
+
+export async function getOpportunityGradeLabelMap(): Promise<Record<string, string>> {
+  const options = await getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_GRADE);
+  const map = Object.fromEntries(options.map((option) => [option.value, option.label]));
+  for (const option of getOpportunityGradeOptions()) {
+    if (!map[option.value]) map[option.value] = option.label;
+  }
+  return map;
+}
+
+export async function loadOpportunityFormOptions() {
+  const [stageOptions, gradeOptions] = await Promise.all([
+    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_GRADE),
+  ]);
+  return { stageOptions, gradeOptions };
 }
 
 export async function loadInteractionFormOptions() {

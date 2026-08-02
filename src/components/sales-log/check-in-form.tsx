@@ -25,7 +25,11 @@ import { ContactSelectField } from "@/components/sales-log/contact-select-field"
 import { QuickCustomerDialog } from "@/components/sales-log/quick-customer-dialog";
 import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity-dialog";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
-import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-search-select";
+import { OpportunityLinkPicker } from "@/components/sales-log/opportunity-link-picker";
+import {
+  defaultOpportunitySelection,
+  useCustomerNotSignedOpportunities,
+} from "@/components/sales-log/use-customer-not-signed-opportunities";
 import {
   Dialog,
   DialogContent,
@@ -115,10 +119,10 @@ export function CheckInForm({
   const [location, setLocation] = useState<CheckInLocationValue | null>(null);
   const [method, setMethod] = useState<SalesLogMethod>("FACE_VISIT");
   const [content, setContent] = useState("");
-  const [opportunityId, setOpportunityId] = useState(customerContext?.initialOpportunityId ?? "");
-  const [opportunityLabel, setOpportunityLabel] = useState(
-    customerContext?.initialOpportunityLabel ?? ""
+  const [opportunityIds, setOpportunityIds] = useState<string[]>(
+    customerContext?.initialOpportunityId ? [customerContext.initialOpportunityId] : []
   );
+  const { options: opportunityOptions } = useCustomerNotSignedOpportunities(customerId);
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
   const [suggestedGrade, setSuggestedGrade] = useState(() =>
     customerGradeFormValue(customerContext?.customerGrade)
@@ -293,6 +297,11 @@ export function CheckInForm({
   }, [customerId, isInteraction]);
 
   useEffect(() => {
+    if (!customerId || customerContext?.initialOpportunityId) return;
+    setOpportunityIds(defaultOpportunitySelection(opportunityOptions));
+  }, [customerId, customerContext?.initialOpportunityId, opportunityOptions]);
+
+  useEffect(() => {
     if (!customerId) return;
     setSuggestedGrade(customerGradeFormValue(currentCustomerGrade));
   }, [customerId, currentCustomerGrade]);
@@ -327,8 +336,9 @@ export function CheckInForm({
       setCustomerLabel(customerContext.customerLabel);
       setCurrentCustomerGrade(customerContext.customerGrade ?? null);
       setContactIds(customerContext.initialContactIds ?? []);
-      setOpportunityId(customerContext.initialOpportunityId ?? "");
-      setOpportunityLabel(customerContext.initialOpportunityLabel ?? "");
+      setOpportunityIds(
+        customerContext.initialOpportunityId ? [customerContext.initialOpportunityId] : []
+      );
       setSuggestedGrade(customerGradeFormValue(customerContext.customerGrade));
     } else {
       setCheckInMode("interaction");
@@ -337,8 +347,7 @@ export function CheckInForm({
       setCustomerLabel("");
       setCurrentCustomerGrade(null);
       setContactIds([]);
-      setOpportunityId("");
-      setOpportunityLabel("");
+      setOpportunityIds([]);
       setSuggestedGrade("");
     }
     setLocation(null);
@@ -371,7 +380,8 @@ export function CheckInForm({
             method,
             content: content.trim(),
             suggestedGrade: customerGradeSubmitValue(suggestedGrade, currentCustomerGrade),
-            opportunityId: opportunityId || null,
+            opportunityId: opportunityIds[0] ?? null,
+            opportunityIds,
             nextFollowUpAt: nextFollowUpAt || null,
             nextFollowUpMethod: nextFollowUpMethod || null,
             nextFollowUpContent: nextFollowUpContent.trim() || null,
@@ -451,6 +461,10 @@ export function CheckInForm({
       return;
     }
     if (completeNow) {
+      if (opportunityIds.length > 0 && !nextFollowUpAt.trim()) {
+        setError("已关联商机时须填写下次拜访时间");
+        return;
+      }
       const planError = validateNextFollowUpPlan(
         suggestedGrade,
         nextFollowUpAt,
@@ -603,8 +617,7 @@ export function CheckInForm({
                             setCurrentCustomerGrade(grade);
                             setSuggestedGrade(customerGradeFormValue(grade));
                             setContactIds([]);
-                            setOpportunityId("");
-                            setOpportunityLabel("");
+                            setOpportunityIds([]);
                           }}
                           onCreateNew={openCreateCustomer}
                         />
@@ -756,19 +769,11 @@ export function CheckInForm({
                       </Button>
                     </div>
                     {partyReady ? (
-                      <OpportunitySearchSelect
-                        id="checkInOpportunity"
-                        name="opportunityId"
-                        label=""
-                        customerId={customerId}
-                        value={opportunityId}
-                        selectedLabel={opportunityLabel}
-                        onValueChange={(id, option) => {
-                          setOpportunityId(id);
-                          setOpportunityLabel(option?.label ?? "");
-                        }}
-                        placeholder="点击选择关联商机（可选）"
-                        className="relative"
+                      <OpportunityLinkPicker
+                        options={opportunityOptions}
+                        value={opportunityIds}
+                        onChange={setOpportunityIds}
+                        disabled={belowLocked}
                       />
                     ) : (
                       <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm text-muted-foreground">
@@ -968,8 +973,7 @@ export function CheckInForm({
           setCurrentCustomerGrade(customer.customerGrade ?? null);
           setSuggestedGrade(customerGradeFormValue(customer.customerGrade));
           setContactIds([]);
-          setOpportunityId("");
-          setOpportunityLabel("");
+          setOpportunityIds([]);
           setError(null);
         }}
       />
@@ -981,8 +985,7 @@ export function CheckInForm({
         customerName={customerLabel}
         stageOptions={customerFormOptions.stageOptions}
         onCreated={(opp) => {
-          setOpportunityId(opp.id);
-          setOpportunityLabel(opp.title);
+          setOpportunityIds((prev) => [...new Set([...prev, opp.id])]);
         }}
       />
 

@@ -78,6 +78,13 @@ enum OpportunityStatus {
   ABANDONED
 }
 
+enum DealPartyRole {
+  PRIMARY
+  CHANNEL
+  THIRD_PARTY
+  OTHER
+}
+
 enum OpportunityAbandonReason {
   PRICE
   BUSINESS_RELATIONSHIP
@@ -170,8 +177,14 @@ enum SalesCheckInStatus {
 
 enum SalesWeeklyAssignmentStatus {
   PENDING
+  PENDING_CONFIRM
   COMPLETED
   CANCELLED
+}
+
+enum SalesWeeklyAssignmentKind {
+  CUSTOMER_FOLLOW_UP
+  GENERAL
 }
 
 enum SalesPlanPeriod {
@@ -199,6 +212,30 @@ enum CustomerClaimStatus {
 
 enum WeComAccessStatus {
   PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExpenseClaimStatus {
+  DRAFT
+  PENDING_MANAGER
+  REJECTED
+  PENDING_PAYOUT
+  PAID
+}
+
+enum ExpenseCostTarget {
+  SALES
+  PROJECT
+  NONE
+}
+
+enum ExpenseApprovalStep {
+  MANAGER
+  FINANCE
+}
+
+enum ExpenseApprovalAction {
   APPROVED
   REJECTED
 }
@@ -260,15 +297,22 @@ model User {
   opportunityFollowUps    OpportunityFollowUp[]
   aiAgentConfigsUpdated   AiAgentConfig[]      @relation("AiAgentConfigUpdater")
   amapConfigsUpdated      AmapConfig[]         @relation("AmapConfigUpdater")
+  expenseTravelPoliciesUpdated ExpenseTravelPolicy[] @relation("ExpenseTravelPolicyUpdater")
   salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
   weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
   weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
+  weeklyAssignmentsConfirmed SalesWeeklyAssignment[] @relation("WeeklyAssignmentConfirmer")
   salesPlanBoards          SalesPlanBoard[]
   assistedCustomers        CustomerAssistant[]      @relation("CustomerAssistant")
   wecomAccessRequestsReviewed WeComAccessRequest[] @relation("WeComAccessReviewer")
   wecomAccessRequest         WeComAccessRequest?
   entityOperationLogs        EntityOperationLog[]
   appNotificationsReceived   AppNotificationReceipt[]
+  expenseClaimsSubmitted     ExpenseClaim[]           @relation("ExpenseClaimApplicant")
+  expenseClaimsToApprove     ExpenseClaim[]           @relation("ExpenseClaimManager")
+  expenseApprovalsActed      ExpenseApproval[]        @relation("ExpenseApprovalActor")
+  expensePayoutsRecorded     ExpensePayout[]          @relation("ExpensePayoutRecorder")
+  expenseInvoicesSuggestedPresales ExpenseInvoice[]   @relation("ExpenseInvoicePresales")
 }
 
 
@@ -379,11 +423,15 @@ model Customer {
   relationsTo   CustomerRelation[] @relation("CustomerTo")
   claimRequests CustomerClaimRequest[]
   opportunities Opportunity[]
+  opportunityParties OpportunityParty[]
+  contractParties    ContractParty[]
   salesCheckIns SalesCheckIn[]
   tags          CustomerTag[]
   weeklyAssignments SalesWeeklyAssignment[]
   planItems         SalesPlanItem[]
   assistantOwners   CustomerAssistant[]
+  expenseTrips      ExpenseTrip[]
+  expenseInvoices   ExpenseInvoice[]
 }
 
 model CustomerAssistant {
@@ -486,6 +534,7 @@ model FollowUp {
   linkedContacts FollowUpContact[]
   user           User             @relation(fields: [userId], references: [id])
   opportunity    Opportunity?     @relation(fields: [opportunityId], references: [id])
+  linkedOpportunities FollowUpOpportunity[]
   salesTask      SalesTask?
   salesCheckIn   SalesCheckIn?
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
@@ -503,16 +552,30 @@ model FollowUpContact {
   @@id([followUpId, contactId])
 }
 
+model FollowUpOpportunity {
+  followUpId    String
+  opportunityId String
+
+  followUp    FollowUp    @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@id([followUpId, opportunityId])
+  @@index([opportunityId])
+}
+
 // ─── CRM: Opportunity ────────────────────────────────────
 
 model Opportunity {
   id                String            @id @default(cuid())
   title             String
-  customerId        String
+  /** 主要客户（可选；渠道/第三方等放 parties） */
+  customerId        String?
   ownerId           String
   expectedAmount    Decimal
   expectedCloseDate DateTime
   stage             String
+  /** 商机等级 P0–P3（配置 opportunity_grade） */
+  grade             String?
   requirementDesc   String?
   winProbability    Int?
   competitor        String?
@@ -524,12 +587,14 @@ model Opportunity {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  customer   Customer                @relation(fields: [customerId], references: [id])
+  customer   Customer?               @relation(fields: [customerId], references: [id])
   owner      User                    @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  parties    OpportunityParty[]
   contracts  Contract[]
   stageLogs  OpportunityStageLog[]
   followUps  OpportunityFollowUp[]
   linkedFollowUps FollowUp[]
+  followUpLinks   FollowUpOpportunity[]
   weeklyAssignments SalesWeeklyAssignment[]
   planItems         SalesPlanItem[]
 
@@ -537,6 +602,24 @@ model Opportunity {
   @@index([customerId])
   @@index([status])
   @@index([stage])
+  @@index([grade])
+}
+
+/** 商机额外关联客户（渠道/第三方等；主要客户用 Opportunity.customerId） */
+model OpportunityParty {
+  id            String        @id @default(cuid())
+  opportunityId String
+  customerId    String
+  role          DealPartyRole
+  note          String?
+  createdAt     DateTime      @default(now())
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  customer    Customer    @relation(fields: [customerId], references: [id])
+
+  @@unique([opportunityId, customerId])
+  @@index([customerId])
+  @@index([opportunityId, role])
 }
 
 model OpportunityStageLog {
@@ -617,6 +700,7 @@ model Contract {
   submittedBy       User?                    @relation("ContractSubmitter", fields: [submittedById], references: [id])
   approvedBy        User?                    @relation("ContractApprover", fields: [approvedById], references: [id])
   opportunity       Opportunity?             @relation(fields: [opportunityId], references: [id])
+  parties           ContractParty[]
   products          ContractProduct[]
   installments      PaymentInstallment[]
   paymentRecords    ContractPaymentRecord[]
@@ -627,6 +711,23 @@ model Contract {
 
   @@index([opportunityId])
   @@index([status])
+}
+
+/** 合同额外关联客户（渠道/第三方等；签约/最终用户用既有 FK） */
+model ContractParty {
+  id         String        @id @default(cuid())
+  contractId String
+  customerId String
+  role       DealPartyRole
+  note       String?
+  createdAt  DateTime      @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([contractId, customerId])
+  @@index([customerId])
+  @@index([contractId, role])
 }
 
 model ContractAttachment {
@@ -801,6 +902,7 @@ model Project {
   projectTasks   ProjectTask[]
   costs          ProjectCost[]
   staffAllocations ProjectStaffAllocation[]
+  expenseInvoices ExpenseInvoice[]
 }
 
 model ProjectPhase {
@@ -902,6 +1004,7 @@ model ProjectCost {
 
   project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   recordedBy User    @relation(fields: [recordedById], references: [id])
+  expenseInvoice ExpenseInvoice? @relation("ExpenseInvoicePostedProjectCost")
 }
 
 model ProjectStaffAllocation {
@@ -1082,20 +1185,26 @@ model SalesWeeklyAssignment {
   title         String
   description   String?
   dueAt         DateTime
+  kind          SalesWeeklyAssignmentKind   @default(CUSTOMER_FOLLOW_UP)
   status        SalesWeeklyAssignmentStatus @default(PENDING)
   completedAt   DateTime?
+  assigneeNote  String?
+  confirmedAt   DateTime?
+  confirmedById String?
   followUpId    String?                     @unique
   createdAt     DateTime                    @default(now())
   updatedAt     DateTime                    @updatedAt
 
   createdBy   User         @relation("WeeklyAssignmentCreator", fields: [createdById], references: [id])
   assignee    User         @relation("WeeklyAssignmentAssignee", fields: [assigneeId], references: [id])
+  confirmedBy User?        @relation("WeeklyAssignmentConfirmer", fields: [confirmedById], references: [id])
   customer    Customer?    @relation(fields: [customerId], references: [id])
   opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
   followUp    FollowUp?    @relation(fields: [followUpId], references: [id])
 
   @@index([assigneeId, status, dueAt])
-  @@index([createdById])
+  @@index([createdById, status])
+  @@index([kind, status])
 }
 
 model SalesPlanBoard {
@@ -1179,6 +1288,12 @@ model SalesDailyLog {
   riskFlag          Boolean             @default(false)
   riskNotes         String?
   submittedAt       DateTime?
+  /** 20:00 催交已发送 */
+  remind20SentAt    DateTime?
+  /** 21:00 催交已发送 */
+  remind21SentAt    DateTime?
+  /** 超过 22:00 未交时锁定的迟交记录；补录不清除 */
+  lateMarkedAt      DateTime?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
@@ -1221,6 +1336,7 @@ model SalesCost {
   recordedBy   User      @relation("SalesCostRecorder", fields: [recordedById], references: [id])
   customer     Customer? @relation("BusinessExpenseCustomer", fields: [customerId], references: [id])
   presalesUser User?     @relation("PresalesCostUser", fields: [presalesUserId], references: [id])
+  expenseInvoice ExpenseInvoice? @relation("ExpenseInvoicePostedSalesCost")
 }
 
 model PresalesAssignment {
@@ -1361,4 +1477,154 @@ model AppNotificationReceipt {
 
   @@unique([notificationId, userId])
   @@index([userId, readAt, createdAt])
+}
+
+// ─── Expense reimbursement ───────────────────────────────
+
+model ExpenseClaim {
+  id              String             @id @default(cuid())
+  applicantId     String
+  managerId       String?
+  title           String
+  description     String?
+  status          ExpenseClaimStatus @default(DRAFT)
+  totalAmount     Decimal            @default(0)
+  submittedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectReason    String?
+  paidAt          DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  applicant  User              @relation("ExpenseClaimApplicant", fields: [applicantId], references: [id])
+  manager    User?             @relation("ExpenseClaimManager", fields: [managerId], references: [id])
+  trips      ExpenseTrip[]
+  invoices   ExpenseInvoice[]
+  approvals  ExpenseApproval[]
+  payout     ExpensePayout?
+
+  @@index([applicantId, status, updatedAt])
+  @@index([managerId, status])
+  @@index([status, submittedAt])
+}
+
+model ExpenseTrip {
+  id          String   @id @default(cuid())
+  claimId     String
+  /** 段序号，支持同一报销单多段行程 */
+  sortOrder   Int      @default(0)
+  startDate   DateTime
+  endDate     DateTime
+  /** 出发城市 */
+  fromCity    String?
+  /** 目的地/住宿城市（用于匹配住宿标准） */
+  city        String?
+  customerId  String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  claim    ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  customer Customer?    @relation(fields: [customerId], references: [id])
+
+  @@index([claimId, sortOrder])
+}
+
+/** 城市线级：用于差旅住宿标准 */
+enum ExpenseCityTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+/** 差旅住宿标准（元/晚），系统配置单例 */
+model ExpenseTravelPolicy {
+  id            String   @id @default("default")
+  hotelCapTier1 Decimal  @default(500)
+  hotelCapTier2 Decimal  @default(400)
+  hotelCapTier3 Decimal  @default(300)
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+
+  updatedBy User? @relation("ExpenseTravelPolicyUpdater", fields: [updatedById], references: [id])
+}
+
+/** 城市 → 线级映射；未收录城市按三线及以下处理 */
+model ExpenseCityTierMapping {
+  id        String          @id @default(cuid())
+  cityName  String          @unique
+  tier      ExpenseCityTier
+  enabled   Boolean         @default(true)
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([tier, enabled, sortOrder])
+}
+
+model ExpenseInvoice {
+  id                 String             @id @default(cuid())
+  claimId            String
+  fileName           String
+  mimeType           String
+  sizeBytes          Int
+  storageKey         String
+  /** 费用类别建议键，如 customer_visit / project_site / admin_office */
+  categoryKey        String?
+  amount             Decimal?
+  taxRatePercent     Decimal?
+  invoiceNo          String?
+  invoicedAt         DateTime?
+  sellerName         String?
+  ocrNotes           String?
+  ocrConfidence      String?
+  ocrRawSummary      String?
+  costTarget         ExpenseCostTarget?
+  salesCostType      SalesCostType?
+  customerId         String?
+  presalesUserId     String?
+  projectId          String?
+  costCategory       String?
+  postedSalesCostId  String?            @unique
+  postedProjectCostId String?           @unique
+  sortOrder          Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  claim            ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  customer         Customer?    @relation(fields: [customerId], references: [id])
+  presalesUser     User?        @relation("ExpenseInvoicePresales", fields: [presalesUserId], references: [id])
+  project          Project?     @relation(fields: [projectId], references: [id])
+  postedSalesCost  SalesCost?   @relation("ExpenseInvoicePostedSalesCost", fields: [postedSalesCostId], references: [id])
+  postedProjectCost ProjectCost? @relation("ExpenseInvoicePostedProjectCost", fields: [postedProjectCostId], references: [id])
+
+  @@index([claimId, sortOrder])
+}
+
+model ExpenseApproval {
+  id         String                @id @default(cuid())
+  claimId    String
+  step       ExpenseApprovalStep
+  action     ExpenseApprovalAction
+  actorId    String
+  comment    String?
+  createdAt  DateTime              @default(now())
+
+  claim ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  actor User         @relation("ExpenseApprovalActor", fields: [actorId], references: [id])
+
+  @@index([claimId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model ExpensePayout {
+  id           String   @id @default(cuid())
+  claimId      String   @unique
+  amount       Decimal
+  paidAt       DateTime
+  notes        String?
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  claim      ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  recordedBy User         @relation("ExpensePayoutRecorder", fields: [recordedById], references: [id])
 }

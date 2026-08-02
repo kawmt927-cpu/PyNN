@@ -151,6 +151,7 @@ export type ProjectListRow = {
   name: string;
   status: string;
   progressPercent: number;
+  customerId: string | null;
   customerName: string;
   managerName: string | null;
   plannedStartAt: Date | null;
@@ -167,7 +168,7 @@ export async function attachCostsToProjectList(
     progressPercent: number;
     plannedStartAt: Date | null;
     plannedEndAt: Date | null;
-    customer: { name: string } | null;
+    customer: { id: string; name: string } | null;
     projectManager: { name: string } | null;
     contract: { totalAmount: { toNumber?: () => number } | number } | null;
   }>
@@ -180,6 +181,7 @@ export async function attachCostsToProjectList(
         name: project.name,
         status: project.status,
         progressPercent: project.progressPercent,
+        customerId: project.customer?.id ?? null,
         customerName: project.customer?.name ?? "内部项目",
         managerName: project.projectManager?.name ?? null,
         plannedStartAt: project.plannedStartAt,

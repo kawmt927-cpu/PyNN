@@ -58,19 +58,31 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
         <CardContent className={`space-y-4 text-sm${showDateTitle ? "" : " pt-6"}`}>
           {display.overdue ? (
             <div className={cn("rounded-md border px-4 py-3", issuePanelClass)}>
-              <p className="font-medium">日报未按时提交</p>
-              <p className="mt-1">
-                须在 {formatDailyReportDeadlineHint()} 提交；当前已超过 {DAILY_REPORT_DEADLINE_HOUR}:00
-                截止时间。
+              <p className="font-medium">
+                {display.lateMarked ? "未提交日报" : "日报未按时提交"}
               </p>
+              <p className="mt-1">
+                {display.lateMarked
+                  ? `已超过 ${formatDailyReportDeadlineHint()} 截止，系统已生成「未提交日报」。可补录；补录后显示迟交，不改变统计。`
+                  : `须在 ${formatDailyReportDeadlineHint()} 提交；当前已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00 截止时间。`}
+              </p>
+              {display.lateMarked ? (
+                <p className="mt-2">
+                  <Link href="/today-work/daily-log" className="font-medium underline underline-offset-2">
+                    前往补录日报
+                  </Link>
+                </p>
+              ) : null}
             </div>
           ) : null}
           {display.lateSubmission && display.submissionTime ? (
             <div className={cn("rounded-md border px-4 py-3", issuePanelClass)}>
               <p className="font-medium">日报迟交</p>
               <p className="mt-1">
-                已于 {format(display.submissionTime, "yyyy-MM-dd HH:mm")} 提交，但超过当日{" "}
-                {DAILY_REPORT_DEADLINE_HOUR}:00 截止时间。
+                已于 {format(display.submissionTime, "yyyy-MM-dd HH:mm")} 提交
+                {display.lateMarked
+                  ? "；超时后已记录迟交，补录不影响该统计。"
+                  : `，但超过当日 ${DAILY_REPORT_DEADLINE_HOUR}:00 截止时间。`}
               </p>
             </div>
           ) : null}
@@ -150,6 +162,40 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
           ) : null}
         </CardContent>
       </Card>
+
+      {report.conversation && report.conversation.some((m) => m.content?.trim()) ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">
+              AI 对话记录（{report.conversation.filter((m) => m.content?.trim()).length} 条）
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              与手机端 / PC 端销售日志助理同步，保留最近 7 天对话便于核对是否真正写入。
+            </p>
+            <ul className="max-h-[28rem] space-y-2 overflow-y-auto">
+              {report.conversation
+                .filter((m) => m.content?.trim())
+                .map((m, i) => (
+                  <li
+                    key={`${m.role}-${i}`}
+                    className={`rounded-md border px-3 py-2 text-sm ${
+                      m.role === "user"
+                        ? "border-primary/20 bg-primary/5"
+                        : "bg-muted/40"
+                    }`}
+                  >
+                    <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+                      {m.role === "user" ? "销售" : "助理"}
+                    </p>
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                  </li>
+                ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

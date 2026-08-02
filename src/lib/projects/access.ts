@@ -43,3 +43,8 @@ export function canManageProject(
 export function canCreateProject(role: UserRole): boolean {
   return role === "ADMIN" || role === "PROJECT_ADMIN";
 }
+
+/** 资源排班：项目管理员、项目经理、管理员（不含普通项目人员） */
+export function canAccessResourceSchedule(role: UserRole): boolean {
+  return role === "ADMIN" || role === "PROJECT_ADMIN" || role === "PROJECT_MANAGER";
+}

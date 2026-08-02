@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,13 +12,38 @@ import {
 } from "@/components/ui/dialog";
 import { WeeklyAssignmentForm } from "@/components/today-work/weekly-assignment-form";
 
-export function CreateWeeklyAssignmentDialog() {
-  const [open, setOpen] = useState(false);
+type SalesUser = { id: string; name: string };
+
+export function CreateWeeklyAssignmentDialog({
+  salesUsers = [],
+  defaultOpen = false,
+  trigger,
+  initialCustomerId,
+  initialCustomerLabel,
+  initialOpportunityId,
+  initialOpportunityLabel,
+  initialAssigneeId,
+  initialTitle,
+  initialDescription,
+}: {
+  salesUsers?: SalesUser[];
+  defaultOpen?: boolean;
+  /** 自定义触发按钮；不传则显示默认「新建指派任务」 */
+  trigger?: ReactNode;
+  initialCustomerId?: string;
+  initialCustomerLabel?: string;
+  initialOpportunityId?: string;
+  initialOpportunityLabel?: string;
+  initialAssigneeId?: string;
+  initialTitle?: string;
+  initialDescription?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button">新建指派任务</Button>
+        {trigger ?? <Button type="button">新建指派任务</Button>}
       </DialogTrigger>
       <DialogContent
         showCloseButton
@@ -29,11 +54,19 @@ export function CreateWeeklyAssignmentDialog() {
         <DialogHeader className="mb-4">
           <DialogTitle>新建指派任务</DialogTitle>
           <DialogDescription>
-            为销售指派跟进任务，创建后同步生成客户计划跟进，并显示在任务列表中。
+            可创建客户跟进任务，或无需客户的普通任务。普通任务由被指派人完成后，再由指派人确认。
           </DialogDescription>
         </DialogHeader>
         <WeeklyAssignmentForm
           formClassName="grid gap-4"
+          salesUsers={salesUsers}
+          initialCustomerId={initialCustomerId}
+          initialCustomerLabel={initialCustomerLabel}
+          initialOpportunityId={initialOpportunityId}
+          initialOpportunityLabel={initialOpportunityLabel}
+          initialAssigneeId={initialAssigneeId}
+          initialTitle={initialTitle}
+          initialDescription={initialDescription}
           onSuccess={() => setOpen(false)}
         />
       </DialogContent>

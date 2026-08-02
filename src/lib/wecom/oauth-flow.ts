@@ -29,15 +29,69 @@ export function sanitizeWeComReturnTo(raw: string | null | undefined): string {
 }
 
 export function resolvePublicOrigin(requestOrigin: string): string {
-  const fromEnv = process.env.NEXTAUTH_URL?.trim();
-  if (fromEnv) {
+  const candidates = [
+    process.env.PUBLIC_APP_URL,
+    process.env.NEXTAUTH_URL,
+    "https://crm.pynntech.com",
+  ];
+  for (const raw of candidates) {
+    const value = raw?.trim();
+    if (!value) continue;
     try {
-      return new URL(fromEnv).origin;
+      const url = new URL(value);
+      // 回调域名不能是 IP，否则企微 OAuth / cookie 都会出问题
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname) || url.hostname.includes(":")) {
+        continue;
+      }
+      return url.origin;
     } catch {
-      // ignore invalid NEXTAUTH_URL
+      // ignore invalid
     }
   }
   return requestOrigin;
+}
+
+/**
+ * 对外可见 origin（兼容 Nginx 反代：nextUrl 可能是 http://127.0.0.1:3001）。
+ */
+export function resolveRequestOrigin(req: NextRequest): string {
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const hostHeader = req.headers.get("host")?.trim();
+  const host = forwardedHost || hostHeader;
+  if (host) {
+    const proto =
+      req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
+      (host.includes("localhost") || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(host)
+        ? "http"
+        : "https");
+    try {
+      return new URL(`${proto}://${host}`).origin;
+    } catch {
+      // fall through
+    }
+  }
+  return req.nextUrl.origin;
+}
+
+function isLoopbackOrPrivateHostname(hostname: string) {
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0") {
+    return true;
+  }
+  if (hostname.startsWith("10.") || hostname.startsWith("192.168.")) return true;
+  return /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+}
+
+/** 是否需要从当前入口跳到正式域名（仅公网 IP 入口需要） */
+export function shouldHopToPublicOrigin(requestOrigin: string, publicOrigin: string) {
+  if (requestOrigin === publicOrigin) return false;
+  try {
+    const host = new URL(requestOrigin).hostname;
+    // 反代内网地址：已通过 Host 识别为域名则不会走到这里；若仍是内网则不要跳
+    if (isLoopbackOrPrivateHostname(host)) return false;
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
 }
 
 export function buildWeComCallbackUrl(origin: string): string {
@@ -80,7 +134,8 @@ export function wecomFriendlyRedirect(
   const absolute = new URL(destination, resolvePublicOrigin(req.nextUrl.origin)).toString();
   const ua = req.headers.get("user-agent") ?? "";
 
-  if (/wxwork/i.test(ua)) {
+  // 企微 / 微信内置 WebView 对 302+Set-Cookie 不稳定
+  if (/wxwork|micromessenger/i.test(ua)) {
     const safeHref = absolute.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -128,7 +183,7 @@ export function wecomFriendlyOAuthStart(
   returnTo: string
 ): NextResponse {
   const ua = req.headers.get("user-agent") ?? "";
-  if (/wxwork/i.test(ua)) {
+  if (/wxwork|micromessenger/i.test(ua)) {
     const safeHref = oauthUrl.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">

@@ -6,7 +6,7 @@ import {
   canEditOpportunityContent,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
-import { CONFIG_CATEGORY, getConfigOptions, loadCustomerFormOptions } from "@/lib/config-options";
+import { loadOpportunityFormOptions, loadCustomerFormOptions } from "@/lib/config-options";
 import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 import { BackLink } from "@/components/navigation/back-link";
@@ -29,6 +29,10 @@ export default async function EditOpportunityPage({ params, searchParams }: Prop
     include: {
       owner: { select: { id: true, name: true } },
       customer: { select: { name: true } },
+      parties: {
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
   if (!full) notFound();
@@ -37,8 +41,8 @@ export default async function EditOpportunityPage({ params, searchParams }: Prop
 
   const showOwnerSelect = canManageOpportunityOwner(session.user.role);
 
-  const [stageOptions, customerFormOptions, salesUsers] = await Promise.all([
-    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+  const [opportunityFormOptions, customerFormOptions, salesUsers] = await Promise.all([
+    loadOpportunityFormOptions(),
     loadCustomerFormOptions(),
     listSalesUsersForSelect({
       viewer: { id: session.user.id, role: session.user.role },
@@ -64,20 +68,29 @@ export default async function EditOpportunityPage({ params, searchParams }: Prop
         readOnlyOwner={
           showOwnerSelect ? undefined : { id: full.owner.id, name: full.owner.name }
         }
-        initialCustomerName={full.customer.name}
-        stageOptions={stageOptions}
+        initialCustomerName={full.customer?.name}
+        stageOptions={opportunityFormOptions.stageOptions}
+        opportunityGradeOptions={opportunityFormOptions.gradeOptions}
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}
         channelGradeOptions={customerFormOptions.channelGradeOptions}
         showOwnerSelect={showOwnerSelect}
         salesUsers={salesUsers}
+        initialParties={full.parties.map((p) => ({
+          key: p.id,
+          customerId: p.customerId,
+          customerName: p.customer.name,
+          role: p.role,
+          note: p.note ?? "",
+        }))}
         initial={{
           title: full.title,
-          customerId: full.customerId,
+          customerId: full.customerId ?? "",
           expectedAmount: Number(full.expectedAmount),
           expectedCloseDate: full.expectedCloseDate.toISOString(),
           stage: full.stage,
+          grade: full.grade || "P3",
           requirementDesc: full.requirementDesc,
           winProbability: full.winProbability,
           competitor: full.competitor,

@@ -88,6 +88,7 @@ async function createInteractionFollowUpFromCheckIn(
     nextFollowUpContent: input.followUp.nextFollowUpContent ?? undefined,
     suggestedGrade: input.followUp.suggestedGrade ?? undefined,
     opportunityId: input.followUp.opportunityId ?? undefined,
+    opportunityIds: input.followUp.opportunityIds ?? undefined,
   });
 
   if (input.completedPendingKeys?.length) {
@@ -513,6 +514,7 @@ export async function completeSalesCheckInManually(input: {
   result?: string | null;
   suggestedGrade?: string | null;
   opportunityId?: string | null;
+  opportunityIds?: string[];
   nextFollowUpAt?: string | null;
   nextFollowUpMethod?: Parameters<typeof createFollowUpFromAgent>[1]["method"];
   nextFollowUpContent?: string | null;
@@ -547,6 +549,7 @@ export async function completeSalesCheckInManually(input: {
       result: input.result ?? undefined,
       suggestedGrade: input.suggestedGrade,
       opportunityId: input.opportunityId ?? undefined,
+      opportunityIds: input.opportunityIds,
       nextFollowUpAt: input.nextFollowUpAt ?? undefined,
       nextFollowUpMethod: input.nextFollowUpMethod,
       nextFollowUpContent: input.nextFollowUpContent ?? undefined,
@@ -591,6 +594,7 @@ export async function completeCheckInFromAgent(
     contactId?: string;
     contactIds?: string[];
     opportunityId?: string;
+    opportunityIds?: string[];
     method: Parameters<typeof createFollowUpFromAgent>[1]["method"];
     content: string;
     result?: string;
@@ -639,6 +643,7 @@ export async function completeCheckInFromAgent(
     customerId: checkIn.customerId,
     contactIds,
     opportunityId: input.opportunityId,
+    opportunityIds: input.opportunityIds,
     method: input.method,
     content: input.content,
     result: input.result,

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PROJECT_STATUS_LABELS } from "@/lib/projects/labels";
 import type { ProjectListRow } from "@/lib/projects/cost-summary";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
 
 type Props = {
   items: ProjectListRow[];
@@ -38,7 +39,13 @@ export function ProjectListTable({ items }: Props) {
                   {item.name}
                 </Link>
               </td>
-              <td className="py-3 pr-4">{item.customerName}</td>
+              <td className="py-3 pr-4">
+                <CustomerNameLink
+                  customerId={item.customerId}
+                  name={item.customerName}
+                  fallback="内部项目"
+                />
+              </td>
               <td className="py-3 pr-4">
                 {PROJECT_STATUS_LABELS[item.status as keyof typeof PROJECT_STATUS_LABELS] ??
                   item.status}

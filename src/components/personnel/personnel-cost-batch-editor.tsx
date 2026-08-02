@@ -156,7 +156,7 @@ export function PersonnelCostBatchEditor({ items, year, month, monthWorkdays }: 
               <th className="px-2 py-2">本月调整</th>
               {editing ? <th className="px-2 py-2">调整说明</th> : null}
               <th className="px-2 py-2">有效月成本</th>
-              <th className="px-2 py-2">本月人天</th>
+              <th className="px-2 py-2">本月人天（人力成本）</th>
             </tr>
           </thead>
           <tbody>

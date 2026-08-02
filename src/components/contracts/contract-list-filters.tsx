@@ -5,8 +5,7 @@ import { useTransition } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { CONTRACT_STATUS_LABELS } from "@/lib/permissions";
-import type { ContractStatus } from "@prisma/client";
+import { CONTRACT_LIST_STATUS_LABELS, type ContractListStatus } from "@/lib/permissions";
 
 type UserOption = { id: string; name: string };
 
@@ -45,6 +44,8 @@ export function ContractListFilters({ showOwnerFilter, salesUsers }: Props) {
     Boolean(searchParams.get("status")) ||
     Boolean(searchParams.get("ownerId"));
 
+  const listStatuses = Object.keys(CONTRACT_LIST_STATUS_LABELS) as ContractListStatus[];
+
   return (
     <form
       className="flex flex-wrap items-end gap-3"
@@ -75,9 +76,9 @@ export function ContractListFilters({ showOwnerFilter, salesUsers }: Props) {
           onChange={(e) => updateParam("status", e.target.value)}
         >
           <option value="">全部状态</option>
-          {(Object.keys(CONTRACT_STATUS_LABELS) as ContractStatus[]).map((status) => (
+          {listStatuses.map((status) => (
             <option key={status} value={status}>
-              {CONTRACT_STATUS_LABELS[status]}
+              {CONTRACT_LIST_STATUS_LABELS[status]}
             </option>
           ))}
         </select>

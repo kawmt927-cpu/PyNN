@@ -35,7 +35,6 @@ async function requireProjectAccess(projectId: string, manage = false) {
   const session = await requireRole([
     "PROJECT_ADMIN",
     "PROJECT_MANAGER",
-    "PROJECT_STAFF",
     "ADMIN",
   ]);
   const project = await getProjectForUser(

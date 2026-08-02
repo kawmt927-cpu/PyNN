@@ -49,9 +49,15 @@ export async function POST(req: Request) {
       revalidatePath(`/customers/${parsed.customerId.trim()}`);
       revalidatePath(`/customers/${parsed.customerId.trim()}/follow-ups`);
     }
-    if (parsed.followUp?.opportunityId?.trim()) {
-      revalidatePath(`/opportunities/${parsed.followUp.opportunityId.trim()}`);
-      revalidatePath(`/opportunities/${parsed.followUp.opportunityId.trim()}/follow-ups`);
+    const linkedOpportunityIds = [
+      ...new Set([
+        ...(parsed.followUp?.opportunityIds ?? []),
+        ...(parsed.followUp?.opportunityId?.trim() ? [parsed.followUp.opportunityId.trim()] : []),
+      ]),
+    ];
+    for (const opportunityId of linkedOpportunityIds) {
+      revalidatePath(`/opportunities/${opportunityId}`);
+      revalidatePath(`/opportunities/${opportunityId}/follow-ups`);
     }
     return Response.json({ ok: true });
   } catch (error) {

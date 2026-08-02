@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { CONFIG_MODULES, type ConfigModuleDef } from "@/lib/config-options";
 import { requireSession } from "@/lib/session";
+import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
 
 export type SettingsScope = "sales" | "project" | "system";
 
@@ -14,6 +15,7 @@ export const SETTINGS_TAB = {
   WECOM: "wecom",
   AI: "ai",
   AMAP: "amap",
+  EXPENSE_TRAVEL: "expense-travel",
 } as const;
 
 export type SettingsTabId = (typeof SETTINGS_TAB)[keyof typeof SETTINGS_TAB];
@@ -23,6 +25,7 @@ const SETTINGS_PAGE_ROLES: UserRole[] = [
   "SALES_MANAGER",
   "PROJECT_ADMIN",
   "PROJECT_MANAGER",
+  "HR",
 ];
 
 const PROJECT_CONFIG_ROLES: UserRole[] = ["PROJECT_ADMIN", "PROJECT_MANAGER"];
@@ -37,6 +40,10 @@ export function canAccessSettingsTab(role: UserRole, tab: string): boolean {
   }
   if (tab === SETTINGS_TAB.WECOM || tab === SETTINGS_TAB.AI || tab === SETTINGS_TAB.AMAP) {
     return role === "ADMIN";
+  }
+  if (tab === SETTINGS_TAB.EXPENSE_TRAVEL) {
+    if (!isExpenseFeatureEnabled()) return false;
+    return role === "ADMIN" || role === "SALES_MANAGER" || role === "HR";
   }
   if (tab === SETTINGS_TAB.PRODUCTS) {
     return role === "ADMIN" || role === "SALES_MANAGER";
@@ -94,6 +101,12 @@ export function getAccessibleSettingsTabs(role: UserRole): Array<{ id: SettingsT
     tabs.push({ id: SETTINGS_TAB.WECOM, label: "企业微信" });
     tabs.push({ id: SETTINGS_TAB.AI, label: "AI 助手" });
     tabs.push({ id: SETTINGS_TAB.AMAP, label: "打卡定位" });
+  }
+  if (
+    isExpenseFeatureEnabled() &&
+    (role === "ADMIN" || role === "SALES_MANAGER" || role === "HR")
+  ) {
+    tabs.push({ id: SETTINGS_TAB.EXPENSE_TRAVEL, label: "差旅住宿" });
   }
   return tabs;
 }
@@ -164,6 +177,21 @@ export async function requireAmapSettingsAccess() {
   const session = await requireSession();
   if (session.user.role !== "ADMIN") {
     throw new Error("无权修改打卡定位配置");
+  }
+  return session;
+}
+
+export async function requireExpenseTravelSettingsAccess() {
+  const session = await requireSession();
+  if (!isExpenseFeatureEnabled()) {
+    throw new Error("报销功能未启用");
+  }
+  if (
+    session.user.role !== "ADMIN" &&
+    session.user.role !== "SALES_MANAGER" &&
+    session.user.role !== "HR"
+  ) {
+    throw new Error("无权修改差旅住宿标准");
   }
   return session;
 }

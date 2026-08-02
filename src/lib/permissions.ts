@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   SALES: "销售",
@@ -24,14 +25,14 @@ export const ROLE_PRIVILEGE_RANK: Record<UserRole, number> = {
 /** 编辑用户 / 开通审批时展示的角色说明 */
 export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   SALES:
-    "今日工作、日报、计划与任务、客户、商机、待跟进、合同（本人数据；可提审合同）。",
+    "今日工作、日报、计划与任务、客户、商机、待跟进、合同（本人数据；可提审合同）、报销。",
   SALES_MANAGER:
-    "销售侧全部数据与审批、销售人员、销售成本；可编辑/审批合同；系统配置中的销售相关项。",
-  PROJECT_ADMIN: "项目、资源排班、实施人员；系统配置中的项目相关项。",
-  PROJECT_MANAGER: "项目与排班、我的任务；合同只读查阅；系统配置中的项目相关项。",
-  PROJECT_STAFF: "项目、资源排班、我的任务。",
-  ADMIN: "全部模块，含用户管理与完整系统配置。",
-  HR: "行政人事账号已开通；线上报销等能力后续上线前仅可进入工作台。",
+    "销售侧全部数据与审批、销售人员、销售成本、报销；可编辑/审批合同；系统配置中的销售相关项。",
+  PROJECT_ADMIN: "项目、资源排班、实施人员、报销；系统配置中的项目相关项。",
+  PROJECT_MANAGER: "项目与排班、我的任务、报销；合同只读查阅；系统配置中的项目相关项。",
+  PROJECT_STAFF: "项目、我的任务、报销。",
+  ADMIN: "全部模块，含用户管理、完整系统配置与报销终审打款。",
+  HR: "行政人事：工作台、报销发起与终审打款，以及差旅住宿标准配置。",
 };
 
 export const CUSTOMER_CATEGORY_LABELS = {
@@ -81,6 +82,13 @@ export const CONTRACT_STATUS_LABELS = {
   TERMINATED: "已终止",
 } as const;
 
+/** 合同列表/筛选可见状态（不含已驳回；驳回单仅通知发起人） */
+export const CONTRACT_LIST_STATUS_LABELS = Object.fromEntries(
+  Object.entries(CONTRACT_STATUS_LABELS).filter(([key]) => key !== "REJECTED")
+) as Record<Exclude<keyof typeof CONTRACT_STATUS_LABELS, "REJECTED">, string>;
+
+export type ContractListStatus = keyof typeof CONTRACT_LIST_STATUS_LABELS;
+
 export const OPPORTUNITY_STATUS_LABELS = {
   NOT_SIGNED: "未签约",
   SIGNED: "已签约",
@@ -104,11 +112,15 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/plans-tasks", label: "计划与任务", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/approvals", label: "审批", roles: ["SALES_MANAGER", "ADMIN"] },
+  {
+    href: "/approvals",
+    label: "审批",
+    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN", "HR"],
+  },
   {
     href: "/notifications",
     label: "通知",
-    roles: ["SALES_MANAGER", "PROJECT_ADMIN", "ADMIN"],
+    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "ADMIN"],
   },
   { href: "/follow-ups", label: "待跟进", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
   { href: "/contracts", label: "合同", roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"] },
@@ -117,19 +129,28 @@ export const NAV_ITEMS: NavItem[] = [
     label: "外部成本",
     roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"],
   },
+  {
+    href: "/expenses",
+    label: "报销",
+    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN", "HR"],
+  },
   { href: "/projects", label: "项目", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
-  { href: "/projects/schedule", label: "资源排班", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
+  { href: "/projects/schedule", label: "资源排班", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "ADMIN"] },
   { href: "/my-tasks", label: "我的任务", roles: ["PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
   { href: "/personnel", label: "实施人员", roles: ["PROJECT_ADMIN", "ADMIN"] },
   { href: "/sales-personnel", label: "销售人员", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/sales-costs", label: "销售成本", roles: ["SALES_MANAGER", "ADMIN"] },
   { href: "/admin/users", label: "用户管理", roles: ["ADMIN"] },
-  { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER"] },
+  { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "HR"] },
   { href: "/hr", label: "工作台", roles: ["HR"] },
 ];
 
 export function getNavForRole(role: UserRole): NavItem[] {
-  return NAV_ITEMS.filter((item) => item.roles.includes(role));
+  const expenseOn = isExpenseFeatureEnabled();
+  return NAV_ITEMS.filter((item) => {
+    if (!expenseOn && item.href === "/expenses") return false;
+    return item.roles.includes(role);
+  });
 }
 
 /** 登录后默认首页：该角色侧栏第一项 */
@@ -146,7 +167,7 @@ export function canAccess(role: UserRole, resource: string, action: string): boo
     PROJECT_ADMIN: ["projects:all", "personnel:all", "presales-assignments:all", "settings:project"],
     PROJECT_MANAGER: ["projects:assigned", "tasks:assigned", "contracts:read", "settings:project"],
     PROJECT_STAFF: ["tasks:own", "projects:assigned"],
-    HR: ["hr:home"],
+    HR: ["hr:home", "expenses:finance"],
   };
   const perms = matrix[role] ?? [];
   const key = `${resource}:${action}`;

@@ -6,6 +6,7 @@ import { getContractForUser } from "@/lib/opportunities/access";
 import {
   canManageContractApproval,
   canEditContract,
+  canHandleRejectedContract,
   canRecordContractPayment,
   canManageContractAttachments,
   isSignedContractStatus,
@@ -20,6 +21,7 @@ import {
   CONTRACT_STATUS_LABELS,
   SIGNING_TYPE_LABELS,
 } from "@/lib/permissions";
+import { DEAL_PARTY_ROLE_LABELS } from "@/lib/deals/party-roles";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { BackLink } from "@/components/navigation/back-link";
 import { Button } from "@/components/ui/button";
@@ -30,12 +32,14 @@ import { ContractInvoicePanel } from "@/components/contracts/contract-invoice-pa
 import { ExternalCostPayoutPanel } from "@/components/contracts/external-cost-payout-panel";
 import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
 import { ContractForm } from "@/components/contracts/contract-form";
+import { DeleteRejectedContractButton } from "@/components/contracts/delete-rejected-contract-button";
 import { resolveBackNavigation, selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
 import { getConfigOptions, CONFIG_CATEGORY, labelForConfig } from "@/lib/config-options";
 import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import {
   approveContract,
   rejectContract,
+  deleteRejectedContract,
   addContractPaymentRecord,
   deleteContractPaymentRecord,
   addContractInvoiceRecord,
@@ -71,6 +75,10 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       approvedBy: { select: { name: true } },
       opportunity: { select: { id: true, title: true, expectedAmount: true } },
       project: { select: { id: true, name: true } },
+      parties: {
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       products: {
         orderBy: { productName: "asc" },
         include: {
@@ -156,7 +164,12 @@ export default async function ContractDetailPage({ params, searchParams }: Props
 
   const signed = isSignedContractStatus(contract.status);
   const canEdit = canEditContract(session.user.role);
-  const showResubmit = contract.status === "REJECTED" && query.edit === "1" && canEdit;
+  const canHandleRejected = canHandleRejectedContract(session.user.role, session.user.id, {
+    ownerId: contract.ownerId,
+    submittedById: contract.submittedById,
+    status: contract.status,
+  });
+  const showResubmit = canHandleRejected && query.edit === "1";
   const canApprove =
     canManageContractApproval(session.user.role) && isPendingContractApproval(contract.status);
   const canUploadAttachments = canManageContractAttachments(session.user.role);
@@ -208,6 +221,13 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             value: o.value,
             label: o.label,
           }))}
+          initialParties={contract.parties.map((p) => ({
+            key: p.id,
+            customerId: p.customerId,
+            customerName: p.customer.name,
+            role: p.role,
+            note: p.note ?? "",
+          }))}
           defaultValues={{
             title: contract.title,
             totalAmount: totalAmount,
@@ -258,24 +278,36 @@ export default async function ContractDetailPage({ params, searchParams }: Props
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canEdit && (
+          {canEdit && contract.status !== "REJECTED" && (
             <Button asChild variant="outline" size="sm">
               <Link href={withReturnTo(`/contracts/${id}/edit`, selfPath)}>编辑合同</Link>
             </Button>
+          )}
+          {canHandleRejected && (
+            <>
+              <Button asChild size="sm">
+                <Link href={`${selfPath}${selfPath.includes("?") ? "&" : "?"}edit=1`}>
+                  编辑后重新申请
+                </Link>
+              </Button>
+              <DeleteRejectedContractButton contractId={contract.id} />
+            </>
           )}
           <BackLink href={backHref} label={backLabel} />
         </div>
       </div>
 
-      {contract.status === "REJECTED" && contract.rejectReason && (
+      {contract.status === "REJECTED" && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
           <p className="font-medium text-destructive">合同已驳回</p>
-          <p className="mt-1">{contract.rejectReason}</p>
-          {canEdit && (
-            <Link href={`${selfPath}${selfPath.includes("?") ? "&" : "?"}edit=1`} className="mt-2 inline-block text-primary hover:underline">
-              修改并重新提交
-            </Link>
-          )}
+          {contract.rejectReason ? (
+            <p className="mt-1">{contract.rejectReason}</p>
+          ) : null}
+          {canHandleRejected ? (
+            <p className="mt-2 text-muted-foreground">
+              可删除该合同，或修改后重新申请。已驳回合同不会出现在合同列表中。
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -362,6 +394,29 @@ export default async function ContractDetailPage({ params, searchParams }: Props
               {contract.endUserCustomer.name}
             </Link>
           </p>
+          {contract.parties.length > 0 ? (
+            <div>
+              <p className="text-muted-foreground">关联客户</p>
+              <ul className="mt-1 space-y-1">
+                {contract.parties.map((p) => (
+                  <li key={p.id}>
+                    <span className="text-xs text-muted-foreground">
+                      {DEAL_PARTY_ROLE_LABELS[p.role]} ·{" "}
+                    </span>
+                    <Link
+                      href={withReturnTo(`/customers/${p.customer.id}`, selfPath)}
+                      className="text-primary hover:underline"
+                    >
+                      {p.customer.name}
+                    </Link>
+                    {p.note ? (
+                      <span className="text-muted-foreground">（{p.note}）</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {contract.ourRepresentative && (
             <p>
               <span className="text-muted-foreground">我方代表：</span>

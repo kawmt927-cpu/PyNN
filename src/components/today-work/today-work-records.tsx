@@ -1,111 +1,76 @@
-import Link from "next/link";
-import { format } from "date-fns";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { listTodayWorkRecords } from "@/lib/plans-tasks/today-work-records";
 import type { UserRole } from "@prisma/client";
+import { listTodayWorkRecords } from "@/lib/plans-tasks/today-work-records";
+import {
+  TodayWorkRecordsPanelClient,
+  type TodayWorkRecordCard,
+} from "@/components/today-work/today-work-records-client";
 
 type Props = {
   role: UserRole;
   userId: string;
+  openParam?: string | null;
 };
 
-export async function TodayWorkRecordsPanel({ role, userId }: Props) {
+export async function TodayWorkRecordsPanel({ role, userId, openParam }: Props) {
   const records = await listTodayWorkRecords(role, userId);
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">今日工作记录</CardTitle>
-        <p className="text-sm text-muted-foreground">今日全部打卡与往来，按时间倒序</p>
-      </CardHeader>
-      <CardContent>
-        {records.length === 0 ? (
-          <p className="text-sm text-muted-foreground">今日暂无工作记录。</p>
-        ) : (
-          <ul className="space-y-3">
-            {records.map((row) => {
-              const isCheckIn = row.kind === "check_in";
-              const followUp = isCheckIn ? row.followUp : undefined;
-              const merged = Boolean(followUp);
-              return (
-              <li key={`${row.kind}-${row.id}`} className="rounded-md border p-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {merged ? (
-                      <>
-                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-                          往来
-                        </span>
-                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-200">
-                          打卡
-                        </span>
-                      </>
-                    ) : (
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                          row.kind === "check_in"
-                            ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200"
-                            : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                        }`}
-                      >
-                        {row.kind === "check_in" ? "打卡" : "往来"}
-                      </span>
-                    )}
-                    {row.contactName ? (
-                      <span className="font-medium">{row.contactName}</span>
-                    ) : null}
-                    {row.customerName && row.customerId ? (
-                      <Link href={`/customers/${row.customerId}`} className="text-primary hover:underline">
-                        {row.customerName}
-                      </Link>
-                    ) : row.customerName ? (
-                      <span>{row.customerName}</span>
-                    ) : (
-                      <span className="text-muted-foreground">无客户</span>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground">{format(row.at, "HH:mm")}</span>
-                </div>
-                {merged && followUp && isCheckIn ? (
-                  <>
-                    <p className="mt-2 line-clamp-2">{followUp.summary}</p>
-                    <p className="mt-2 line-clamp-2 text-muted-foreground">打卡地点：{row.summary}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className={row.needsAction ? "text-orange-600" : "text-green-600"}>
-                        {row.statusLabel}
-                      </span>
-                      {" · "}
-                      {followUp.methodLabel}
-                      {followUp.opportunityTitle ? ` · 商机：${followUp.opportunityTitle}` : ""}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    {row.kind === "check_in" ? (
-                      <p className="mt-2 line-clamp-2">{row.summary}</p>
-                    ) : (
-                      <p className="mt-2 line-clamp-2">{row.summary}</p>
-                    )}
-                    {row.kind === "check_in" ? (
-                      <p
-                        className={`mt-1 text-xs ${row.needsAction ? "text-orange-600" : "text-green-600"}`}
-                      >
-                        {row.statusLabel}
-                      </p>
-                    ) : (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {row.methodLabel}
-                        {row.opportunityTitle ? ` · 商机：${row.opportunityTitle}` : ""}
-                      </p>
-                    )}
-                  </>
-                )}
-              </li>
-            );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
+  const cards: TodayWorkRecordCard[] = records.map((row) => {
+    if (row.kind === "check_in") {
+      return {
+        kind: "check_in",
+        id: row.id,
+        at: row.at.toISOString(),
+        contactName: row.contactName,
+        contactNames: row.contactNames,
+        customerId: row.customerId,
+        customerName: row.customerName,
+        summary: row.summary,
+        statusLabel: row.statusLabel,
+        needsAction: row.needsAction,
+        followUpSummary: row.followUp?.summary ?? null,
+        followUpId: row.followUp?.id ?? null,
+        followUpMethodLabel: row.followUp?.methodLabel ?? null,
+        opportunityTitle: row.followUp?.opportunityTitle ?? null,
+        nextFollowUpAt: row.nextFollowUpAt?.toISOString() ?? null,
+        nextFollowUpMethodLabel: row.nextFollowUpMethodLabel,
+        nextFollowUpContent: row.nextFollowUpContent,
+        methodLabel: row.followUp?.methodLabel ?? null,
+      };
+    }
+    if (row.kind === "daily_log") {
+      return {
+        kind: "daily_log",
+        id: row.id,
+        at: row.at.toISOString(),
+        contactName: null,
+        customerId: null,
+        customerName: null,
+        summary: row.summary,
+        title: row.title,
+        statusLabel: row.statusLabel,
+        logSubmitted: row.logSubmitted,
+        logLate: row.logLate,
+        logPendingMakeup: row.logPendingMakeup,
+        makeupHref: row.makeupHref,
+        detail: row.detail,
+      };
+    }
+    return {
+      kind: "follow_up",
+      id: row.id,
+      at: row.at.toISOString(),
+      contactName: row.contactName,
+      contactNames: row.contactNames,
+      customerId: row.customerId,
+      customerName: row.customerName,
+      summary: row.summary,
+      methodLabel: row.methodLabel,
+      opportunityTitle: row.opportunityTitle,
+      nextFollowUpAt: row.nextFollowUpAt?.toISOString() ?? null,
+      nextFollowUpMethodLabel: row.nextFollowUpMethodLabel,
+      nextFollowUpContent: row.nextFollowUpContent,
+    };
+  });
+
+  return <TodayWorkRecordsPanelClient records={cards} openParam={openParam} />;
 }

@@ -14,11 +14,10 @@ import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { CustomerTagList } from "@/components/customers/customer-tag-badge";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import { AccessDeniedCard } from "@/components/navigation/access-denied-card";
-import { prisma } from "@/lib/prisma";
 import {
-  opportunityListWhere,
-  contractListWhere,
-} from "@/lib/opportunities/access";
+  listContractsLinkedToCustomer,
+  listOpportunitiesLinkedToCustomer,
+} from "@/lib/customers/linked-deals";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { OPPORTUNITY_STATUS_LABELS, CONTRACT_STATUS_LABELS } from "@/lib/permissions";
 
@@ -49,32 +48,17 @@ export default async function MobileCustomerDetailPage({ params }: Props) {
     loadCustomerFieldLabelMaps(),
     getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]),
     getCustomerTagDefinitions(),
-    prisma.opportunity.findMany({
-      where: {
-        AND: [opportunityListWhere(session.user.role, session.user.id), { customerId: id }],
-      },
-      orderBy: { updatedAt: "desc" },
+    listOpportunitiesLinkedToCustomer({
+      customerId: id,
+      role: session.user.role,
+      userId: session.user.id,
       take: 10,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        stage: true,
-        expectedAmount: true,
-      },
     }),
-    prisma.contract.findMany({
-      where: {
-        AND: [
-          contractListWhere(session.user.role, session.user.id),
-          {
-            OR: [{ signCustomerId: id }, { endUserCustomerId: id }],
-          },
-        ],
-      },
-      orderBy: { updatedAt: "desc" },
+    listContractsLinkedToCustomer({
+      customerId: id,
+      role: session.user.role,
+      userId: session.user.id,
       take: 10,
-      select: { id: true, title: true, status: true, totalAmount: true },
     }),
   ]);
 
@@ -139,6 +123,9 @@ export default async function MobileCustomerDetailPage({ params }: Props) {
                   >
                     <p className="text-sm font-medium">{o.title}</p>
                     <p className="text-xs text-muted-foreground">
+                      {o.relationRoles.length > 0
+                        ? `${o.relationRoles.join(" / ")} · `
+                        : ""}
                       {OPPORTUNITY_STATUS_LABELS[o.status]}
                       {o.stage ? ` · ${labelForConfig(stageLabels, o.stage) || o.stage}` : ""}
                       {` · ${formatAmount(o.expectedAmount)}`}
@@ -164,6 +151,9 @@ export default async function MobileCustomerDetailPage({ params }: Props) {
                   >
                     <p className="text-sm font-medium">{c.title}</p>
                     <p className="text-xs text-muted-foreground">
+                      {c.relationRoles.length > 0
+                        ? `${c.relationRoles.join(" / ")} · `
+                        : ""}
                       {CONTRACT_STATUS_LABELS[c.status]}
                       {` · ${formatAmount(c.totalAmount)}`}
                     </p>

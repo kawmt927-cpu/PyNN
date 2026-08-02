@@ -5,21 +5,10 @@ import { OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
 import { withReturnTo } from "@/lib/navigation/return-to";
-import type { OpportunityStatus } from "@prisma/client";
-import type { Decimal } from "@prisma/client/runtime/library";
-
-export type CustomerOpportunityRow = {
-  id: string;
-  title: string;
-  stage: string;
-  status: OpportunityStatus;
-  expectedAmount: Decimal;
-  expectedCloseDate: Date;
-  owner: { name: string };
-};
+import type { CustomerLinkedOpportunity } from "@/lib/customers/linked-deals";
 
 type Props = {
-  opportunities: CustomerOpportunityRow[];
+  opportunities: CustomerLinkedOpportunity[];
   stageLabels: Record<string, string>;
   linkReturnTo?: string;
 };
@@ -42,6 +31,7 @@ export function CustomerOpportunitiesList({
         <thead>
           <tr className="border-b text-left text-muted-foreground">
             <th className="pb-2 pr-4">商机名称</th>
+            <th className="pb-2 pr-4">关联角色</th>
             <th className="pb-2 pr-4">阶段</th>
             <th className="pb-2 pr-4">状态</th>
             <th className="pb-2 pr-4">预计金额</th>
@@ -57,6 +47,9 @@ export function CustomerOpportunitiesList({
                 <Link href={href(row.id)} className="text-primary hover:underline">
                   {row.title}
                 </Link>
+              </td>
+              <td className="py-3 pr-4 text-muted-foreground">
+                {row.relationRoles.length > 0 ? row.relationRoles.join(" / ") : "—"}
               </td>
               <td className="py-3 pr-4">{labelForConfig(stageLabels, row.stage)}</td>
               <td className="py-3 pr-4">{OPPORTUNITY_STATUS_LABELS[row.status]}</td>

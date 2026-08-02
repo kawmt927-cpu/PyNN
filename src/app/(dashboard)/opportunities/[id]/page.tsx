@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
@@ -14,7 +15,10 @@ import {
   getConfigOptions,
   labelForConfig,
 } from "@/lib/config-options";
-import { OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
+import { getOpportunityGradeLabel } from "@/lib/opportunities/grade";
+import { listOpportunityRecentFollowUps } from "@/lib/opportunities/visit-summary";
+import { OpportunityGradeDisplay } from "@/components/opportunities/opportunity-grade-icon";
+import { FOLLOW_UP_METHOD_LABELS, OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import {
   OPPORTUNITY_ABANDON_REASON_LABELS,
   canSignOpportunity,
@@ -33,11 +37,9 @@ import {
   selfReturnPath,
   withReturnTo,
 } from "@/lib/navigation/return-to";
-import {
-  ENTITY_TYPES,
-  listEntityOperationLogs,
-} from "@/lib/audit/entity-operation-log";
+import { ENTITY_TYPES, listEntityOperationLogs } from "@/lib/audit/entity-operation-log";
 import { EntityOperationLogList } from "@/components/audit/entity-operation-log-list";
+import { DEAL_PARTY_ROLE_LABELS } from "@/lib/deals/party-roles";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -51,12 +53,17 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
   if (!opportunity) notFound();
 
-  const [full, activity, contracts, labelMaps, stageOptions, operationLogs] = await Promise.all([
+  const [full, activity, contracts, labelMaps, stageOptions, operationLogs, recentVisits] =
+    await Promise.all([
       prisma.opportunity.findUnique({
         where: { id },
         include: {
           customer: true,
           owner: { select: { name: true } },
+          parties: {
+            include: { customer: { select: { id: true, name: true } } },
+            orderBy: { createdAt: "asc" },
+          },
         },
       }),
       getOpportunityActivity(id),
@@ -65,9 +72,10 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
         select: { id: true, title: true, totalAmount: true, status: true },
         orderBy: { createdAt: "desc" },
       }),
-      getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]),
+      getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE, CONFIG_CATEGORY.OPPORTUNITY_GRADE]),
       getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
       listEntityOperationLogs(ENTITY_TYPES.OPPORTUNITY, id),
+      listOpportunityRecentFollowUps(id, 8),
     ]);
 
   if (!full) notFound();
@@ -75,6 +83,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const { backHref, backLabel } = resolveBackNavigation(query, "/opportunities");
   const selfPath = selfReturnPath(`/opportunities/${id}`, query);
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
+  const gradeLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_GRADE] ?? {};
   const canEdit = canEditOpportunityContent(session.user.role, session.user.id, full);
   const canFollowUp = canFollowUpOpportunity(session.user.role, session.user.id, full);
   const canManageStatus = canManageOpportunityStatus(session.user.role);
@@ -129,14 +138,41 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p>
-              <span className="text-muted-foreground">销售对象：</span>
-              <Link
-                href={withReturnTo(`/customers/${full.customerId}`, selfPath)}
-                className="text-primary hover:underline"
-              >
-                {full.customer.name}
-              </Link>
+              <span className="text-muted-foreground">主要客户：</span>
+              {full.customerId && full.customer ? (
+                <Link
+                  href={withReturnTo(`/customers/${full.customerId}`, selfPath)}
+                  className="text-primary hover:underline"
+                >
+                  {full.customer.name}
+                </Link>
+              ) : (
+                <span className="text-muted-foreground">未指定</span>
+              )}
             </p>
+            {full.parties.length > 0 ? (
+              <div>
+                <p className="text-muted-foreground">关联客户</p>
+                <ul className="mt-1 space-y-1">
+                  {full.parties.map((p) => (
+                    <li key={p.id}>
+                      <span className="text-xs text-muted-foreground">
+                        {DEAL_PARTY_ROLE_LABELS[p.role]} ·{" "}
+                      </span>
+                      <Link
+                        href={withReturnTo(`/customers/${p.customer.id}`, selfPath)}
+                        className="text-primary hover:underline"
+                      >
+                        {p.customer.name}
+                      </Link>
+                      {p.note ? (
+                        <span className="text-muted-foreground">（{p.note}）</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <p>
               <span className="text-muted-foreground">预计金额：</span>
               {formatAmount(full.expectedAmount)}
@@ -151,6 +187,15 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
             <p>
               <span className="text-muted-foreground">阶段：</span>
               {labelForConfig(stageLabels, full.stage)}
+            </p>
+            <p>
+              <span className="text-muted-foreground">商机等级：</span>
+              <OpportunityGradeDisplay
+                grade={full.grade ?? "P3"}
+                description={getOpportunityGradeLabel(full.grade ?? "P3", gradeLabels)}
+                size="sm"
+                className="inline-flex align-middle"
+              />
             </p>
             {full.winProbability != null && (
               <p>
@@ -226,6 +271,30 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">最近拜访</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recentVisits.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无关联的客户拜访记录。</p>
+          ) : (
+            <ul className="space-y-3 text-sm">
+              {recentVisits.map((visit) => (
+                <li key={visit.id} className="rounded-md border p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>{format(visit.followUpAt, "yyyy-MM-dd HH:mm")}</span>
+                    <span>{visit.user.name}</span>
+                    <span>{FOLLOW_UP_METHOD_LABELS[visit.method]}</span>
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap">{visit.content}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

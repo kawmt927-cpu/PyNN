@@ -6,7 +6,8 @@ import { WeComQrLogin } from "@/components/auth/wecom-qr-login";
 
 const ERROR_MESSAGES: Record<string, string> = {
   wecom_not_configured: "企业微信登录尚未配置，请联系管理员。",
-  wecom_auth_failed: "企业微信登录失败或已过期，请重新授权。",
+  wecom_auth_failed:
+    "企业微信授权未完成（常见原因：从 IP 地址打开导致登录态丢失）。请点下方按钮重新授权；若仍失败，请确认企微应用主页已改为 https://crm.pynntech.com 。",
   wecom_ip_denied:
     "服务器 IP 未加入企微「企业可信IP」。请管理员在企微后台加入 122.51.86.223 后重试。",
 };

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { saveCustomerGradeOptions } from "@/app/(dashboard)/admin/settings/actions";
 import { CustomerGradeVisual } from "@/components/customers/customer-grade-icon";
+import { OpportunityGradeVisual } from "@/components/opportunities/opportunity-grade-icon";
 import {
   ConfigOptionSortableList,
   type ConfigOptionRow,
@@ -19,6 +20,7 @@ type Props = {
   options: ConfigOptionRow[];
   category?: string;
   tone?: "amber" | "blue";
+  visualVariant?: "customer" | "opportunity";
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -49,6 +51,7 @@ export function CustomerGradeOptionsPanel({
   options,
   category = "customer_grade",
   tone = "amber",
+  visualVariant = "customer",
   onDirtyChange,
 }: Props) {
   const router = useRouter();
@@ -131,7 +134,11 @@ export function CustomerGradeOptionsPanel({
           const value = valueById.get(item.id);
           return value ? (
             <span className="inline-flex justify-center">
-              <CustomerGradeVisual grade={value} size="sm" tone={tone} />
+              {visualVariant === "opportunity" ? (
+                <OpportunityGradeVisual grade={value} size="sm" />
+              ) : (
+                <CustomerGradeVisual grade={value} size="sm" tone={tone} />
+              )}
             </span>
           ) : (
             <span className="text-xs text-muted-foreground">—</span>

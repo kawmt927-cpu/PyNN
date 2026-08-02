@@ -95,7 +95,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
                   id: o.id,
                   title: o.title,
                   status: o.status,
-                  customerName: o.customer.name,
+                  customerName: o.customer?.name ?? "未指定客户",
                 })),
               };
             },
@@ -270,7 +270,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
     }),
     submitDailyLog: tool({
       description:
-        "提交今日销售日报。仅在销售已在对话中确认完整总结（含今日总结+明日计划）后调用；须先有合格明日计划（具体事项+预计成果），「待安排」「继续跟进」等会被拒绝。禁止在未展示总结并获确认前调用。",
+        "提交今日销售日报。仅在销售已在对话中确认完整总结（含今日总结+明日计划）后调用；须先有合格明日计划（具体事项+预计成果），「待安排」「继续跟进」等会被拒绝。禁止在未展示总结并获确认前调用。未收到本工具 success:true 前，禁止对销售说「日报已提交」。",
       parameters: z.object({
         dailyReport: z.string().describe("今日日报 Markdown 正文"),
         tomorrowPlan: z
@@ -283,15 +283,28 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       }),
       execute: async (input) => {
         try {
-          return await submitDailyLogFromAgent(ctx, input);
+          const result = await submitDailyLogFromAgent(ctx, input);
+          console.info("[agent-tool] submitDailyLog ok", {
+            userId: ctx.userId,
+            dailyLogId: ctx.dailyLogId,
+            status: result.status,
+          });
+          return result;
         } catch (error) {
           const message = error instanceof Error ? error.message : "提交日报失败";
+          console.error("[agent-tool] submitDailyLog failed", {
+            userId: ctx.userId,
+            dailyLogId: ctx.dailyLogId,
+            message,
+            tomorrowPlanLen: input.tomorrowPlan?.length ?? 0,
+            reportLen: input.dailyReport?.length ?? 0,
+          });
           return {
             success: false,
             error: message,
             hint: message.includes("明日计划")
-              ? "不要提交。先收齐明日计划，发出完整总结供销售确认，确认后再调用本工具。"
-              : "请修正日报内容后重试。",
+              ? "不要提交。先收齐明日计划，发出完整总结供销售确认，确认后再调用本工具。且不得对销售说已提交。"
+              : "请修正日报内容后重试。在收到 success:true 前不得对销售说日报已提交。",
           };
         }
       },
@@ -366,7 +379,7 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
       },
     }),
     createOpportunity: tool({
-      description: "新建商机。需关联已有客户，填写预计金额、预计签约月份、阶段。",
+      description: "新建商机。需关联已有客户，填写预计金额、预计签约月份、阶段；等级默认 P3（空心星）。",
       parameters: z.object({
         title: z.string().describe("商机名称"),
         customerId: z.string().optional().describe("客户 ID"),
@@ -374,6 +387,10 @@ export function createCrmAgentTools(session: AgentSession, config: EffectiveAiAg
         expectedAmount: z.number().positive().describe("预计金额（元）"),
         expectedCloseDate: z.string().describe("预计签约月份 YYYY-MM"),
         stage: z.string().describe("商机阶段（配置项 value）"),
+        grade: z
+          .enum(["P0", "P1", "P2", "P3"])
+          .optional()
+          .describe("商机等级，默认 P3"),
         requirementDesc: z.string().optional().describe("需求描述"),
         winProbability: z.number().int().min(0).max(100).optional().describe("赢单概率 %"),
         competitor: z.string().optional().describe("竞争对手"),

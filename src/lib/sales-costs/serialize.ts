@@ -8,6 +8,7 @@ export type SalesCostListItem = {
   salesUserName: string;
   recordedByName: string;
   customerName?: string;
+  customerId?: string;
   presalesUserName?: string;
   presalesDays?: number;
   presalesPersonnelCost?: number;
@@ -40,7 +41,7 @@ type CostRecord = {
   description: string | null;
   salesUser: { name: string };
   recordedBy: { name: string };
-  customer: { name: string } | null;
+  customer: { id: string; name: string } | null;
   presalesUser: { name: string } | null;
 };
 
@@ -64,6 +65,7 @@ export function serializeSalesCostForList(cost: CostRecord): SalesCostListItem {
     salesUserName: cost.salesUser.name,
     recordedByName: cost.recordedBy.name,
     customerName: cost.customer?.name,
+    customerId: cost.customer?.id,
     presalesUserName: cost.presalesUser?.name,
     presalesDays: cost.presalesDays ?? undefined,
     presalesPersonnelCost: toNumber(cost.presalesPersonnelCost),

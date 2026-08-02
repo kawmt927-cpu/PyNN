@@ -8,6 +8,8 @@ import { listUpcomingActionsThisWeek } from "@/lib/plans-tasks/upcoming-actions"
 import { getRemainingTimeInfo, remainingTimeClassName } from "@/lib/today-work/remaining-time";
 import { withReturnTo } from "@/lib/navigation/return-to";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
+import { GeneralAssignmentActionButton } from "@/components/today-work/general-assignment-action-button";
 import type { UserRole } from "@prisma/client";
 
 type Props = {
@@ -29,7 +31,7 @@ export async function TodayUpcomingList({ role, userId, returnPath }: Props) {
         <div>
           <CardTitle className="text-lg">本周待办</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            {weekLabel}（周一至周日）· 含待跟进、指派任务与回款催收
+            {weekLabel}（周一至周日）· 含待跟进与指派任务（含普通任务）
             {showOwner ? " · 显示负责销售" : ""}
           </p>
         </div>
@@ -48,14 +50,34 @@ export async function TodayUpcomingList({ role, userId, returnPath }: Props) {
                 item.kind === "payment_collection"
                   ? withReturnTo(`/contracts/${item.contractId}`, returnPath)
                   : item.kind === "assignment"
-                  ? item.opportunityId
-                    ? withReturnTo(`/opportunities/${item.opportunityId}/follow-ups`, returnPath)
-                    : item.customerId
-                      ? withReturnTo(`/customers/${item.customerId}/follow-ups`, returnPath)
-                      : null
-                  : item.opportunityId
-                    ? withReturnTo(`/opportunities/${item.opportunityId}/follow-ups`, returnPath)
-                    : withReturnTo(`/customers/${item.customerId}/follow-ups`, returnPath);
+                    ? item.opportunityId
+                      ? withReturnTo(`/opportunities/${item.opportunityId}/follow-ups`, returnPath)
+                      : item.customerId
+                        ? withReturnTo(`/customers/${item.customerId}/follow-ups`, returnPath)
+                        : withReturnTo("/plans-tasks?tab=tasks", returnPath)
+                    : item.opportunityId
+                      ? withReturnTo(`/opportunities/${item.opportunityId}/follow-ups`, returnPath)
+                      : withReturnTo(`/customers/${item.customerId}/follow-ups`, returnPath);
+
+              const canMarkDone =
+                item.kind === "assignment" &&
+                item.assignmentKind === "GENERAL" &&
+                item.assignmentStatus === "PENDING" &&
+                item.assignee.id === userId;
+              const canConfirm =
+                item.kind === "assignment" &&
+                item.assignmentKind === "GENERAL" &&
+                item.assignmentStatus === "PENDING_CONFIRM" &&
+                item.assignedBy.id === userId;
+
+              const kindLabel =
+                item.kind === "payment_collection"
+                  ? "回款催收"
+                  : item.kind === "assignment"
+                    ? item.assignmentKind === "GENERAL"
+                      ? "普通任务"
+                      : "指派"
+                    : "待跟进";
 
               return (
                 <li
@@ -69,19 +91,44 @@ export async function TodayUpcomingList({ role, userId, returnPath }: Props) {
                           item.kind === "payment_collection"
                             ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
                             : item.kind === "assignment"
-                            ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-200"
-                            : "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200"
+                              ? item.assignmentKind === "GENERAL"
+                                ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200"
+                                : "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-200"
+                              : "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200"
                         }`}
                       >
-                        {item.kind === "payment_collection"
-                          ? "回款催收"
-                          : item.kind === "assignment"
-                            ? "指派"
-                            : "待跟进"}
+                        {kindLabel}
                       </span>
-                      <span className="font-medium">{item.title}</span>
+                      {item.kind === "payment_collection" ? (
+                        <>
+                          <span className="font-medium">{item.title}</span>
+                          <CustomerNameLink
+                            customerId={item.customerId}
+                            name={item.customerName}
+                            returnTo={returnPath}
+                            className="text-sm font-normal"
+                          />
+                        </>
+                      ) : item.customerId ? (
+                        <CustomerNameLink
+                          customerId={item.customerId}
+                          name={item.customerName ?? item.title}
+                          returnTo={returnPath}
+                        />
+                      ) : (
+                        <span className="font-medium">{item.title}</span>
+                      )}
                       {item.kind === "follow_up" ? (
-                        <CustomerGradeIcon grade={item.customerGrade} size="sm" labelMap={gradeLabels} />
+                        <CustomerGradeIcon
+                          grade={item.customerGrade}
+                          size="sm"
+                          labelMap={gradeLabels}
+                        />
+                      ) : null}
+                      {item.kind === "assignment" && item.assignmentStatus === "PENDING_CONFIRM" ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
+                          待确认
+                        </span>
                       ) : null}
                     </div>
                     {item.subtitle ? (
@@ -110,10 +157,23 @@ export async function TodayUpcomingList({ role, userId, returnPath }: Props) {
                     <span className={`text-xs ${remainingTimeClassName(remaining.tone)}`}>
                       {remaining.label}
                     </span>
-                    {href ? (
+                    {canMarkDone ? (
+                      <GeneralAssignmentActionButton assignmentId={item.id} mode="mark_done" />
+                    ) : null}
+                    {canConfirm ? (
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <GeneralAssignmentActionButton assignmentId={item.id} mode="confirm" />
+                        <GeneralAssignmentActionButton assignmentId={item.id} mode="reject" />
+                      </div>
+                    ) : null}
+                    {!canMarkDone && !canConfirm && href ? (
                       <Button asChild size="sm">
                         <Link href={href}>
-                          {item.kind === "payment_collection" ? "去催收" : "去处理"}
+                          {item.kind === "payment_collection"
+                            ? "去催收"
+                            : item.kind === "assignment" && item.assignmentKind === "GENERAL"
+                              ? "查看任务"
+                              : "去处理"}
                         </Link>
                       </Button>
                     ) : null}

@@ -64,7 +64,9 @@ function DashboardShellInner({
         impersonatorName={impersonatorName}
         showMobileSwitch={showMobileSwitch}
       />
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [scrollbar-gutter:stable]">
+        {children}
+      </main>
     </div>
   );
 }
@@ -92,7 +94,9 @@ function DashboardShellFallback({
         impersonatorName={impersonatorName}
         showMobileSwitch={showMobileSwitch}
       />
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [scrollbar-gutter:stable]">
+        {children}
+      </main>
     </div>
   );
 }

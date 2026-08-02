@@ -37,6 +37,12 @@ import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import { assertCustomerGrade } from "@/lib/customers/grade";
+import { assertOpportunityGrade } from "@/lib/opportunities/grade";
+import {
+  assertPartiesNotOverlappingPrimary,
+  readPartiesFromFormData,
+  replaceOpportunityParties,
+} from "@/lib/deals/party-sync";
 import {
   enforceCustomerTypeForCategory,
   requireCustomerGradeForType,
@@ -133,12 +139,12 @@ async function resolveCustomerId(
   formData: FormData,
   role: UserRole,
   userId: string
-): Promise<string> {
+): Promise<string | null> {
   const mode = formData.get("customerMode")?.toString() ?? "existing";
 
   if (mode === "existing") {
     const customerId = formData.get("customerId")?.toString().trim();
-    if (!customerId) throw new Error("请选择销售对象（客户）");
+    if (!customerId) return null;
     const customer = await getCustomerForUser(customerId, role, userId);
     if (!customer) throw new Error("无权使用该客户");
     return customerId;
@@ -179,6 +185,7 @@ function parseOpportunityForm(formData: FormData) {
     expectedAmount: formData.get("expectedAmount"),
     expectedCloseDate: formData.get("expectedCloseDate"),
     stage: formData.get("stage"),
+    grade: formData.get("grade")?.toString().trim() || "",
     requirementDesc: formData.get("requirementDesc") || undefined,
     winProbability: winProbRaw ? Number(winProbRaw) : null,
     competitor: formData.get("competitor") || undefined,
@@ -194,9 +201,12 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
     const { CONFIG_CATEGORY, assertConfigValue } = await import("@/lib/config-options");
     const stage = await assertConfigValue(CONFIG_CATEGORY.OPPORTUNITY_STAGE, parsed.stage);
     if (!stage) throw new Error("请选择商机阶段");
+    const grade = assertOpportunityGrade(parsed.grade);
 
     const customerId = await resolveCustomerId(formData, session.user.role, session.user.id);
     const ownerId = await resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
+    const parties = readPartiesFromFormData(formData);
+    assertPartiesNotOverlappingPrimary(parties, customerId);
 
     const opportunity = await prisma.$transaction(async (tx) => {
       const created = await tx.opportunity.create({
@@ -207,12 +217,14 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
           expectedAmount: parsed.expectedAmount,
           expectedCloseDate: parseExpectedCloseMonth(parsed.expectedCloseDate),
           stage,
+          grade,
           requirementDesc: parsed.requirementDesc?.trim() || undefined,
           winProbability: parsed.winProbability ?? undefined,
           competitor: parsed.competitor?.trim() || undefined,
           notes: parsed.notes?.trim() || undefined,
         },
       });
+      await replaceOpportunityParties(tx, created.id, parties);
       await tx.opportunityStageLog.create({
         data: {
           opportunityId: created.id,
@@ -262,11 +274,34 @@ export async function updateOpportunity(id: string, formData: FormData): Promise
     );
     const stage = await assertConfigValue(CONFIG_CATEGORY.OPPORTUNITY_STAGE, parsed.stage);
     if (!stage) throw new Error("请选择商机阶段");
+    const grade = assertOpportunityGrade(parsed.grade);
 
     const ownerId = await resolveOwnerId(session.user.role, session.user.id, parsed.ownerId);
-    const stageLabels = (await getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE]))[
-      CONFIG_CATEGORY.OPPORTUNITY_STAGE
-    ] ?? {};
+    const customerIdRaw = formData.get("customerId")?.toString().trim() || null;
+    let customerId = existing.customerId;
+    if (customerIdRaw !== undefined) {
+      // 编辑页可改主要客户（可清空）
+      if (!customerIdRaw) {
+        customerId = null;
+      } else if (customerIdRaw !== existing.customerId) {
+        const customer = await getCustomerForUser(
+          customerIdRaw,
+          session.user.role,
+          session.user.id
+        );
+        if (!customer) throw new Error("无权使用该客户");
+        customerId = customerIdRaw;
+      }
+    }
+    const parties = readPartiesFromFormData(formData);
+    assertPartiesNotOverlappingPrimary(parties, customerId);
+
+    const labelMaps = await getConfigOptionMaps([
+      CONFIG_CATEGORY.OPPORTUNITY_STAGE,
+      CONFIG_CATEGORY.OPPORTUNITY_GRADE,
+    ]);
+    const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
+    const gradeLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_GRADE] ?? {};
 
     const ownerUser = await prisma.user.findUnique({
       where: { id: ownerId },
@@ -282,29 +317,37 @@ export async function updateOpportunity(id: string, formData: FormData): Promise
         expectedAmount: parsed.expectedAmount,
         expectedCloseDate: parsed.expectedCloseDate,
         stage,
+        grade,
         requirementDesc: parsed.requirementDesc?.trim() || null,
         winProbability: parsed.winProbability ?? null,
         competitor: parsed.competitor?.trim() || null,
         notes: parsed.notes?.trim() || null,
       },
-      stageLabels
+      stageLabels,
+      gradeLabels
     );
+    if (customerId !== existing.customerId) {
+      changes.push("主要客户");
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.opportunity.update({
         where: { id },
         data: {
           title: parsed.title.trim(),
+          customerId,
           ownerId,
           expectedAmount: existing.amountLocked ? undefined : parsed.expectedAmount,
           expectedCloseDate: parseExpectedCloseMonth(parsed.expectedCloseDate),
           stage,
+          grade,
           requirementDesc: parsed.requirementDesc?.trim() || null,
           winProbability: parsed.winProbability ?? null,
           competitor: parsed.competitor?.trim() || null,
           notes: parsed.notes?.trim() || null,
         },
       });
+      await replaceOpportunityParties(tx, id, parties);
 
       if (changes.length > 0) {
         await tx.opportunityStageLog.create({
@@ -459,11 +502,16 @@ function parseOpportunityFollowUpForm(formData: FormData) {
   });
 }
 
-async function revalidateOpportunityFollowUpPaths(opportunityId: string, customerId: string) {
+async function revalidateOpportunityFollowUpPaths(
+  opportunityId: string,
+  customerId: string | null
+) {
   revalidatePath(`/opportunities/${opportunityId}`);
   revalidatePath(`/opportunities/${opportunityId}/follow-ups`);
-  revalidatePath(`/customers/${customerId}/follow-ups`);
-  revalidatePath(`/customers/${customerId}`);
+  if (customerId) {
+    revalidatePath(`/customers/${customerId}/follow-ups`);
+    revalidatePath(`/customers/${customerId}`);
+  }
   revalidatePath("/follow-ups");
 }
 
@@ -505,15 +553,23 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
         });
       }
 
-      await tx.opportunityFollowUp.create({
+      if (!existing.customerId) {
+        throw new Error("商机未关联主客户，无法写入客户往来");
+      }
+
+      await tx.followUp.create({
         data: {
+          customerId: existing.customerId,
           opportunityId: parsed.opportunityId,
           userId: session.user.id,
           method: parsed.method,
           content: parsed.content,
+          result: changeSummary ?? undefined,
           followUpAt: new Date(parsed.followUpAt),
           nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
-          changeSummary,
+          linkedOpportunities: {
+            create: [{ opportunityId: parsed.opportunityId }],
+          },
         },
       });
     });
@@ -531,6 +587,7 @@ export async function updateOpportunityFollowUp(formData: FormData): Promise<Act
     const parsed = parseOpportunityFollowUpForm(formData);
     if (!parsed.followUpId) return { error: "缺少跟进记录 ID" };
 
+    // 新记录写入 FollowUp 表；此处仅更新 legacy OpportunityFollowUp
     const followUp = await prisma.opportunityFollowUp.findUnique({
       where: { id: parsed.followUpId },
       include: { opportunity: { include: { owner: { select: { name: true } } } } },

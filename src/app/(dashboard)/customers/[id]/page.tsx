@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { format } from "date-fns";
 import { requireRole } from "@/lib/session";
 import { getPrismaClient } from "@/lib/prisma";
 import {
@@ -21,9 +22,9 @@ import { countCustomerFollowUps, getCustomerFollowUpHistory } from "@/lib/follow
 import { getCustomerGradeFollowUpSchedule } from "@/lib/customers/grade-expiry";
 import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 import {
-  contractListWhere,
-  opportunityListWhere,
-} from "@/lib/opportunities/access";
+  listContractsLinkedToCustomer,
+  listOpportunitiesLinkedToCustomer,
+} from "@/lib/customers/linked-deals";
 import { canEditContract } from "@/lib/contracts/access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,24 +112,15 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           })
         : Promise.resolve(0),
       countCustomerFollowUps(customer.id),
-      db.opportunity.findMany({
-        where: {
-          customerId: customer.id,
-          ...opportunityListWhere(session.user.role, session.user.id),
-        },
-        orderBy: { updatedAt: "desc" },
-        include: { owner: { select: { name: true } } },
+      listOpportunitiesLinkedToCustomer({
+        customerId: customer.id,
+        role: session.user.role,
+        userId: session.user.id,
       }),
-      db.contract.findMany({
-        where: {
-          OR: [{ signCustomerId: customer.id }, { endUserCustomerId: customer.id }],
-          ...contractListWhere(session.user.role, session.user.id),
-        },
-        orderBy: { updatedAt: "desc" },
-        include: {
-          owner: { select: { name: true } },
-          opportunity: { select: { id: true, title: true } },
-        },
+      listContractsLinkedToCustomer({
+        customerId: customer.id,
+        role: session.user.role,
+        userId: session.user.id,
       }),
       getCustomerFollowUpHistory(customer.id),
       getCustomerGradeFollowUpSchedule({
@@ -294,6 +286,10 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
               />
             ) : null}
             <Row label="客户来源" value={labelForConfig(sourceLabels, customer.source)} />
+            <Row
+              label="创建日期"
+              value={format(customer.createdAt, "yyyy-MM-dd HH:mm")}
+            />
             <Row label="备注" value={customer.notes ?? "—"} />
           </CardContent>
         </Card>

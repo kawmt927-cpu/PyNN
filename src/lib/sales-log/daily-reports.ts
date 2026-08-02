@@ -26,7 +26,10 @@ export type DailyReportDetail = {
   riskFlag: boolean;
   riskNotes: string | null;
   submittedAt: Date | null;
+  lateMarkedAt: Date | null;
   updatedAt: Date;
+  /** AI 助理对话（最近 7 天内有记录时可供查阅） */
+  conversation: Array<{ role: string; content: string }> | null;
   user: { id: string; name: string };
   checkIns: {
     id: string;
@@ -93,7 +96,11 @@ export async function getDailyReportDetail(
     riskFlag: row.riskFlag,
     riskNotes: row.riskNotes,
     submittedAt: row.submittedAt,
+    lateMarkedAt: row.lateMarkedAt,
     updatedAt: row.updatedAt,
+    conversation: Array.isArray(row.conversation)
+      ? (row.conversation as Array<{ role: string; content: string }>)
+      : null,
     user: row.user,
     checkIns: row.checkIns,
     followUps: row.followUps,

@@ -12,10 +12,8 @@ import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "
 import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess, CUSTOMER_ASSIGNABLE_ROLES } from "@/lib/customers/access";
 import { replaceCustomerAssistants } from "@/lib/customers/assistants";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
-import { parsePlannedFollowUpDateInput } from "@/lib/dates/local-date";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
-import { assertCustomerGrade } from "@/lib/customers/grade";
 import {
   enforceCustomerTypeForCategory,
   requireCustomerGradeForType,
@@ -27,6 +25,8 @@ import {
   parsePendingPlanSelectionKey,
   pendingPlanSelectionKey,
 } from "@/lib/follow-ups/unified";
+import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
+import { createFollowUpFromAgent } from "@/lib/sales-log/write";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -335,6 +335,19 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
 export async function createFollowUp(formData: FormData): Promise<ActionResult> {
   try {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+  const opportunityIdsJson = formData.get("opportunityIdsJson")?.toString().trim();
+  const parsedOpportunityIdsFromJson = opportunityIdsJson
+    ? (JSON.parse(opportunityIdsJson) as unknown)
+    : null;
+  const opportunityIdsFromForm = formData
+    .getAll("opportunityIds")
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  const opportunityIdsFromJson = Array.isArray(parsedOpportunityIdsFromJson)
+    ? parsedOpportunityIdsFromJson.filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0
+      )
+    : [];
+
   const parsed = followUpFormSchema.parse({
     customerId: formData.get("customerId"),
     method: formData.get("method"),
@@ -347,6 +360,8 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
     suggestedGrade: formData.get("suggestedGrade") || null,
     contactIds: formData.getAll("contactIds").filter((id): id is string => typeof id === "string" && id.trim().length > 0),
     opportunityId: formData.get("opportunityId") || null,
+    opportunityIds:
+      opportunityIdsFromForm.length > 0 ? opportunityIdsFromForm : opportunityIdsFromJson,
     completedPendingKeys: formData
       .getAll("completedPendingKeys")
       .filter((key): key is string => typeof key === "string" && key.trim().length > 0),
@@ -369,23 +384,6 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
   );
   if (planError) throw new Error(planError);
 
-  const suggestedGrade = assertCustomerGrade(parsed.suggestedGrade);
-  const applyGrade = Boolean(suggestedGrade);
-
-  if (parsed.opportunityId) {
-    const opp = await prisma.opportunity.findFirst({
-      where: { id: parsed.opportunityId, customerId: parsed.customerId },
-    });
-    if (!opp) throw new Error("商机不存在或不属于该客户");
-  }
-
-  const contactIds = [...new Set(parsed.contactIds)];
-  const contacts = await prisma.contact.findMany({
-    where: { id: { in: contactIds }, customerId: parsed.customerId },
-    select: { id: true },
-  });
-  if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
-
   const now = new Date();
   const pendingPlans = await getCustomerPendingFollowPlans(parsed.customerId, now);
   const pendingKeySet = new Set(
@@ -403,49 +401,52 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
     }
   }
 
-  await prisma.$transaction(async (tx) => {
-    const followUp = await tx.followUp.create({
-      data: {
-        customerId: parsed.customerId,
-        contactId: contactIds[0],
-        opportunityId: parsed.opportunityId || undefined,
-        userId: session.user.id,
-        method: parsed.method,
-        content: parsed.content,
-        result: parsed.result,
-        followUpAt: new Date(parsed.followUpAt),
-        nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
-        nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
-        nextFollowUpContent: parsed.nextFollowUpContent?.trim() || undefined,
-        suggestedGrade: suggestedGrade ?? undefined,
-        gradeApplied: Boolean(applyGrade),
-        linkedContacts: {
-          create: contactIds.map((contactId) => ({ contactId })),
-        },
-      },
-    });
-
-    if (applyGrade && suggestedGrade) {
-      await tx.customer.update({
-        where: { id: parsed.customerId },
-        data: { customerGrade: suggestedGrade },
-      });
+  const dailyLog = await ensureTodayDailyLog(session.user.id);
+  await createFollowUpFromAgent(
+    {
+      userId: session.user.id,
+      role: session.user.role,
+      dailyLogId: dailyLog.id,
+    },
+    {
+      customerId: parsed.customerId,
+      contactIds: parsed.contactIds,
+      opportunityId: parsed.opportunityId ?? undefined,
+      opportunityIds: parsed.opportunityIds,
+      method: parsed.method,
+      content: parsed.content,
+      result: parsed.result,
+      followUpAt: parsed.followUpAt,
+      nextFollowUpAt: parsed.nextFollowUpAt ?? undefined,
+      nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
+      nextFollowUpContent: parsed.nextFollowUpContent ?? undefined,
+      suggestedGrade: parsed.suggestedGrade,
     }
+  );
 
-    if (completedPendingKeys.length > 0) {
+  if (completedPendingKeys.length > 0) {
+    await prisma.$transaction(async (tx) => {
       for (const key of completedPendingKeys) {
         const input = parsePendingPlanSelectionKey(key);
         if (!input) throw new Error("所选待跟进计划无效或已完成");
         await completeCustomerPendingFollowPlan(tx, parsed.customerId, input);
       }
-    }
-  });
+    });
+  }
+
+  const linkedOpportunityIds = [
+    ...new Set([
+      ...(parsed.opportunityIds ?? []),
+      ...(parsed.opportunityId?.trim() ? [parsed.opportunityId.trim()] : []),
+    ]),
+  ];
 
   revalidatePath("/follow-ups");
   revalidatePath(`/customers/${parsed.customerId}`);
   revalidatePath(`/customers/${parsed.customerId}/follow-ups`);
-  if (parsed.opportunityId) {
-    revalidatePath(`/opportunities/${parsed.opportunityId}`);
+  for (const opportunityId of linkedOpportunityIds) {
+    revalidatePath(`/opportunities/${opportunityId}`);
+    revalidatePath(`/opportunities/${opportunityId}/follow-ups`);
   }
   if (completedPendingKeys.length > 0) {
     const opportunityFollowUpIds = completedPendingKeys
@@ -463,6 +464,7 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
       }
     }
   }
+
   return { redirectTo: `/customers/${parsed.customerId}/follow-ups` };
   } catch (error) {
     return formatActionError(error);

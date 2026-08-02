@@ -196,7 +196,8 @@ export function ConfigFieldsSettings({
           onDirtyChange={setIsDirty}
         />
       ) : activeField.category === CONFIG_CATEGORY.CUSTOMER_GRADE ||
-        activeField.category === CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE ? (
+        activeField.category === CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE ||
+        activeField.category === CONFIG_CATEGORY.OPPORTUNITY_GRADE ? (
         <CustomerGradeOptionsPanel
           key={`${activeModule.id}-${activeField.category}`}
           options={activeOptions}
@@ -205,6 +206,11 @@ export function ConfigFieldsSettings({
             activeField.category === CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE
               ? "blue"
               : "amber"
+          }
+          visualVariant={
+            activeField.category === CONFIG_CATEGORY.OPPORTUNITY_GRADE
+              ? "opportunity"
+              : "customer"
           }
           onDirtyChange={setIsDirty}
         />

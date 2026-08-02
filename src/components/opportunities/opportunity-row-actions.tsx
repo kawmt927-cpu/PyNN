@@ -20,6 +20,7 @@ import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   opportunityId: string;
+  customerId?: string;
   returnTo?: string;
   canEdit: boolean;
   canFollowUp: boolean;
@@ -27,11 +28,13 @@ type Props = {
   canAbandon: boolean;
   canManageStatus: boolean;
   canAddQuote: boolean;
+  canAssign?: boolean;
   isAbandoned: boolean;
 };
 
 export function OpportunityRowActions({
   opportunityId,
+  customerId,
   returnTo,
   canEdit,
   canFollowUp,
@@ -39,6 +42,7 @@ export function OpportunityRowActions({
   canAbandon,
   canManageStatus,
   canAddQuote,
+  canAssign = false,
   isAbandoned,
 }: Props) {
   const [abandonOpen, setAbandonOpen] = useState(false);
@@ -49,6 +53,9 @@ export function OpportunityRowActions({
   const followUpHref = link(`/opportunities/${opportunityId}/follow-ups`);
   const editHref = link(`/opportunities/${opportunityId}/edit`);
   const contractHref = link(`/opportunities/${opportunityId}/create-contract`);
+  const assignHref = customerId
+    ? `/today-work?assign=1&customerId=${encodeURIComponent(customerId)}&opportunityId=${encodeURIComponent(opportunityId)}`
+    : null;
 
   return (
     <>
@@ -83,6 +90,11 @@ export function OpportunityRowActions({
               </Link>
             </DropdownMenuItem>
           )}
+          {canAssign && assignHref ? (
+            <DropdownMenuItem asChild>
+              <Link href={assignHref}>指派任务</Link>
+            </DropdownMenuItem>
+          ) : null}
           {canAbandon && (
             <DropdownMenuItem onSelect={() => setAbandonOpen(true)}>
               放弃商机

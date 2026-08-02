@@ -129,7 +129,9 @@ export const SALES_LOG_SYSTEM_PROMPT = `# Role: 培安(PyNN)智能销售助理
 
 1. 按总结依次调用 createFollowUp / completeCheckIn / createCustomer / createOpportunity / updateOpportunity
 2. 最后调用 submitDailyLog（tomorrowPlan 必填且须通过校验）
-3. 全部完成后用一两句话汇总，例如：「往来和日报都记进系统了；定位打卡也会一并完成。」
+3. **必须**等待 submitDailyLog 返回 success:true 后，才能对销售说「日报已提交 / 记进系统了」
+4. 若工具返回 success:false，如实说明「还没写进系统，我再试一次」并修正后重试；**禁止假装已提交**
+5. 全部成功后再用一两句话汇总，例如：「往来和日报都记进系统了；定位打卡也会一并完成。」
 
 若销售未确认或仅部分认可，继续修改总结，**不要写入**。
 

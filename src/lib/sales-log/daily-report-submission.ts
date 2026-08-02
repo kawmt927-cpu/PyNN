@@ -29,6 +29,24 @@ export function isLateDailyReportSubmission(submittedAt: Date, logDate: Date) {
   return submittedAt.getTime() > getDailyReportDeadline(logDate).getTime();
 }
 
+/**
+ * 是否计入「迟交」：
+ * - 已由 22:00 任务锁定 lateMarkedAt（补录后仍算迟交）
+ * - 或已提交且提交时间晚于当日截止
+ */
+export function isDailyReportCountedAsLate(report: {
+  logDate: Date;
+  status: SalesDailyLogStatus;
+  submittedAt: Date | null;
+  updatedAt: Date;
+  lateMarkedAt?: Date | null;
+}) {
+  if (report.lateMarkedAt) return true;
+  if (!isDailyReportSubmitted(report.status)) return false;
+  const submissionTime = resolveDailyReportSubmissionTime(report);
+  return isLateDailyReportSubmission(submissionTime, report.logDate);
+}
+
 export function isDailyReportSubmissionOverdue(
   logDate: Date,
   status: SalesDailyLogStatus,
@@ -40,6 +58,15 @@ export function isDailyReportSubmissionOverdue(
   return now.getTime() > getDailyReportDeadline(logDate).getTime();
 }
 
+/** 该日志日是否已过日报截止（可展示未提交/迟交补录） */
+export function isDailyReportDayPastDeadline(logDate: Date, now = new Date()) {
+  return now.getTime() > getDailyReportDeadline(logDate).getTime();
+}
+
+export function missingDailyLogActivityId(userId: string, dayKey: string) {
+  return `missing-${userId}-${dayKey}`;
+}
+
 export function formatDailyReportDeadlineHint() {
   return `当日 ${DAILY_REPORT_DEADLINE_HOUR}:00 前`;
 }
@@ -48,8 +75,10 @@ export type DailyReportDisplayStatus = {
   label: string;
   /** 未提交且已过截止时间 */
   overdue: boolean;
-  /** 已提交但超过当日截止时间 */
+  /** 已提交但超过当日截止时间，或已锁定迟交 */
   lateSubmission: boolean;
+  /** 已锁定迟交（含未补录） */
+  lateMarked: boolean;
   submitted: boolean;
   submissionTime: Date | null;
 };
@@ -67,41 +96,63 @@ export function resolveDailyReportDisplayStatus(
     status: SalesDailyLogStatus;
     submittedAt: Date | null;
     updatedAt: Date;
+    lateMarkedAt?: Date | null;
+    dailyReport?: string | null;
   },
   now = new Date()
 ): DailyReportDisplayStatus {
   const submitted = isDailyReportSubmitted(report.status);
+  const lateMarked = Boolean(report.lateMarkedAt);
 
   if (submitted) {
     const submissionTime = resolveDailyReportSubmissionTime(report);
-    const lateSubmission = isLateDailyReportSubmission(submissionTime, report.logDate);
+    const lateSubmission =
+      lateMarked || isLateDailyReportSubmission(submissionTime, report.logDate);
     const baseLabel = DAILY_LOG_STATUS_LABELS[report.status];
     return {
       label: lateSubmission ? `${baseLabel}（迟交）` : baseLabel,
       overdue: false,
       submitted: true,
       lateSubmission,
+      lateMarked,
       submissionTime,
     };
   }
 
-  // 今天之前未提交：正常态「当日无日报」，不标超期
-  if (isDailyReportLogDateBeforeToday(report.logDate, now)) {
+  // 超时生成的「未提交日报」占位
+  if (
+    lateMarked &&
+    (!report.dailyReport?.trim() || report.dailyReport.trim() === "未提交日报")
+  ) {
+    return {
+      label: "未提交日报",
+      overdue: true,
+      submitted: false,
+      lateSubmission: false,
+      lateMarked: true,
+      submissionTime: null,
+    };
+  }
+
+  // 今天之前未提交：正常态「当日无日报」，不标超期（除非已锁定迟交）
+  if (isDailyReportLogDateBeforeToday(report.logDate, now) && !lateMarked) {
     return {
       label: "当日无日报",
       overdue: false,
       submitted: false,
       lateSubmission: false,
+      lateMarked: false,
       submissionTime: null,
     };
   }
 
-  if (isDailyReportSubmissionOverdue(report.logDate, report.status, now)) {
+  if (lateMarked || isDailyReportSubmissionOverdue(report.logDate, report.status, now)) {
     return {
-      label: "未提交",
+      label: lateMarked ? "未提交（已记迟交）" : "未提交",
       overdue: true,
       submitted: false,
       lateSubmission: false,
+      lateMarked,
       submissionTime: null,
     };
   }
@@ -111,6 +162,7 @@ export function resolveDailyReportDisplayStatus(
     overdue: false,
     submitted: false,
     lateSubmission: false,
+    lateMarked: false,
     submissionTime: null,
   };
 }

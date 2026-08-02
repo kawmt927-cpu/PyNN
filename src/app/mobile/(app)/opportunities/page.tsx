@@ -17,6 +17,7 @@ import { OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { MobileSearchForm } from "@/components/mobile/mobile-search-form";
 import { MobileCreateOpportunityButton } from "@/components/mobile/mobile-create-opportunity-button";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
 import { scoreNameMatch } from "@/lib/search/fuzzy-text";
 
 type Props = {
@@ -51,7 +52,10 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
     ? raw
         .map((o) => ({
           o,
-          score: Math.max(scoreNameMatch(q, o.title), scoreNameMatch(q, o.customer.name)),
+          score: Math.max(
+            scoreNameMatch(q, o.title),
+            scoreNameMatch(q, o.customer?.name ?? "")
+          ),
         }))
         .filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score)
@@ -87,22 +91,31 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
         ) : (
           <ul className="space-y-2">
             {opportunities.map((o) => (
-              <li key={o.id}>
+              <li key={o.id} className="rounded-xl border bg-card p-3 shadow-sm">
                 <Link
                   href={`/mobile/opportunities/${o.id}`}
-                  className="block rounded-xl border bg-card p-3 shadow-sm active:bg-muted/50"
+                  className="block font-medium active:opacity-70"
                 >
-                  <p className="font-medium">{o.title}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {o.customer.name}
-                    {o.stage ? ` · ${labelForConfig(stageLabels, o.stage) || o.stage}` : ""}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {OPPORTUNITY_STATUS_LABELS[o.status]}
-                    {` · ${formatAmount(o.expectedAmount)}`}
-                    {o.owner?.name ? ` · ${o.owner.name}` : ""}
-                  </p>
+                  {o.title}
                 </Link>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {o.customer ? (
+                    <CustomerNameLink
+                      customerId={o.customer.id}
+                      name={o.customer.name}
+                      basePath="/mobile/customers"
+                      className="text-xs font-normal"
+                    />
+                  ) : (
+                    <span>未指定客户</span>
+                  )}
+                  {o.stage ? ` · ${labelForConfig(stageLabels, o.stage) || o.stage}` : ""}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {OPPORTUNITY_STATUS_LABELS[o.status]}
+                  {` · ${formatAmount(o.expectedAmount)}`}
+                  {o.owner?.name ? ` · ${o.owner.name}` : ""}
+                </p>
               </li>
             ))}
           </ul>

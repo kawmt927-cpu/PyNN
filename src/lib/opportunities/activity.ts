@@ -22,18 +22,32 @@ export type OpportunityActivityItem =
       changeSummary: string | null;
     };
 
+function followUpChangeSummary(result: string | null): string | null {
+  if (!result?.includes(" → ")) return null;
+  return result;
+}
+
 export async function getOpportunityActivity(
   opportunityId: string
 ): Promise<OpportunityActivityItem[]> {
   const db = getPrismaClient();
 
-  const [stageLogs, followUps] = await Promise.all([
+  const [stageLogs, legacyFollowUps, customerFollowUps] = await Promise.all([
     db.opportunityStageLog.findMany({
       where: { opportunityId },
       include: { user: { select: { name: true } } },
     }),
     db.opportunityFollowUp.findMany({
       where: { opportunityId },
+      include: { user: { select: { name: true } } },
+    }),
+    db.followUp.findMany({
+      where: {
+        OR: [
+          { opportunityId },
+          { linkedOpportunities: { some: { opportunityId } } },
+        ],
+      },
       include: { user: { select: { name: true } } },
     }),
   ]);
@@ -48,7 +62,7 @@ export async function getOpportunityActivity(
       toStage: log.toStage,
       note: log.note,
     })),
-    ...followUps.map((fu) => ({
+    ...legacyFollowUps.map((fu) => ({
       kind: "follow_up" as const,
       id: fu.id,
       at: fu.followUpAt,
@@ -57,6 +71,16 @@ export async function getOpportunityActivity(
       content: fu.content,
       nextFollowUpAt: fu.nextFollowUpAt,
       changeSummary: fu.changeSummary,
+    })),
+    ...customerFollowUps.map((fu) => ({
+      kind: "follow_up" as const,
+      id: fu.id,
+      at: fu.followUpAt,
+      user: fu.user,
+      method: fu.method,
+      content: fu.content,
+      nextFollowUpAt: fu.nextFollowUpAt,
+      changeSummary: followUpChangeSummary(fu.result),
     })),
   ];
 

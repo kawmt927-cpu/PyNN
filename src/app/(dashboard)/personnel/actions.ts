@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import {
   computeMonthlyCost,
+  isFutureYearMonth,
   resolveDailyRateForMonth,
   resolveEffectiveMonthlyCost,
 } from "@/lib/personnel/daily-rate";
@@ -93,6 +94,9 @@ export async function updatePersonnelCostsBatch(input: {
     await requireRole(["PROJECT_ADMIN", "ADMIN"]);
     if (!input.year || input.month < 1 || input.month > 12) {
       return { error: "月份无效" };
+    }
+    if (isFutureYearMonth(input.year, input.month)) {
+      return { error: "不能维护尚未到达的月份" };
     }
     if (!Array.isArray(input.rows) || input.rows.length === 0) {
       return { error: "没有可保存的人员" };

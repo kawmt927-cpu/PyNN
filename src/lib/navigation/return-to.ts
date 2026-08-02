@@ -18,6 +18,8 @@ const ALLOWED_PREFIXES = [
   "/sales-personnel",
   "/my-tasks",
   "/customers/claims",
+  "/notifications",
+  "/mobile",
 ];
 
 export function sanitizeReturnTo(value: string | null | undefined): string | null {
@@ -87,7 +89,10 @@ export function resolveBackNavigation(
 }
 
 export function opportunityListPath(view: string) {
-  return view === "not_signed" ? "/opportunities" : `/opportunities?view=${view}`;
+  if (view === "signed") return "/opportunities?status=SIGNED";
+  if (view === "abandoned") return "/opportunities?status=ABANDONED";
+  if (view === "all") return "/opportunities?status=all";
+  return "/opportunities";
 }
 
 export function customerListPath(view: string) {

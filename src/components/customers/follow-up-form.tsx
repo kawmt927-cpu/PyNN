@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
-import { OpportunitySearchSelect } from "@/components/opportunities/opportunity-search-select";
+import { OpportunityLinkPicker } from "@/components/sales-log/opportunity-link-picker";
+import {
+  defaultOpportunitySelection,
+  useCustomerNotSignedOpportunities,
+} from "@/components/sales-log/use-customer-not-signed-opportunities";
 import { ContactSelectField } from "@/components/sales-log/contact-select-field";
 import { QuickOpportunityDialog } from "@/components/sales-log/quick-opportunity-dialog";
 import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-plan-fields";
@@ -54,8 +58,8 @@ export function FollowUpForm({
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<SalesLogMethod>("PHONE");
   const [contactIds, setContactIds] = useState<string[]>([]);
-  const [opportunityId, setOpportunityId] = useState("");
-  const [opportunityLabel, setOpportunityLabel] = useState("");
+  const [opportunityIds, setOpportunityIds] = useState<string[]>([]);
+  const { options: opportunityOptions } = useCustomerNotSignedOpportunities(customerId);
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
@@ -69,6 +73,10 @@ export function FollowUpForm({
 
   const hasPendingPlans = pendingPlans.length > 0;
 
+  useEffect(() => {
+    setOpportunityIds(defaultOpportunitySelection(opportunityOptions));
+  }, [customerId, opportunityOptions]);
+
   function buildFormData(form: HTMLFormElement) {
     const formData = new FormData(form);
     formData.set("customerId", customerId);
@@ -78,7 +86,8 @@ export function FollowUpForm({
     }
     formData.set("method", method);
     formData.set("suggestedGrade", customerGradeSubmitValue(suggestedGrade, currentCustomerGrade) ?? "");
-    formData.set("opportunityId", opportunityId);
+    formData.set("opportunityId", opportunityIds[0] ?? "");
+    formData.set("opportunityIdsJson", JSON.stringify(opportunityIds));
     formData.set("nextFollowUpAt", nextFollowUpAt);
     formData.set("nextFollowUpMethod", nextFollowUpMethod);
     formData.set("nextFollowUpContent", nextFollowUpContent);
@@ -100,8 +109,7 @@ export function FollowUpForm({
     setNextFollowUpAt("");
     setNextFollowUpMethod("");
     setNextFollowUpContent("");
-    setOpportunityId("");
-    setOpportunityLabel("");
+    setOpportunityIds([]);
     setSelectedPendingKeys([]);
   }
 
@@ -131,6 +139,11 @@ export function FollowUpForm({
     e.preventDefault();
     setError(null);
     const form = e.currentTarget;
+
+    if (opportunityIds.length > 0 && !nextFollowUpAt.trim()) {
+      setError("已关联商机时须填写下次拜访时间");
+      return;
+    }
 
     const planError = validateNextFollowUpPlan(
       suggestedGrade,
@@ -185,18 +198,10 @@ export function FollowUpForm({
                 新建商机
               </Button>
             </div>
-            <OpportunitySearchSelect
-              id="followUpOpportunity"
-              name="opportunityIdDisplay"
-              label=""
-              customerId={customerId}
-              value={opportunityId}
-              selectedLabel={opportunityLabel}
-              onValueChange={(id, option) => {
-                setOpportunityId(id);
-                setOpportunityLabel(option?.label ?? "");
-              }}
-              placeholder="点击选择关联商机（可选）"
+            <OpportunityLinkPicker
+              options={opportunityOptions}
+              value={opportunityIds}
+              onChange={setOpportunityIds}
             />
           </div>
 
@@ -293,8 +298,7 @@ export function FollowUpForm({
         customerName={customerName}
         stageOptions={stageOptions}
         onCreated={(opp) => {
-          setOpportunityId(opp.id);
-          setOpportunityLabel(opp.title);
+          setOpportunityIds((prev) => [...new Set([...prev, opp.id])]);
         }}
       />
     </>

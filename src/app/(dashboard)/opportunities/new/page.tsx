@@ -4,7 +4,7 @@ import {
 } from "@/lib/opportunities/access";
 import { getCustomerForUser } from "@/lib/customers/access";
 import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
-import { CONFIG_CATEGORY, getConfigOptions, loadCustomerFormOptions } from "@/lib/config-options";
+import { loadOpportunityFormOptions, loadCustomerFormOptions } from "@/lib/config-options";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 import { BackLink } from "@/components/navigation/back-link";
 import { resolveBackNavigation } from "@/lib/navigation/return-to";
@@ -24,8 +24,8 @@ export default async function NewOpportunityPage({ searchParams }: Props) {
     ? await getCustomerForUser(presetCustomerId, session.user.role, session.user.id)
     : null;
 
-  const [stageOptions, customerFormOptions, salesUsers] = await Promise.all([
-    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+  const [opportunityFormOptions, customerFormOptions, salesUsers] = await Promise.all([
+    loadOpportunityFormOptions(),
     loadCustomerFormOptions(),
     listSalesUsersForSelect({
       viewer: { id: session.user.id, role: session.user.role },
@@ -44,7 +44,8 @@ export default async function NewOpportunityPage({ searchParams }: Props) {
         mode="create"
         submitLabel="创建商机"
         currentUser={{ id: session.user.id, name: session.user.name }}
-        stageOptions={stageOptions}
+        stageOptions={opportunityFormOptions.stageOptions}
+        opportunityGradeOptions={opportunityFormOptions.gradeOptions}
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}

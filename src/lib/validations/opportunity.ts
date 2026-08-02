@@ -8,6 +8,7 @@ export const opportunityFormSchema = z.object({
   expectedAmount: z.coerce.number().positive("预计金额须大于 0"),
   expectedCloseDate: expectedCloseMonthSchema,
   stage: z.string().min(1, "请选择商机阶段"),
+  grade: z.string().min(1, "请选择商机等级"),
   requirementDesc: z.string().optional(),
   winProbability: z.coerce.number().int().min(0).max(100).optional().nullable(),
   competitor: z.string().optional(),

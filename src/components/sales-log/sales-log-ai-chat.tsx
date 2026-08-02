@@ -15,6 +15,12 @@ import {
   type CapturedLocation,
 } from "@/lib/mobile/capture-location";
 import { AUTO_DAILY_LOG_CHECK_IN_NOTES } from "@/lib/sales-log/auto-log-check-in";
+import {
+  conversationDateBounds,
+  formatLogDateParam,
+  isSalesLogUserConfirmMessage,
+} from "@/lib/sales-log/daily-log";
+import { MobileDateNav } from "@/components/mobile/mobile-date-nav";
 
 type DailyLogStatus =
   | "IN_PROGRESS"
@@ -118,6 +124,7 @@ export function SalesLogAiChat({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<{ role: string; content: string }[]>([]);
   const sessionBootstrapped = useRef(false);
+  const loadDayRef = useRef<(date: string) => Promise<void>>(async () => undefined);
   const checkInFlushingRef = useRef(false);
   const autoLocatingRef = useRef(false);
   const locationAttachedForMessageIdRef = useRef<string | null>(null);
@@ -129,6 +136,8 @@ export function SalesLogAiChat({
   const syncConversationRef = useRef<(items: { role: string; content: string }[]) => Promise<void>>(
     async () => undefined
   );
+  const selectedDateRef = useRef(formatLogDateParam(new Date()));
+  const pendingConfirmCheckRef = useRef(false);
 
   useEffect(() => {
     wecomReadyRef.current = wecomReady;
@@ -151,6 +160,16 @@ export function SalesLogAiChat({
   const [inputActionHint, setInputActionHint] = useState<string | null>(null);
   const [pendingLocation, setPendingLocation] = useState<PendingLocation | null>(null);
   const [locatingForConfirm, setLocatingForConfirm] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(() => formatLogDateParam(new Date()));
+  const [dateBounds] = useState(() => conversationDateBounds());
+  const todayDateKey = dateBounds.max;
+  const [submitGap, setSubmitGap] = useState(false);
+  const [ensureSubmitting, setEnsureSubmitting] = useState(false);
+  const [readOnlyDay, setReadOnlyDay] = useState(false);
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
 
   useEffect(() => {
     setPendingLocation(loadPendingLocation());
@@ -209,6 +228,7 @@ export function SalesLogAiChat({
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            date: selectedDateRef.current,
             messages: items.filter((m) => m.content?.trim()),
           }),
         });
@@ -217,8 +237,16 @@ export function SalesLogAiChat({
         if (data.status) {
           setLogStatus(data.status);
           if (data.status === "SUBMITTED" || data.status === "RISK_SUBMITTED") {
-            setSyncHint((prev) => prev ?? "今日日报已写入系统");
+            setSubmitGap(false);
+            setSyncHint((prev) => prev ?? "日报已写入系统");
             void flushPendingCheckInIfNeeded(data.status);
+          } else if (pendingConfirmCheckRef.current) {
+            pendingConfirmCheckRef.current = false;
+            // 用户刚确认，但库里仍未提交 → Agent 可能谎称成功
+            setSubmitGap(true);
+            setChatError(
+              "你已确认，但日报尚未写入系统。请点下方「补交日报」完成写入，或再发一次「确认」。"
+            );
           }
         }
       } catch {
@@ -313,6 +341,7 @@ export function SalesLogAiChat({
       }
     },
     experimental_prepareRequestBody: ({ messages: chatMessages }) => ({
+      date: selectedDateRef.current,
       messages: chatMessages
         .filter((m) => m.id !== "opening" && !m.id.startsWith("auto-location-") && m.content?.trim())
         .map(({ role, content }) => ({ role, content })),
@@ -349,68 +378,155 @@ export function SalesLogAiChat({
 
   useEffect(() => {
     if (sessionBootstrapped.current) return;
+    sessionBootstrapped.current = true;
 
-    fetch("/api/mobile/log/sync", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        sessionBootstrapped.current = true;
-        const status = data?.log?.status as DailyLogStatus | undefined;
-        if (status) setLogStatus(status);
+    async function bootstrap() {
+      try {
+        await loadDay(selectedDateRef.current);
+      } catch {
+        setMessages([
+          {
+            id: "opening",
+            role: "assistant",
+            content: SALES_LOG_OPENING_MESSAGE,
+          },
+        ]);
+      }
+    }
 
-        const saved = (data?.log?.conversation ?? []) as { role: string; content: string }[];
-        if (saved.length > 0) {
-          setMessages(
-            saved.map((m, i) => ({
-              id: `restored-${i}`,
-              role: m.role as "user" | "assistant" | "system" | "data",
-              content: m.content,
-            }))
-          );
-          if (status === "SUBMITTED" || status === "RISK_SUBMITTED") {
-            void flushPendingCheckInIfNeeded(status);
-          } else {
-            const lastAssistant = [...saved].reverse().find((m) => m.role === "assistant");
-            if (lastAssistant && isSalesLogDraftConfirmationRequest(lastAssistant.content)) {
-              void attachLocationForDraftRef.current("restored-draft");
-            }
+    async function loadDay(date: string) {
+      const res = await fetch(
+        `/api/mobile/log/sync?date=${encodeURIComponent(date)}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error("load failed");
+      const data = await res.json();
+      const status = data?.log?.status as DailyLogStatus | undefined;
+      if (status) setLogStatus(status);
+      else setLogStatus("IN_PROGRESS");
+
+      const submitted =
+        status === "SUBMITTED" || status === "RISK_SUBMITTED";
+      // 仅当日可继续对话改写；历史日一律只读
+      const isToday = date === todayDateKey;
+      setReadOnlyDay(!isToday);
+      setSubmitGap(false);
+      setChatError(null);
+      setSyncHint(
+        submitted && isToday
+          ? "该日日报已提交，可继续对话改写并再次确认写入"
+          : null
+      );
+
+      const saved = (data?.log?.conversation ?? []) as { role: string; content: string }[];
+      if (saved.length > 0) {
+        setMessages(
+          saved.map((m, i) => ({
+            id: `restored-${date}-${i}`,
+            role: m.role as "user" | "assistant" | "system" | "data",
+            content: m.content,
+          }))
+        );
+        if (submitted && isToday) {
+          void flushPendingCheckInIfNeeded(status ?? null);
+        } else if (!submitted) {
+          const lastAssistant = [...saved].reverse().find((m) => m.role === "assistant");
+          if (lastAssistant && isSalesLogDraftConfirmationRequest(lastAssistant.content)) {
+            void attachLocationForDraftRef.current(`restored-draft-${date}`);
           }
-          return;
         }
+        return;
+      }
 
-        if (status === "SUBMITTED" || status === "RISK_SUBMITTED") {
-          const report = data?.log?.dailyReport?.trim();
-          setMessages([
-            {
-              id: "submitted",
-              role: "assistant",
-              content: report
-                ? `今日日报已提交。\n\n${report}`
-                : "今日日报已提交，如需补充请联系管理员。",
-            },
-          ]);
-          void flushPendingCheckInIfNeeded(status);
-          return;
-        }
-
+      if (submitted) {
+        const report = data?.log?.dailyReport?.trim();
         setMessages([
           {
-            id: "opening",
+            id: `submitted-${date}`,
             role: "assistant",
-            content: SALES_LOG_OPENING_MESSAGE,
+            content: report
+              ? isToday
+                ? `该日日报已提交。如需改写，请继续对话说明要调整的内容。\n\n${report}`
+                : `该日日报已提交（只读）。\n\n${report}`
+              : isToday
+                ? "该日日报已提交。如需改写，请继续对话。"
+                : "该日日报已提交，历史记录只读。",
           },
         ]);
-      })
-      .catch(() => {
-        sessionBootstrapped.current = true;
+        if (isToday) {
+          void flushPendingCheckInIfNeeded(status ?? null);
+        }
+        return;
+      }
+
+      if (!isToday) {
         setMessages([
           {
-            id: "opening",
+            id: `readonly-${date}`,
             role: "assistant",
-            content: SALES_LOG_OPENING_MESSAGE,
+            content: "该日暂无对话记录。历史日期仅可查看，请切回今天继续写日报。",
           },
         ]);
-      });
+        return;
+      }
+
+      setMessages([
+        {
+          id: "opening",
+          role: "assistant",
+          content: SALES_LOG_OPENING_MESSAGE,
+        },
+      ]);
+    }
+
+    void bootstrap();
+    loadDayRef.current = loadDay;
   }, [setMessages, flushPendingCheckInIfNeeded]);
+
+  async function switchDate(date: string) {
+    if (date === selectedDate) return;
+    setSelectedDate(date);
+    selectedDateRef.current = date;
+    setInput("");
+    try {
+      await loadDayRef.current(date);
+    } catch {
+      setChatError("加载该日对话失败，请重试");
+    }
+  }
+
+  async function handleEnsureSubmit() {
+    setEnsureSubmitting(true);
+    setChatError(null);
+    try {
+      // 先把当前对话同步上去，便于服务端抽拟稿
+      await syncConversation(messagesRef.current);
+      const res = await fetch("/api/mobile/log/ensure-submit", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: selectedDateRef.current }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+        status?: DailyLogStatus;
+        message?: string;
+      } | null;
+      if (!res.ok) {
+        setChatError(data?.error ?? "补交失败，请稍后重试");
+        return;
+      }
+      setSubmitGap(false);
+      if (data?.status) setLogStatus(data.status);
+      setSyncHint(data?.message ?? "日报已写入系统");
+      setReadOnlyDay(true);
+      void flushPendingCheckInIfNeeded(data?.status ?? "SUBMITTED");
+    } catch {
+      setChatError("补交请求失败，请检查网络后重试");
+    } finally {
+      setEnsureSubmitting(false);
+    }
+  }
 
   function appendToInput(text: string) {
     setInput((prev) => (prev ? `${prev}\n${text}` : text));
@@ -421,8 +537,11 @@ export function SalesLogAiChat({
 
   function sendCurrentInput() {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || readOnlyDay) return;
     setChatError(null);
+    if (isSalesLogUserConfirmMessage(text)) {
+      pendingConfirmCheckRef.current = true;
+    }
     append({ role: "user", content: text });
     setInput("");
   }
@@ -452,20 +571,42 @@ export function SalesLogAiChat({
   return (
     <div className={`flex h-full flex-col overflow-hidden bg-background ${className ?? ""}`}>
       <header className="shrink-0 border-b bg-card p-4 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
             <h1 className="text-lg font-bold">{title}</h1>
             <p className="text-xs text-muted-foreground">
               {resolvedSubtitle}
               {logStatus ? ` · ${STATUS_LABEL[logStatus]}` : ""}
+              {readOnlyDay ? " · 只读" : ""}
             </p>
           </div>
         </div>
+        <MobileDateNav
+          value={selectedDate}
+          min={dateBounds.min}
+          max={dateBounds.max}
+          onChange={(date) => void switchDate(date)}
+          className="mt-3"
+        />
         {syncHint && (
           <p className="mt-2 rounded-md bg-green-50 px-2 py-1 text-xs text-green-700 dark:bg-green-950 dark:text-green-300">
             {syncHint}
           </p>
         )}
+        {submitGap ? (
+          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            <p>确认后日报未写入。可一键根据对话拟稿补交，避免口头「已提交」但库里没有。</p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-2 h-8"
+              disabled={ensureSubmitting}
+              onClick={() => void handleEnsureSubmit()}
+            >
+              {ensureSubmitting ? "正在补交…" : "补交日报"}
+            </Button>
+          </div>
+        ) : null}
         {enableLocationAssist && locatingForConfirm ? (
           <p className="mt-2 text-xs text-muted-foreground">确认日志前，正在自动获取定位…</p>
         ) : null}
@@ -511,6 +652,11 @@ export function SalesLogAiChat({
         onSubmit={handleSend}
         className="shrink-0 border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
       >
+        {readOnlyDay ? (
+          <p className="mb-2 text-center text-xs text-muted-foreground">
+            历史日期只读，仅当日可继续对话改写日报。
+          </p>
+        ) : null}
         {inputActionHint ? (
           <p className="mb-2 text-xs text-muted-foreground">{inputActionHint}</p>
         ) : null}
@@ -520,21 +666,27 @@ export function SalesLogAiChat({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleInputKeyDown}
             placeholder={
-              enterToSend
-                ? "口述今日拜访与外勤情况…（回车发送，Shift+回车换行）"
-                : "口述今日拜访与外勤情况…"
+              readOnlyDay
+                ? "该日已提交，仅可查看"
+                : enterToSend
+                  ? "口述今日拜访与外勤情况…（回车发送，Shift+回车换行）"
+                  : "口述今日拜访与外勤情况…"
             }
             className="min-w-0 flex-1"
-            disabled={isLoading}
+            disabled={isLoading || readOnlyDay}
             maxRows={8}
           />
-          <Button type="submit" disabled={isLoading || !input.trim()} className="h-11 shrink-0">
+          <Button
+            type="submit"
+            disabled={isLoading || readOnlyDay || !input.trim()}
+            className="h-11 shrink-0"
+          >
             发送
           </Button>
         </div>
         <div className="mt-3 flex justify-center">
           <VoiceInputButton
-            disabled={isLoading}
+            disabled={isLoading || readOnlyDay}
             wecomReady={wecomReady}
             inWeCom={inWeCom}
             onStartWeComRecord={startVoiceRecord}

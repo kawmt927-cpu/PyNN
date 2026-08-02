@@ -103,7 +103,7 @@ type Props = {
   projectModels: ProjectModelOption[];
   assignees: Array<{ id: string; name: string }>;
   templateTasksByPhaseId: Record<string, Array<{ id: string; name: string; durationDays: number }>>;
-  scheduleHref: string;
+  scheduleHref: string | null;
   /** 从资源排班返回时带上，用于重新打开任务详情并恢复草稿 */
   initialTaskId?: string | null;
 };
@@ -855,7 +855,11 @@ export function ProjectPlanPanel({
               projectStartKey={projectStartKey}
               projectEndKey={projectEndKey}
               assignees={assignees}
-              scheduleHref={withScheduleReturnTask(scheduleHref, editingTask.id)}
+              scheduleHref={
+                scheduleHref
+                  ? withScheduleReturnTask(scheduleHref, editingTask.id)
+                  : null
+              }
               disabled={pending}
               onCancel={() => closeTaskEditor({ clearDraft: true })}
               onDelete={() => setConfirmDeleteTask(editingTask)}
@@ -1279,23 +1283,27 @@ function AssigneeField({
   projectId?: string;
   taskId?: string;
   assignees: Array<{ id: string; name: string }>;
-  scheduleHref: string;
+  scheduleHref: string | null;
   value: string;
   onChange: (value: string) => void;
 }) {
   if (assignees.length === 0) {
     return (
       <div className="space-y-1.5 rounded-md border border-dashed bg-muted/30 px-2.5 py-2">
-        <p className="text-xs text-muted-foreground">请先前往设置资源</p>
-        <Link
-          href={scheduleHref}
-          className="inline-block text-xs text-primary hover:underline"
-          onClick={() => {
-            if (projectId && taskId) saveScheduleReturn(projectId, taskId);
-          }}
-        >
-          打开资源排班
-        </Link>
+        <p className="text-xs text-muted-foreground">
+          {scheduleHref ? "请先前往设置资源" : "暂无已投入人员，请联系项目经理安排资源"}
+        </p>
+        {scheduleHref ? (
+          <Link
+            href={scheduleHref}
+            className="inline-block text-xs text-primary hover:underline"
+            onClick={() => {
+              if (projectId && taskId) saveScheduleReturn(projectId, taskId);
+            }}
+          >
+            打开资源排班
+          </Link>
+        ) : null}
       </div>
     );
   }
@@ -1331,7 +1339,7 @@ function AddTaskForm({
   projectStartKey: string | null;
   projectEndKey: string | null;
   assignees: Array<{ id: string; name: string }>;
-  scheduleHref: string;
+  scheduleHref: string | null;
   templateTasks: Array<{ id: string; name: string; durationDays: number }>;
   onCancel: () => void;
   onSubmit: (input: TaskFormInput & { sourceModelTaskId?: string }) => Promise<TaskFormResult>;
@@ -1797,7 +1805,7 @@ function EditTaskForm({
   projectStartKey: string | null;
   projectEndKey: string | null;
   assignees: Array<{ id: string; name: string }>;
-  scheduleHref: string;
+  scheduleHref: string | null;
   disabled?: boolean;
   onCancel: () => void;
   onDelete: () => void;

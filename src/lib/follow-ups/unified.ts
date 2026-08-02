@@ -23,6 +23,8 @@ export type UnifiedFollowUpHistoryItem = {
   user: { name: string };
   contacts: { id: string; name: string }[];
   opportunity: { id: string; title: string } | null;
+  /** 多商机关联；`opportunity` 为兼容字段，取首个 */
+  opportunities?: { id: string; title: string }[];
   changeSummary: string | null;
 };
 
@@ -105,7 +107,7 @@ function buildCustomerPendingFollowUpWhere(
     customer: customerFilter,
     OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
     // 指派任务会同时创建 FollowUp，待完成指派只展示「指派」一条，避免重复
-    NOT: { weeklyAssignment: { status: "PENDING" } },
+    NOT: { weeklyAssignment: { status: { in: ["PENDING", "PENDING_CONFIRM"] } } },
   };
 }
 
@@ -144,6 +146,9 @@ export async function getCustomerFollowUpHistory(
           include: { contact: { select: { id: true, name: true } } },
         },
         opportunity: { select: { id: true, title: true } },
+        linkedOpportunities: {
+          include: { opportunity: { select: { id: true, title: true } } },
+        },
       },
     }),
     db.opportunityFollowUp.findMany({
@@ -163,6 +168,13 @@ export async function getCustomerFollowUpHistory(
           : item.contact
             ? [item.contact]
             : [];
+      const linkedOpportunities = item.linkedOpportunities.map((link) => link.opportunity);
+      const opportunities =
+        linkedOpportunities.length > 0
+          ? linkedOpportunities
+          : item.opportunity
+            ? [item.opportunity]
+            : [];
       return {
         id: item.id,
         source: "customer" as const,
@@ -175,7 +187,8 @@ export async function getCustomerFollowUpHistory(
         nextFollowUpContent: item.nextFollowUpContent,
         user: item.user,
         contacts,
-        opportunity: item.opportunity,
+        opportunity: opportunities[0] ?? null,
+        opportunities: opportunities.length > 0 ? opportunities : undefined,
         changeSummary: null,
       };
     }),
@@ -427,7 +440,7 @@ export async function getPendingFollowUps(
       })),
     ...opportunityItems
       .filter((item): item is typeof item & { nextFollowUpAt: Date } =>
-        Boolean(item.nextFollowUpAt)
+        Boolean(item.nextFollowUpAt && item.opportunity.customer)
       )
       .map((item) => ({
         id: item.id,
@@ -435,8 +448,8 @@ export async function getPendingFollowUps(
         method: item.method,
         content: pendingFollowUpPlanContent(item.nextFollowUpContent, item.content),
         nextFollowUpAt: item.nextFollowUpAt,
-        customer: item.opportunity.customer,
-        owner: item.opportunity.customer.owner ?? { id: "", name: "未分配" },
+        customer: item.opportunity.customer!,
+        owner: item.opportunity.customer!.owner ?? { id: "", name: "未分配" },
         user: item.user,
         opportunity: { id: item.opportunity.id, title: item.opportunity.title },
       })),

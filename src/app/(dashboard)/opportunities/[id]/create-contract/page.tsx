@@ -30,7 +30,13 @@ export default async function CreateContractFromOpportunityPage({ params, search
 
   const full = await prisma.opportunity.findUnique({
     where: { id },
-    include: { customer: { select: { id: true, name: true } } },
+    include: {
+      customer: { select: { id: true, name: true } },
+      parties: {
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
   if (!full || !canSignOpportunity(full.status)) notFound();
 
@@ -48,6 +54,9 @@ export default async function CreateContractFromOpportunityPage({ params, search
   ]);
 
   const detailHref = selfReturnPath(`/opportunities/${id}`, query);
+  const presetCustomerId = full.customerId ?? full.parties[0]?.customerId ?? "";
+  const presetCustomerName =
+    full.customer?.name ?? full.parties[0]?.customer.name ?? "";
 
   return (
     <div className="space-y-6">
@@ -73,13 +82,20 @@ export default async function CreateContractFromOpportunityPage({ params, search
         paymentMethodOptions={paymentMethods.map((o) => ({ value: o.value, label: o.label }))}
         internalCostNameOptions={internalCostNames.map((o) => ({ value: o.value, label: o.label }))}
         externalCostNameOptions={externalCostNames.map((o) => ({ value: o.value, label: o.label }))}
+        initialParties={full.parties.map((p) => ({
+          key: p.id,
+          customerId: p.customerId,
+          customerName: p.customer.name,
+          role: p.role,
+          note: p.note ?? "",
+        }))}
         defaultValues={{
           title: full.title,
           totalAmount: Number(full.expectedAmount),
-          signCustomerId: full.customerId,
-          signCustomerName: full.customer.name,
-          endUserCustomerId: full.customerId,
-          endUserCustomerName: full.customer.name,
+          signCustomerId: presetCustomerId,
+          signCustomerName: presetCustomerName,
+          endUserCustomerId: presetCustomerId,
+          endUserCustomerName: presetCustomerName,
           ownerId: full.ownerId,
           ourRepresentativeId: session.user.id,
         }}

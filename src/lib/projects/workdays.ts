@@ -24,7 +24,7 @@ export function isDateInRange(date: Date, start: Date, end: Date): boolean {
   return d >= toDateOnly(start).getTime() && d <= toDateOnly(end).getTime();
 }
 
-/** 排班区间内的全部日历日（含周末），用于人天拆分与合计 */
+/** 排班区间内的全部日历日（含周末）；人天份额在 getDailyShares 中对周末返回 0 */
 export function eachCalendarDay(start: Date, end: Date): Date[] {
   const from = toDateOnly(start);
   const to = toDateOnly(end);

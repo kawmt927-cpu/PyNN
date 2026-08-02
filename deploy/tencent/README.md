@@ -58,7 +58,8 @@ sudo docker compose -p hospital-crm -f docker-compose.tencent.yml up -d --force-
 - [ ] 管理员：**系统设置 → 企业微信 → 企微开通申请** → 批准并分配角色
 - [ ] **再次扫码** → 自动登录进入 `/today-work`
 - [ ] 企微内打开应用 → 静默 OAuth 登录
-- [ ] 企微应用主页：`https://crm.pynntech.com/today-work`
+- [ ] 企微应用主页：`https://crm.pynntech.com/wecom-entry.html`（**禁止**填 IP 如 `http://122.51.86.223:3001/...`）
+- [ ] 推荐落地消息列表：`returnTo=/mobile/inbox`
 - [ ] OAuth 回调域：`crm.pynntech.com`
 
 ### 2. 生产环境配置

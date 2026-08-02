@@ -17,6 +17,7 @@ import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
 import { TRAVEL_ITEM_FIELDS } from "@/lib/sales-costs/travel-items";
 import type { SalesCostListItem } from "@/lib/sales-costs/serialize";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
 
 type DeleteAction = (formData: FormData) => Promise<void>;
 
@@ -78,7 +79,15 @@ export function SalesCostDetailDialog({ item, deleteAction }: Props) {
 
           {item.costType === SalesCostType.BUSINESS ? (
             <>
-              <DetailField label="关联客户" value={item.customerName ?? "—"} />
+              <DetailField
+                label="关联客户"
+                value={
+                  <CustomerNameLink
+                    customerId={item.customerId}
+                    name={item.customerName}
+                  />
+                }
+              />
               {item.description ? (
                 <DetailField label="备注" value={item.description} />
               ) : null}

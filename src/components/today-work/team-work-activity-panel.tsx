@@ -1,4 +1,6 @@
 import { format } from "date-fns";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getTeamActivityDateRange,
@@ -20,7 +22,7 @@ import {
 } from "@/components/today-work/team-work-activity-list";
 
 type Props = {
-  searchParams: { activityView?: string; salesUserId?: string };
+  searchParams: { activityView?: string; salesUserId?: string; open?: string };
 };
 
 function viewDescription(view: TeamActivityView, now: Date) {
@@ -32,7 +34,16 @@ function viewDescription(view: TeamActivityView, now: Date) {
   return "近 30 天 · 按日汇总历史行为";
 }
 
+function serializeItems(items: Awaited<ReturnType<typeof listTeamWorkActivity>>) {
+  return items.map((item) => ({
+    ...item,
+    at: item.at.toISOString(),
+    nextFollowUpAt: item.nextFollowUpAt ? item.nextFollowUpAt.toISOString() : null,
+  }));
+}
+
 export async function TeamWorkActivityPanel({ searchParams }: Props) {
+  const session = await getServerSession(authOptions);
   const now = new Date();
   const view = parseTeamActivityView(searchParams.activityView);
   const allMembers = await listTeamActivityMembers();
@@ -50,9 +61,15 @@ export async function TeamWorkActivityPanel({ searchParams }: Props) {
   });
   const summary = summarizeTeamWorkActivity(items);
   const groups = view === "day" ? [] : groupTeamWorkByDay(items);
+  const serializedItems = serializeItems(items);
+  const serializedGroups = groups.map((group) => ({
+    ...group,
+    items: serializeItems(group.items),
+  }));
+  const currentUserId = session?.user?.id ?? null;
 
   return (
-    <Card>
+    <Card id="team-work-activity">
       <CardHeader className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -85,9 +102,17 @@ export async function TeamWorkActivityPanel({ searchParams }: Props) {
       </CardHeader>
       <CardContent>
         {view === "day" ? (
-          <TeamWorkActivityFlatList items={items} />
+          <TeamWorkActivityFlatList
+            items={serializedItems}
+            openParam={searchParams.open ?? null}
+            currentUserId={currentUserId}
+          />
         ) : (
-          <TeamWorkActivityGroupedList groups={groups} />
+          <TeamWorkActivityGroupedList
+            groups={serializedGroups}
+            openParam={searchParams.open ?? null}
+            currentUserId={currentUserId}
+          />
         )}
       </CardContent>
     </Card>

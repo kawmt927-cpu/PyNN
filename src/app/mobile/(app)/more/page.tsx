@@ -7,6 +7,7 @@ import {
   ClipboardList,
   ClipboardCheck,
   CalendarDays,
+  Bell,
 } from "lucide-react";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -34,6 +35,12 @@ type MoreLink = {
 };
 
 const BASE_LINKS: MoreLink[] = [
+  {
+    href: "/mobile/inbox",
+    label: "消息",
+    desc: "往来、日报与系统通知列表",
+    icon: Bell,
+  },
   {
     href: "/mobile/customers",
     label: "客户",
@@ -63,7 +70,9 @@ const BASE_LINKS: MoreLink[] = [
 export default async function MobileMorePage() {
   const session = await requireRole(SALES_MOBILE_ROLES);
   const manager = isMobileManagerRole(session.user.role);
-  const pendingApprovals = manager ? await countPendingApprovals() : 0;
+  const pendingApprovals = manager
+    ? await countPendingApprovals({ id: session.user.id, role: session.user.role })
+    : 0;
 
   const links: MoreLink[] = manager
     ? [

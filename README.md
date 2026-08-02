@@ -68,7 +68,7 @@ CRM 可嵌入**企业微信自建应用**，支持手机/PC 企微内打开与 P
 ### 管理后台配置
 
 1. 在企业微信管理后台创建自建应用
-2. **应用主页（推荐 · 销售移动端）**：`https://你的域名/mobile`（或静态跳板 `https://你的域名/wecom-entry.html`）
+2. **应用主页（必改 · 勿填 IP）**：`https://crm.pynntech.com/wecom-entry.html`（落地消息列表 `/mobile/inbox`）
 3. **PC 今日工作（可选）**：`https://你的域名/today-work`
 4. **可信域名** / **OAuth 回调域** / **JS 接口安全域名**：均填写 CRM 域名
 5. 记录 CorpID、AgentId、Secret，写入 `.env`：

@@ -37,6 +37,7 @@ export const checkInFollowUpSchema = z.object({
   nextFollowUpContent: z.string().optional().nullable(),
   suggestedGrade: z.string().optional().nullable(),
   opportunityId: z.string().optional().nullable(),
+  opportunityIds: z.array(z.string().min(1)).optional(),
 });
 
 export const checkInFormSchema = z
@@ -102,6 +103,7 @@ export const completeCheckInSchema = z
     result: z.string().optional().nullable(),
     suggestedGrade: z.string().optional().nullable(),
     opportunityId: z.string().optional().nullable(),
+    opportunityIds: z.array(z.string().min(1)).optional().default([]),
     nextFollowUpAt: z.string().optional().nullable(),
     nextFollowUpMethod: z
       .string()

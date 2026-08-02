@@ -22,7 +22,7 @@
     (function () {
       var ua = navigator.userAgent || "";
       var onPhone = /android|iphone|ipod|ipad|mobile/i.test(ua);
-      var returnTo = onPhone ? "/mobile" : "/";
+      var returnTo = onPhone ? "/mobile/inbox" : "/";
       var target = "/api/auth/wecom?returnTo=" + encodeURIComponent(returnTo);
       document.getElementById("go").href = target;
       setTimeout(function () { window.location.replace(target); }, 50);

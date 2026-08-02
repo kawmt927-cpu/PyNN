@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,14 @@ export function ContactForm({
   const router = useRouter();
   const isEdit = Boolean(contact);
   const [isPrimaryChecked, setIsPrimaryChecked] = useState(contact?.isPrimary ?? false);
+  const [name, setName] = useState(contact?.name ?? "");
+  const [role, setRole] = useState(contact?.role ?? roleOptions[0]?.value ?? "OTHER");
+  const [title, setTitle] = useState(contact?.title ?? "");
+  const [department, setDepartment] = useState(contact?.department ?? "");
+  const [phone, setPhone] = useState(contact?.phone ?? "");
+  const [wechat, setWechat] = useState(contact?.wechat ?? "");
+  const [clientError, setClientError] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     isEdit && contact
@@ -61,9 +69,23 @@ export function ContactForm({
     router.refresh();
   }, [pending, state, onSuccess, onCancel, router]);
 
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setClientError(null);
+    if (!phone.trim() && !wechat.trim()) {
+      setClientError("手机和微信至少填写一项");
+      return;
+    }
+    const formData = new FormData(e.currentTarget);
+    // 不绑 form action，避免 React 19 在 action 结束后 reset 非受控字段导致已填姓名被清空
+    startTransition(() => {
+      formAction(formData);
+    });
+  }
+
   return (
     <form
-      action={formAction}
+      onSubmit={handleSubmit}
       className={cn("space-y-3", !embedded && "rounded-md border p-4")}
     >
       <input type="hidden" name="customerId" value={customerId} />
@@ -76,14 +98,21 @@ export function ContactForm({
           <Label htmlFor="contact-name" className={fieldLabelClass}>
             姓名 *
           </Label>
-          <Input id="contact-name" name="name" defaultValue={contact?.name ?? ""} required />
+          <Input
+            id="contact-name"
+            name="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
         </div>
         <SelectField
           id="contact-role"
           label="角色"
           name="role"
           options={roleOptions}
-          defaultValue={contact?.role ?? roleOptions[0]?.value ?? "OTHER"}
+          value={role}
+          onValueChange={setRole}
           labelClassName={fieldLabelClass}
         />
         <ComboboxField
@@ -91,7 +120,8 @@ export function ContactForm({
           label="职务"
           name="title"
           options={titleOptions}
-          defaultValue={contact?.title ?? ""}
+          value={title}
+          onValueChange={setTitle}
           placeholder="选择或输入职务"
         />
         {showDepartment ? (
@@ -100,7 +130,8 @@ export function ContactForm({
             label="科室/部门"
             name="department"
             options={departmentOptions}
-            defaultValue={contact?.department ?? ""}
+            value={department}
+            onValueChange={setDepartment}
             placeholder="选择或输入科室/部门"
           />
         ) : (
@@ -110,13 +141,23 @@ export function ContactForm({
           <Label htmlFor="contact-phone" className={fieldLabelClass}>
             手机
           </Label>
-          <Input id="contact-phone" name="phone" defaultValue={contact?.phone ?? ""} />
+          <Input
+            id="contact-phone"
+            name="phone"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="contact-wechat" className={fieldLabelClass}>
             微信
           </Label>
-          <Input id="contact-wechat" name="wechat" defaultValue={contact?.wechat ?? ""} />
+          <Input
+            id="contact-wechat"
+            name="wechat"
+            value={wechat}
+            onChange={(e) => setWechat(e.target.value)}
+          />
         </div>
       </div>
       <p className="text-xs text-muted-foreground">手机和微信至少填写一项。</p>
@@ -133,7 +174,9 @@ export function ContactForm({
           保存后将取消其他联系人的「主要」标记。
         </p>
       ) : null}
-      {state?.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
+      {clientError || state?.error ? (
+        <p className="text-sm text-destructive">{clientError || state?.error}</p>
+      ) : null}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "保存中…" : isEdit ? "保存" : "添加"}

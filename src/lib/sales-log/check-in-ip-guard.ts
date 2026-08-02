@@ -41,7 +41,7 @@ export async function applyCheckInIpAudit(input: {
   const checkIn = await prisma.salesCheckIn.findUnique({
     where: { id: input.checkInId },
     include: {
-      user: { select: { id: true, name: true } },
+      user: { select: { id: true, name: true, role: true } },
       customer: { select: { id: true, name: true } },
     },
   });
@@ -96,9 +96,12 @@ export async function applyCheckInIpAudit(input: {
     title: "打卡定位与 IP 不一致",
     body: `${checkIn.user.name} 于${whenLabel} GPS 显示「${gpsText}」，设备 IP 归属「${ipText}」（${customerPart}）。请关注是否存在虚拟定位。`,
     linkHref: "/sales-log",
+    actorRole: checkIn.user.role,
+    excludeUserId: checkIn.userId,
     meta: {
       checkInId: checkIn.id,
       userId: checkIn.userId,
+      actorRole: checkIn.user.role,
       clientIp,
       gpsText,
       ipText,

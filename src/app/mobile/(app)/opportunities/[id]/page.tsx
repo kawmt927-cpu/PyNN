@@ -49,12 +49,16 @@ export default async function MobileOpportunityDetailPage({ params }: Props) {
           <div>
             <dt className="text-xs text-muted-foreground">客户</dt>
             <dd>
-              <Link
-                href={`/mobile/customers/${opportunity.customer.id}`}
-                className="font-medium text-primary"
-              >
-                {opportunity.customer.name}
-              </Link>
+              {opportunity.customer ? (
+                <Link
+                  href={`/mobile/customers/${opportunity.customer.id}`}
+                  className="font-medium text-primary"
+                >
+                  {opportunity.customer.name}
+                </Link>
+              ) : (
+                <span className="font-medium text-muted-foreground">未指定</span>
+              )}
             </dd>
           </div>
           <div>

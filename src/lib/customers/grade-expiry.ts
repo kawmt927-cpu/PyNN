@@ -8,6 +8,10 @@ import {
   resolveGradeIntervalDays,
 } from "@/lib/customers/grade-intervals";
 import {
+  getOpportunityGradeIntervalMap,
+  resolveOpportunityGradeIntervalDays,
+} from "@/lib/opportunities/grade-intervals";
+import {
   customerTypeRequiresGrade,
   isChannelCustomerType,
 } from "@/lib/customers/customer-type-grade";
@@ -31,6 +35,41 @@ export type CustomerGradeFollowUpSchedule = {
   dueAt: Date;
 };
 
+async function resolveCustomerFollowUpIntervalDays(input: {
+  customerId: string;
+  customerGrade: string | null;
+  customerType?: string | null;
+}): Promise<number | null> {
+  const oppIntervalMap = await getOpportunityGradeIntervalMap();
+  const gradedOpportunities = await prisma.opportunity.findMany({
+    where: {
+      customerId: input.customerId,
+      status: "NOT_SIGNED",
+      grade: { not: null },
+    },
+    select: { grade: true },
+  });
+
+  if (gradedOpportunities.length > 0) {
+    const oppIntervals = gradedOpportunities
+      .map((row) => resolveOpportunityGradeIntervalDays(row.grade, oppIntervalMap))
+      .filter((days): days is number => days != null && days > 0);
+    if (oppIntervals.length > 0) {
+      // 客户名下存在未签约且已设等级的商机时，优先按商机等级中最短往来间隔计算（高于客户等级间隔）
+      return Math.min(...oppIntervals);
+    }
+  }
+
+  const { getConfigOptions } = await import("@/lib/config-options");
+  const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+  const maps = await getGradeIntervalMaps();
+  const intervalMap = pickGradeIntervalMap(
+    isChannelCustomerType(input.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
+    maps
+  );
+  return resolveGradeIntervalDays(input.customerGrade, intervalMap);
+}
+
 export async function getCustomerGradeFollowUpSchedule(input: {
   customerId: string;
   customerGrade: string | null;
@@ -45,12 +84,11 @@ export async function getCustomerGradeFollowUpSchedule(input: {
   ) {
     return null;
   }
-  const maps = await getGradeIntervalMaps();
-  const intervalMap = pickGradeIntervalMap(
-    isChannelCustomerType(input.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
-    maps
-  );
-  const intervalDays = resolveGradeIntervalDays(input.customerGrade, intervalMap);
+  const intervalDays = await resolveCustomerFollowUpIntervalDays({
+    customerId: input.customerId,
+    customerGrade: input.customerGrade,
+    customerType: input.customerType,
+  });
   if (!intervalDays) return null;
 
   const lastInteractionMap = await getLastInteractionMap([input.customerId]);
@@ -103,6 +141,7 @@ async function getLastInteractionMap(customerIds: string[]): Promise<Map<string,
   }
   for (const row of opportunityFollowUps) {
     const customerId = row.opportunity.customerId;
+    if (!customerId) continue;
     const prev = map.get(customerId);
     if (!prev || row.followUpAt > prev) map.set(customerId, row.followUpAt);
   }
@@ -130,16 +169,42 @@ async function listGradeFollowUpScheduleItems(
     orderBy: { name: "asc" },
   });
 
+  const oppIntervalMap = await getOpportunityGradeIntervalMap();
+  const gradedOpportunities = await prisma.opportunity.findMany({
+    where: {
+      customerId: { in: customers.map((c) => c.id) },
+      status: "NOT_SIGNED",
+      grade: { not: null },
+    },
+    select: { customerId: true, grade: true },
+  });
+  const oppIntervalsByCustomer = new Map<string, number[]>();
+  for (const row of gradedOpportunities) {
+    if (!row.customerId || !row.grade) continue;
+    const days = resolveOpportunityGradeIntervalDays(row.grade, oppIntervalMap);
+    if (days == null || days <= 0) continue;
+    const list = oppIntervalsByCustomer.get(row.customerId) ?? [];
+    list.push(days);
+    oppIntervalsByCustomer.set(row.customerId, list);
+  }
+
   const lastInteractionMap = await getLastInteractionMap(customers.map((c) => c.id));
   const items: GradeExpiryPendingItem[] = [];
 
   for (const customer of customers) {
     if (!customerTypeRequiresGrade(customer.customerType, typeOptions)) continue;
-    const intervalMap = pickGradeIntervalMap(
-      isChannelCustomerType(customer.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
-      maps
-    );
-    const intervalDays = resolveGradeIntervalDays(customer.customerGrade, intervalMap);
+
+    const oppIntervals = oppIntervalsByCustomer.get(customer.id);
+    let intervalDays: number | null = null;
+    if (oppIntervals?.length) {
+      intervalDays = Math.min(...oppIntervals);
+    } else {
+      const intervalMap = pickGradeIntervalMap(
+        isChannelCustomerType(customer.customerType, typeOptions) ? "CHANNEL" : "DIRECT",
+        maps
+      );
+      intervalDays = resolveGradeIntervalDays(customer.customerGrade, intervalMap);
+    }
     if (!intervalDays) continue;
 
     const lastInteractionAt = lastInteractionMap.get(customer.id) ?? customer.createdAt;

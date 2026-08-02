@@ -12,14 +12,18 @@ import {
 } from "@/components/personnel/personnel-tabs";
 import { getPersonAllocationSplit } from "@/lib/projects/cost-summary";
 import {
+  compareYearMonth,
   computeMonthlyCost,
   countMonthWorkdays,
+  currentYearMonth,
   parseYearMonthParam,
   resolveEffectiveMonthlyCost,
   shiftYearMonth,
 } from "@/lib/personnel/daily-rate";
 import { resolveMonthCostFromHistory } from "@/lib/personnel/resolve-month-cost";
+import { ensureCurrentMonthCostsMaterialized } from "@/lib/personnel/ensure-month-costs";
 import { endOfMonth, startOfMonth } from "date-fns";
+import { redirect } from "next/navigation";
 
 type Props = {
   searchParams: Promise<{ tab?: string; year?: string; month?: string }>;
@@ -45,13 +49,27 @@ export default async function PersonnelPage({ searchParams }: Props) {
   const activeTab = parseTab(params.tab);
 
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+  const current = currentYearMonth(now);
 
-  const { year, month } =
+  const requested =
     activeTab === "costs"
       ? parseYearMonthParam(params.year, params.month, now)
-      : { year: currentYear, month: currentMonth };
+      : current;
+  const { year, month } = requested;
+
+  // 深链落到未来月时重定向回当月
+  if (
+    activeTab === "costs" &&
+    params.year != null &&
+    params.month != null &&
+    (Number(params.year) !== year || Number(params.month) !== month)
+  ) {
+    redirect(costsHref(year, month));
+  }
+
+  if (activeTab === "costs") {
+    await ensureCurrentMonthCostsMaterialized(year, month, now);
+  }
 
   const monthDate = new Date(year, month - 1, 1);
   const monthWorkdays = countMonthWorkdays(monthDate);
@@ -61,6 +79,7 @@ export default async function PersonnelPage({ searchParams }: Props) {
   };
   const prev = shiftYearMonth(year, month, -1);
   const next = shiftYearMonth(year, month, 1);
+  const canGoNext = compareYearMonth(next, current) <= 0;
 
   const users = await prisma.user.findMany({
     where: {
@@ -163,7 +182,7 @@ export default async function PersonnelPage({ searchParams }: Props) {
         <p className="mt-1 text-sm text-muted-foreground">
           {activeTab === "info"
             ? "查看人员基本信息与当月投入概况；类型可在此维护。"
-            : "按月维护人员成本（含历史）；无当月记录时沿用上月成本；项目成本按「有效月成本 ÷ 当月实际工作日」实时核算。"}
+            : "按月维护人员成本（含历史，不超过当前月）；进入当月时若无记录会自动从上月复制；项目成本按「有效月成本 ÷ 当月实际工作日」实时核算。"}
         </p>
       </div>
 
@@ -205,10 +224,21 @@ export default async function PersonnelPage({ searchParams }: Props) {
             <Button variant="outline" size="sm" asChild>
               <Link href={costsHref(prev.year, prev.month)}>上一月</Link>
             </Button>
-            <PersonnelMonthPicker year={year} month={month} />
-            <Button variant="outline" size="sm" asChild>
-              <Link href={costsHref(next.year, next.month)}>下一月</Link>
-            </Button>
+            <PersonnelMonthPicker
+              year={year}
+              month={month}
+              maxYear={current.year}
+              maxMonth={current.month}
+            />
+            {canGoNext ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href={costsHref(next.year, next.month)}>下一月</Link>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled>
+                下一月
+              </Button>
+            )}
           </div>
           <Card>
             <CardHeader>

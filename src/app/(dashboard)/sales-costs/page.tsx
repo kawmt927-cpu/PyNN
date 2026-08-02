@@ -39,7 +39,7 @@ export default async function SalesCostsPage({ searchParams }: Props) {
       include: {
         salesUser: { select: { name: true } },
         recordedBy: { select: { name: true } },
-        customer: { select: { name: true } },
+        customer: { select: { id: true, name: true } },
         presalesUser: { select: { name: true } },
       },
       take: 200,

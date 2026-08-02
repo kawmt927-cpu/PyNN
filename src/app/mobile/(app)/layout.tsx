@@ -18,7 +18,10 @@ export default async function MobileSalesAppLayout({
   }
 
   const manager = isMobileManagerRole(session.user.role);
-  const pendingApprovals = manager ? await countPendingApprovals() : 0;
+  const pendingApprovals = await countPendingApprovals({
+    id: session.user.id,
+    role: session.user.role,
+  });
 
   return (
     <MobileShell navVariant={manager ? "manager" : "sales"} moreBadge={pendingApprovals > 0}>

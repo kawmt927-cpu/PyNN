@@ -143,7 +143,11 @@ export async function getDailyReportDayView(
     riskFlag: dailyLog?.riskFlag ?? false,
     riskNotes: dailyLog?.riskNotes ?? null,
     submittedAt: dailyLog?.submittedAt ?? null,
+    lateMarkedAt: dailyLog?.lateMarkedAt ?? null,
     updatedAt: dailyLog?.updatedAt ?? logDate,
+    conversation: Array.isArray(dailyLog?.conversation)
+      ? (dailyLog!.conversation as Array<{ role: string; content: string }>)
+      : null,
     user,
     checkIns,
     followUps,

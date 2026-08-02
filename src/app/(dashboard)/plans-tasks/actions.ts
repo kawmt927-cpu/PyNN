@@ -15,7 +15,11 @@ import { monthlyKpiTargetFormSchema } from "@/lib/validations/monthly-kpi";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 import {
   cancelWeeklyAssignmentWithPlan,
+  createGeneralWeeklyAssignment,
   createWeeklyAssignmentWithFollowUpPlan,
+  confirmGeneralAssignment,
+  markGeneralAssignmentDone,
+  rejectGeneralAssignment,
 } from "@/lib/today-work/create-weekly-assignment";
 
 function revalidatePlansTasks() {
@@ -24,7 +28,9 @@ function revalidatePlansTasks() {
   revalidatePath("/weekly-tasks");
   revalidatePath("/follow-ups");
   revalidatePath("/mobile/metrics");
+  revalidatePath("/mobile/tasks");
   revalidatePath("/customers");
+  revalidatePath("/notifications");
 }
 
 export async function saveAnnualTarget(
@@ -171,6 +177,7 @@ export async function createWeeklyAssignment(formData: FormData): Promise<Action
     }
 
     const parsed = weeklyAssignmentFormSchema.parse({
+      kind: formData.get("kind")?.toString() || "CUSTOMER_FOLLOW_UP",
       assigneeId: formData.get("assigneeId"),
       customerId: formData.get("customerId")?.toString() || undefined,
       opportunityId: formData.get("opportunityId")?.toString() || undefined,
@@ -184,21 +191,31 @@ export async function createWeeklyAssignment(formData: FormData): Promise<Action
     const dueAt = new Date(parsed.dueAt);
     if (Number.isNaN(dueAt.getTime())) return { error: "截止时间无效" };
 
-    const plannedMethod = parsed.plannedMethod?.trim()
-      ? (parsed.plannedMethod.trim() as FollowUpMethod)
-      : null;
+    if (parsed.kind === "GENERAL") {
+      await createGeneralWeeklyAssignment({
+        createdById: session.user.id,
+        assigneeId: parsed.assigneeId,
+        title: parsed.title,
+        description: parsed.description,
+        dueAt,
+      });
+    } else {
+      const plannedMethod = parsed.plannedMethod?.trim()
+        ? (parsed.plannedMethod.trim() as FollowUpMethod)
+        : null;
 
-    await createWeeklyAssignmentWithFollowUpPlan({
-      createdById: session.user.id,
-      assigneeId: parsed.assigneeId,
-      customerId: parsed.customerId,
-      opportunityId: parsed.opportunityId?.trim() || null,
-      contactId: parsed.contactId?.trim() || null,
-      plannedMethod,
-      title: parsed.title,
-      description: parsed.description,
-      dueAt,
-    });
+      await createWeeklyAssignmentWithFollowUpPlan({
+        createdById: session.user.id,
+        assigneeId: parsed.assigneeId,
+        customerId: parsed.customerId!.trim(),
+        opportunityId: parsed.opportunityId?.trim() || null,
+        contactId: parsed.contactId?.trim() || null,
+        plannedMethod,
+        title: parsed.title,
+        description: parsed.description,
+        dueAt,
+      });
+    }
 
     revalidatePlansTasks();
     return {};
@@ -207,6 +224,52 @@ export async function createWeeklyAssignment(formData: FormData): Promise<Action
       return { error: error.errors[0]?.message ?? "表单无效" };
     }
     return { error: error instanceof Error ? error.message : "创建失败" };
+  }
+}
+
+export async function markWeeklyAssignmentDone(
+  id: string,
+  note?: string
+): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    await markGeneralAssignmentDone({
+      assignmentId: id,
+      actorUserId: session.user.id,
+      note,
+    });
+    revalidatePlansTasks();
+    return {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "操作失败" };
+  }
+}
+
+export async function confirmWeeklyAssignment(id: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    await confirmGeneralAssignment({
+      assignmentId: id,
+      actorUserId: session.user.id,
+    });
+    revalidatePlansTasks();
+    return {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "确认失败" };
+  }
+}
+
+export async function rejectWeeklyAssignment(id: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    await rejectGeneralAssignment({
+      assignmentId: id,
+      actorUserId: session.user.id,
+    });
+    revalidatePlansTasks();
+    return {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "驳回失败" };
   }
 }
 

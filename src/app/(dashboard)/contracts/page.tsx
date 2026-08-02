@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { ContractPaymentDueStatusBadge } from "@/components/contracts/contract-payment-due-badge";
 import { ContractListFilters } from "@/components/contracts/contract-list-filters";
+import { CustomerNameLink } from "@/components/customers/customer-name-link";
 
 function formatPaymentRatio(paid: number, total: number) {
   if (total <= 0) return "—";
@@ -53,8 +54,8 @@ export default async function ContractsPage({ searchParams }: Props) {
       where,
       orderBy: { updatedAt: "desc" },
       include: {
-        signCustomer: { select: { name: true } },
-        endUserCustomer: { select: { name: true } },
+        signCustomer: { select: { id: true, name: true } },
+        endUserCustomer: { select: { id: true, name: true } },
         owner: { select: { name: true } },
         opportunity: { select: { id: true, title: true } },
         project: { select: { id: true } },
@@ -233,57 +234,79 @@ export default async function ContractsPage({ searchParams }: Props) {
 
               return (
                 <li key={c.id}>
-                  <Link href={href} className="block">
-                    <Card className="transition-colors hover:border-primary/40 hover:bg-muted/30">
-                      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-                        <div className="min-w-0 flex-1 space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <CardTitle className="text-base leading-snug">{c.title}</CardTitle>
-                            <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                              {CONTRACT_STATUS_LABELS[c.status]}
-                            </span>
-                            <ContractPaymentDueStatusBadge summary={due} />
-                          </div>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                            <span>
-                              签约客户：
-                              <span className="text-foreground">{c.signCustomer.name}</span>
-                            </span>
-                            <span>
-                              最终用户：
-                              <span className="text-foreground">{c.endUserCustomer.name}</span>
-                            </span>
-                            <span>
-                              负责销售：
-                              <span className="text-foreground">{c.owner.name}</span>
-                            </span>
-                            {c.opportunity ? (
-                              <span>
-                                关联商机：
-                                <span className="text-foreground">{c.opportunity.title}</span>
-                              </span>
-                            ) : null}
-                            {c.contractNo ? <span>编号：{c.contractNo}</span> : null}
-                          </div>
+                  <Card className="transition-colors hover:border-primary/40 hover:bg-muted/30">
+                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <CardTitle className="text-base leading-snug">
+                            <Link href={href} className="hover:underline">
+                              {c.title}
+                            </Link>
+                          </CardTitle>
+                          <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            {CONTRACT_STATUS_LABELS[c.status]}
+                          </span>
+                          <ContractPaymentDueStatusBadge summary={due} />
                         </div>
-                        <div className="shrink-0 space-y-1 text-sm sm:text-right">
-                          <p>
-                            <span className="text-muted-foreground">合同金额 </span>
-                            <span className="font-medium">{formatAmount(totalAmount)}</span>
-                          </p>
-                          <p>
-                            <span className="text-muted-foreground">回款 </span>
-                            <span className="font-medium">
-                              {formatAmount(totalPaid)}
-                              <span className="mx-1 font-normal text-muted-foreground">/</span>
-                              {formatAmount(totalAmount)}
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                          <span>
+                            签约客户：
+                            <CustomerNameLink
+                              customerId={c.signCustomer.id}
+                              name={c.signCustomer.name}
+                              returnTo={listPath}
+                              className="font-normal text-foreground"
+                            />
+                          </span>
+                          <span>
+                            最终用户：
+                            <CustomerNameLink
+                              customerId={c.endUserCustomer.id}
+                              name={c.endUserCustomer.name}
+                              returnTo={listPath}
+                              className="font-normal text-foreground"
+                            />
+                          </span>
+                          <span>
+                            负责销售：
+                            <span className="text-foreground">{c.owner.name}</span>
+                          </span>
+                          {c.opportunity ? (
+                            <span>
+                              关联商机：
+                              <Link
+                                href={withReturnTo(`/opportunities/${c.opportunity.id}`, listPath)}
+                                className="text-foreground hover:underline"
+                              >
+                                {c.opportunity.title}
+                              </Link>
                             </span>
-                            <span className="ml-1.5 font-medium">（{ratio}）</span>
-                          </p>
+                          ) : null}
+                          {c.contractNo ? <span>编号：{c.contractNo}</span> : null}
                         </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
+                      </div>
+                      <div className="shrink-0 space-y-1 text-sm sm:text-right">
+                        <p>
+                          <span className="text-muted-foreground">合同金额 </span>
+                          <span className="font-medium">{formatAmount(totalAmount)}</span>
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">回款 </span>
+                          <span className="font-medium">
+                            {formatAmount(totalPaid)}
+                            <span className="mx-1 font-normal text-muted-foreground">/</span>
+                            {formatAmount(totalAmount)}
+                          </span>
+                          <span className="ml-1.5 font-medium">（{ratio}）</span>
+                        </p>
+                        <p>
+                          <Link href={href} className="text-primary hover:underline">
+                            查看合同
+                          </Link>
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </li>
               );
             })}
