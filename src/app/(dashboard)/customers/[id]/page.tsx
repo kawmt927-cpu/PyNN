@@ -93,6 +93,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         CONFIG_CATEGORY.CUSTOMER_TYPE,
         CONFIG_CATEGORY.CUSTOMER_GRADE,
         CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
+        CONFIG_CATEGORY.CHANNEL_KIND,
         CONFIG_CATEGORY.OPPORTUNITY_STAGE,
       ]),
       getCustomerTagDefinitions(),
@@ -135,11 +136,14 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
   const isChannel = isChannelCustomerType(customer.customerType, typeLabels);
+  const channelKindLabels = labelMaps[CONFIG_CATEGORY.CHANNEL_KIND] ?? {};
   const gradeLabels =
     (isChannel
       ? labelMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE]
       : labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE]) ?? {};
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
+  const coverageProvinceText =
+    customer.coverageProvinces?.map((r) => r.province).filter(Boolean).join("、") || "—";
 
   const relations = [
     ...customer.relationsFrom.map((r) => ({
@@ -265,6 +269,21 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
             )}
             <Row label="现有系统" value={customer.existingSystem ?? "—"} />
             <Row label="关系类型" value={labelForConfig(typeLabels, customer.customerType)} />
+            {isChannel ? (
+              <>
+                <Row
+                  label="渠道类型"
+                  value={labelForConfig(channelKindLabels, customer.channelKind)}
+                />
+                <Row
+                  label="全国性渠道"
+                  value={customer.nationwideChannel ? "是" : "否"}
+                />
+                {customer.nationwideChannel ? (
+                  <Row label="覆盖省份" value={coverageProvinceText} />
+                ) : null}
+              </>
+            ) : null}
             <Row
               label={isChannel ? "渠道等级" : "客户等级"}
               value={
