@@ -15,10 +15,12 @@ async function validateCustomerConfigFields(data: {
   source?: string | null;
   customerType?: string | null;
   customerGrade?: string | null;
+  channelKind?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue, getConfigOptions } = await import(
     "@/lib/config-options"
   );
+  const { resolveChannelKindForCustomer } = await import("@/lib/customers/channel-kind");
   const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
   const enforcedType = enforceCustomerTypeForCategory(
     data.category,
@@ -33,6 +35,11 @@ async function validateCustomerConfigFields(data: {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType,
     customerGrade: requireCustomerGradeForType(customerType, data.customerGrade, typeOptions),
+    channelKind: await resolveChannelKindForCustomer({
+      customerType,
+      channelKind: data.channelKind,
+      typeOptions,
+    }),
   };
 }
 
@@ -68,6 +75,7 @@ export async function createCustomerRecord(
       source: configFields.source,
       customerType: configFields.customerType,
       customerGrade: configFields.customerGrade,
+      channelKind: configFields.channelKind,
       notes: data.notes?.trim() || undefined,
       ownerId: await resolveOwnerId(role, userId, data.ownerId),
     },

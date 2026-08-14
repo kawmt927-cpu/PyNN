@@ -8,6 +8,7 @@ import {
   DEFAULT_CHANNEL_CUSTOMER_GRADE_CONFIG_OPTIONS,
   isChannelCustomerType,
 } from "@/lib/customers/customer-type-grade";
+import { DEFAULT_CHANNEL_KIND_OPTIONS } from "@/lib/customers/channel-kind";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 
 /** ConfigOption.category 常量 */
@@ -16,6 +17,7 @@ export const CONFIG_CATEGORY = {
   CUSTOMER_TYPE: "customer_type",
   CUSTOMER_GRADE: "customer_grade",
   CHANNEL_CUSTOMER_GRADE: "channel_customer_grade",
+  CHANNEL_KIND: "channel_kind",
   CUSTOMER_TAG: "customer_tag",
   CONTACT_TITLE: "contact_title",
   CONTACT_DEPARTMENT: "contact_department",
@@ -35,6 +37,7 @@ export const CONFIG_CATEGORY_LABELS: Record<ConfigCategory, string> = {
   [CONFIG_CATEGORY.CUSTOMER_TYPE]: "关系类型",
   [CONFIG_CATEGORY.CUSTOMER_GRADE]: "客户等级（直接客户）",
   [CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE]: "客户等级（渠道）",
+  [CONFIG_CATEGORY.CHANNEL_KIND]: "渠道类型",
   [CONFIG_CATEGORY.CUSTOMER_TAG]: "客户标签",
   [CONFIG_CATEGORY.CONTACT_TITLE]: "联系人职务",
   [CONFIG_CATEGORY.CONTACT_DEPARTMENT]: "联系人科室/部门（医院）",
@@ -74,6 +77,7 @@ export const CONFIG_MODULES: ConfigModuleDef[] = [
         category: CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE,
         label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE],
       },
+      { category: CONFIG_CATEGORY.CHANNEL_KIND, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CHANNEL_KIND] },
       { category: CONFIG_CATEGORY.CUSTOMER_TAG, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CUSTOMER_TAG] },
       { category: CONFIG_CATEGORY.CONTACT_TITLE, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_TITLE] },
       { category: CONFIG_CATEGORY.CONTACT_DEPARTMENT, label: CONFIG_CATEGORY_LABELS[CONFIG_CATEGORY.CONTACT_DEPARTMENT] },
@@ -231,14 +235,68 @@ export function labelForConfig(
   return map?.[value] ?? value;
 }
 
+/**
+ * 历史 seed / 模型常传的 value → 可能对应的中文 label（生产库可能改过 value）。
+ * 解析时：精确 value → 精确 label → 别名 label/value。
+ */
+const CONFIG_VALUE_ALIASES: Partial<Record<string, Record<string, string[]>>> = {
+  [CONFIG_CATEGORY.CUSTOMER_SOURCE]: {
+    ACTIVE_DEV: ["主动开发", "自行开发"],
+    COMPANY_ASSIGN: ["公司分配", "公司提供"],
+    CHANNEL_INTRO: ["渠道介绍"],
+    LEAD_CONVERT: ["线索转化", "公司提供"],
+  },
+  [CONFIG_CATEGORY.CUSTOMER_TYPE]: {
+    DIRECT: ["直接客户"],
+    CHANNEL: ["渠道"],
+    PARTNER: ["合作伙伴"],
+  },
+};
+
 export async function assertConfigValue(category: string, value: string | null | undefined) {
-  if (!value) return null;
+  return resolveConfigValue(category, value);
+}
+
+/** 按 value、显示名或常见别名解析已启用配置项；失败时抛出含可用列表的错误 */
+export async function resolveConfigValue(category: string, valueOrLabel: string | null | undefined) {
+  if (!valueOrLabel?.trim()) return null;
+  const raw = valueOrLabel.trim();
   const db = getPrismaClient();
-  const option = await db.configOption.findFirst({
-    where: { category, value, enabled: true },
+  const options = await db.configOption.findMany({
+    where: { category, enabled: true },
+    select: { value: true, label: true },
+    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
   });
-  if (!option) throw new Error("所选选项无效或已停用");
-  return value;
+
+  const byValue = options.find((o) => o.value === raw);
+  if (byValue) return byValue.value;
+
+  const byLabel = options.find((o) => o.label === raw);
+  if (byLabel) return byLabel.value;
+
+  const aliases = CONFIG_VALUE_ALIASES[category];
+  if (aliases) {
+    const labelsForSeed = aliases[raw];
+    if (labelsForSeed) {
+      const hit = options.find(
+        (o) => o.value === raw || labelsForSeed.includes(o.label)
+      );
+      if (hit) return hit.value;
+    }
+    for (const [seed, labels] of Object.entries(aliases)) {
+      if (!labels.includes(raw)) continue;
+      const hit = options.find((o) => o.value === seed || labels.includes(o.label));
+      if (hit) return hit.value;
+    }
+  }
+
+  const catLabel =
+    CONFIG_CATEGORY_LABELS[category as ConfigCategory] ?? category;
+  const hint =
+    options.length > 0
+      ? options.map((o) => `${o.label}（value=${o.value}）`).join("、")
+      : "（当前无启用选项，请到系统配置维护）";
+  throw new Error(`${catLabel}「${raw}」无效或已停用。可用：${hint}`);
 }
 
 /** 客户字段默认选项（seed 与空库兜底） */
@@ -252,6 +310,7 @@ export const DEFAULT_CUSTOMER_FIELD_OPTIONS = [
   { category: CONFIG_CATEGORY.CUSTOMER_TYPE, value: "PARTNER", label: "合作伙伴", sortOrder: 3 },
   ...DEFAULT_CUSTOMER_GRADE_CONFIG_OPTIONS,
   ...DEFAULT_CHANNEL_CUSTOMER_GRADE_CONFIG_OPTIONS,
+  ...DEFAULT_CHANNEL_KIND_OPTIONS,
   { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "DEAN", label: "院长", sortOrder: 1 },
   { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "VICE_DEAN", label: "副院长", sortOrder: 2 },
   { category: CONFIG_CATEGORY.CONTACT_TITLE, value: "DIRECTOR", label: "主任", sortOrder: 3 },
@@ -340,19 +399,27 @@ export async function loadContactFormOptions() {
 }
 
 export async function loadCustomerFormOptions() {
-  const [sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions] =
-    await Promise.all([
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
-      getConfigOptions(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE),
-      getCustomerTagDefinitions(),
-    ]);
+  const [
+    sourceOptions,
+    typeOptions,
+    gradeOptions,
+    channelGradeOptions,
+    channelKindOptions,
+    tagOptions,
+  ] = await Promise.all([
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
+    getConfigOptions(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE),
+    getConfigOptions(CONFIG_CATEGORY.CHANNEL_KIND),
+    getCustomerTagDefinitions(),
+  ]);
   return {
     sourceOptions,
     typeOptions,
     gradeOptions,
     channelGradeOptions,
+    channelKindOptions,
     tagOptions,
   };
 }
@@ -375,20 +442,29 @@ export async function loadOpportunityFormOptions() {
 }
 
 export async function loadInteractionFormOptions() {
-  const [sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions, stageOptions] =
-    await Promise.all([
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
-      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
-      getConfigOptions(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE),
-      getCustomerTagDefinitions(),
-      getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
-    ]);
+  const [
+    sourceOptions,
+    typeOptions,
+    gradeOptions,
+    channelGradeOptions,
+    channelKindOptions,
+    tagOptions,
+    stageOptions,
+  ] = await Promise.all([
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_SOURCE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
+    getConfigOptions(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE),
+    getConfigOptions(CONFIG_CATEGORY.CHANNEL_KIND),
+    getCustomerTagDefinitions(),
+    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+  ]);
   return {
     sourceOptions,
     typeOptions,
     gradeOptions,
     channelGradeOptions,
+    channelKindOptions,
     tagOptions,
     stageOptions,
   };

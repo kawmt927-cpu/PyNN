@@ -24,7 +24,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
 
   // 先归一关系类型 value（历史「渠道」可能不是 CHANNEL），再读客户
-  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions } =
+  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, channelKindOptions, tagOptions } =
     await loadCustomerFormOptions();
 
   if (!(await customerExists(id))) notFound();
@@ -65,6 +65,8 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
       : [];
 
   const initialTagValues = customer.tags.map((item) => item.tagValue);
+  const primaryContact =
+    customer.contacts.find((c) => c.isPrimary) ?? customer.contacts[0] ?? null;
 
   const detailHref = selfReturnPath(`/customers/${id}`, query);
 
@@ -85,6 +87,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
         channelGradeOptions={channelGradeOptions}
+        channelKindOptions={channelKindOptions}
         tagOptions={tagOptions}
         initialTagValues={initialTagValues}
         initial={{
@@ -99,9 +102,13 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
           source: customer.source,
           customerType: customer.customerType,
           customerGrade: customer.customerGrade,
+          channelKind: customer.channelKind,
+          coverageProvinces: customer.coverageProvinces?.map((r) => r.province) ?? [],
           notes: customer.notes,
           ownerId: customer.ownerId,
           assistantOwnerIds: customer.assistantOwners.map((row) => row.userId),
+          primaryContactName: primaryContact?.name ?? customer.name,
+          primaryContactPhone: primaryContact?.phone ?? null,
         }}
       />
     </div>

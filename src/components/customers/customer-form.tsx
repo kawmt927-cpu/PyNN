@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import { CustomerTagSelect } from "@/components/customers/customer-tag-select";
+import { CoverageProvincesField } from "@/components/customers/coverage-provinces-field";
 import { AssistantOwnersField } from "@/components/customers/assistant-owners-field";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissions";
@@ -51,9 +52,14 @@ type CustomerFormValues = {
   source: string | null;
   customerType: string | null;
   customerGrade: string | null;
+  channelKind: string | null;
+  coverageProvinces?: string[];
   notes: string | null;
   ownerId: string | null;
   assistantOwnerIds?: string[];
+  /** 编辑个人客户时预填：主联系人姓名/电话（转为公司用） */
+  primaryContactName?: string | null;
+  primaryContactPhone?: string | null;
 };
 
 type Props = {
@@ -68,6 +74,7 @@ type Props = {
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
   channelGradeOptions?: ConfigOptionItem[];
+  channelKindOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   initialTagValues?: string[];
 };
@@ -76,6 +83,15 @@ const categoryOptions = Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, la
   value,
   label,
 }));
+
+function categoryOptionsForEdit(initialCategory: CustomerCategory) {
+  if (initialCategory === "INDIVIDUAL") {
+    return categoryOptions.filter(
+      (opt) => opt.value === "INDIVIDUAL" || opt.value === "COMPANY"
+    );
+  }
+  return categoryOptions.filter((opt) => opt.value !== "INDIVIDUAL");
+}
 
 const hospitalLevelOptions = [
   { value: "", label: "请选择" },
@@ -103,14 +119,17 @@ export function CustomerForm({
   typeOptions,
   gradeOptions,
   channelGradeOptions = [],
+  channelKindOptions = [],
   tagOptions,
   initialTagValues = [],
 }: Props) {
   const router = useRouter();
   const isCreate = mode === "create";
-  const [category, setCategory] = useState<CustomerCategory>(initial?.category ?? "HOSPITAL");
+  const initialCategory = initial?.category ?? "HOSPITAL";
+  const [category, setCategory] = useState<CustomerCategory>(initialCategory);
   const [customerType, setCustomerType] = useState(initial?.customerType ?? "");
   const [customerGrade, setCustomerGrade] = useState(initial?.customerGrade ?? "");
+  const [channelKind, setChannelKind] = useState(initial?.channelKind ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [province, setProvince] = useState(initial?.province ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
@@ -120,6 +139,12 @@ export function CustomerForm({
   );
   const [bedCount, setBedCount] = useState(
     initial?.bedCount != null ? String(initial.bedCount) : ""
+  );
+  const [convertContactName, setConvertContactName] = useState(
+    initial?.primaryContactName?.trim() || initial?.name || ""
+  );
+  const [convertContactPhone, setConvertContactPhone] = useState(
+    initial?.primaryContactPhone ?? ""
   );
   const [error, setError] = useState<UserFacingActionError | null>(null);
   const [enrichHint, setEnrichHint] = useState<string | null>(null);
@@ -132,9 +157,16 @@ export function CustomerForm({
       : initial.ownerId
   );
 
+  const convertingToCompany =
+    !isCreate && initialCategory === "INDIVIDUAL" && category === "COMPANY";
+  const editableCategoryOptions = isCreate
+    ? categoryOptions
+    : categoryOptionsForEdit(initialCategory);
+
   const relationTypeLocked = categoryLocksToDirectCustomer(category);
   const directTypeValue = resolveDirectCustomerTypeValue(typeOptions);
   const showGrade = customerTypeRequiresGrade(customerType, typeOptions);
+  const showChannelKind = isChannelCustomerType(customerType, typeOptions);
   const activeGradeOptions = isChannelCustomerType(customerType, typeOptions)
     ? channelGradeOptions
     : gradeOptions;
@@ -244,10 +276,28 @@ export function CustomerForm({
               </Button>
             ) : null}
           </div>
+        ) : convertingToCompany ? (
+          <div className={FORM_FULL_WIDTH}>
+            <Label htmlFor="name">公司名称 *</Label>
+            <Input
+              id="name"
+              name="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="请填写公司全称，勿沿用个人姓名"
+              required
+            />
+          </div>
         ) : (
           <div className={FORM_FULL_WIDTH}>
             <Label htmlFor="name">客户名称 *</Label>
-            <Input id="name" name="name" defaultValue={initial?.name ?? ""} required />
+            <Input
+              id="name"
+              name="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
           </div>
         )}
 
@@ -262,21 +312,68 @@ export function CustomerForm({
             value={category}
             onChange={(e) => {
               const next = e.target.value as CustomerCategory;
+              const prev = category;
               setCategory(next);
               if (categoryLocksToDirectCustomer(next)) {
                 setCustomerType(resolveDirectCustomerTypeValue(typeOptions));
                 setCustomerGrade("");
               }
+              if (!isCreate && initialCategory === "INDIVIDUAL") {
+                if (next === "COMPANY" && prev === "INDIVIDUAL") {
+                  setConvertContactName(
+                    initial?.primaryContactName?.trim() || initial?.name || ""
+                  );
+                  setConvertContactPhone(initial?.primaryContactPhone ?? "");
+                  setName("");
+                } else if (next === "INDIVIDUAL" && prev === "COMPANY") {
+                  setName(initial?.name ?? "");
+                }
+              }
             }}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {categoryOptions.map((opt) => (
+            {editableCategoryOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
         </div>
+
+        {convertingToCompany ? (
+          <div className="md:col-span-2 space-y-4 rounded-md border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                转为公司客户
+              </p>
+              <p className="text-sm text-amber-800/90 dark:text-amber-200/90">
+                原个人「{initial?.name}」将作为该公司的主联系人；历史跟进、商机、合同仍归属本条客户记录。
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="convertContactName">联系人姓名 *</Label>
+                <Input
+                  id="convertContactName"
+                  name="convertContactName"
+                  value={convertContactName}
+                  onChange={(e) => setConvertContactName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="convertContactPhone">联系人手机</Label>
+                <Input
+                  id="convertContactPhone"
+                  name="convertContactPhone"
+                  value={convertContactPhone}
+                  onChange={(e) => setConvertContactPhone(e.target.value)}
+                  placeholder="可选"
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <SelectField
           id="customerType"
@@ -288,6 +385,9 @@ export function CustomerForm({
             if (relationTypeLocked) return;
             setCustomerType(value);
             setCustomerGrade("");
+            if (!isChannelCustomerType(value, typeOptions)) {
+              setChannelKind("");
+            }
           }}
           required
           disabled={relationTypeLocked}
@@ -297,6 +397,27 @@ export function CustomerForm({
           className={FORM_GRID_CELL}
           labelClassName={FORM_GRID_LABEL}
         />
+
+        {showChannelKind ? (
+          <SelectField
+            id="channelKind"
+            label="渠道类型 *"
+            name="channelKind"
+            options={withEmptyOption(channelKindOptions)}
+            value={channelKind}
+            onValueChange={setChannelKind}
+            required
+            description="信息化集成商 / HRP 厂商 / 友商 / 其他（含运营商）"
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
+          />
+        ) : (
+          <input type="hidden" name="channelKind" value="" />
+        )}
+
+        {showChannelKind ? (
+          <CoverageProvincesField defaultValue={initial?.coverageProvinces ?? []} />
+        ) : null}
 
         {showGrade ? (
           <CustomerGradeSelect
@@ -494,7 +615,11 @@ export function CustomerForm({
       <ActionErrorDisplay error={error} />
 
       <Button type="submit" disabled={pending}>
-        {pending ? "提交中…" : submitLabel}
+        {pending
+          ? "提交中…"
+          : convertingToCompany
+            ? "确认转为公司"
+            : submitLabel}
       </Button>
     </form>
   );

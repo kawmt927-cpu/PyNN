@@ -10,6 +10,9 @@ import {
   resolveGradeIntervalDays,
 } from "@/lib/customers/grade-intervals";
 import {
+  ensureCompanyCalendarCache,
+} from "@/lib/calendar/cn-daily-report-days";
+import {
   isDailyReportSubmitted,
   isDailyReportCountedAsLate,
 } from "@/lib/sales-log/daily-report-submission";
@@ -214,10 +217,16 @@ async function computeProcessCompliance(
   let lateCount = 0;
   let missedCount = 0;
 
+  await ensureCompanyCalendarCache();
+  const { isDailyReportRequiredForUser } = await import(
+    "@/lib/calendar/cn-daily-report-days"
+  );
   for (let day = new Date(start); day < periodEnd; day.setDate(day.getDate() + 1)) {
     const dayStart = startOfDay(day);
     const dayEnd = endOfDay(day);
     if (dayStart >= periodEnd) break;
+    // 公司出勤日且该人未请假（免日报）才考核
+    if (!(await isDailyReportRequiredForUser(userId, dayStart))) continue;
 
     const log = logs.find((row) => sameCalendarDay(row.logDate, dayStart));
     const hasCheckIn = checkIns.some((row) => sameCalendarDay(row.checkedInAt, dayStart));

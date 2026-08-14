@@ -101,7 +101,7 @@ export async function listUpcomingActionsThisWeek(
     getPendingFollowUps(role, userId, "due", now, take),
     getPendingFollowUps(role, userId, "upcoming", now, take * 2),
     managerView
-      ? listPendingWeeklyAssignmentsForManager(take * 2)
+      ? listPendingWeeklyAssignmentsForManager(userId, take * 2)
       : listPendingWeeklyAssignmentsForUser(userId, take * 2),
   ]);
 
@@ -110,6 +110,20 @@ export async function listUpcomingActionsThisWeek(
       isDueThisWeek(item.nextFollowUpAt, week.weekStart, week.weekEnd) &&
       arr.findIndex((x) => x.source === item.source && x.id === item.id) === index
   );
+
+  // 催收回款同标题可能因重复创建残留多条；本周待办按标题+执行人去重，保留最早截止
+  const paymentCollectionSeen = new Set<string>();
+  const scopedAssignments = assignments
+    .filter((task) => isAssignmentInThisWeekScope(task.dueAt, week.weekEnd))
+    .slice()
+    .sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime())
+    .filter((task) => {
+      if (!task.title.startsWith("催收回款：")) return true;
+      const key = `${task.title}\0${task.assigneeId}`;
+      if (paymentCollectionSeen.has(key)) return false;
+      paymentCollectionSeen.add(key);
+      return true;
+    });
 
   const items: UpcomingActionItem[] = [
     ...followUpsThisWeek
@@ -129,33 +143,31 @@ export async function listUpcomingActionsThisWeek(
         owner: item.owner,
         overdue: item.nextFollowUpAt <= now,
       })),
-    ...assignments
-      .filter((task) => isAssignmentInThisWeekScope(task.dueAt, week.weekEnd))
-      .map((task) => {
-        const assignee = { id: task.assignee.id, name: task.assignee.name };
-        const assignedBy = { id: task.createdBy.id, name: task.createdBy.name };
-        const isGeneral = task.kind === "GENERAL";
-        return {
-          kind: "assignment" as const,
-          id: task.id,
-          title: isGeneral ? task.title : (task.customer?.name ?? task.title),
-          subtitle: isGeneral
-            ? task.description ??
-              (task.status === "PENDING_CONFIRM" ? "待指派人确认完成" : "普通任务")
-            : task.title + (task.description ? ` · ${task.description}` : ""),
-          dueAt: task.dueAt,
-          customerId: task.customer?.id ?? null,
-          customerName: task.customer?.name ?? null,
-          opportunityId: task.opportunity?.id ?? null,
-          opportunityTitle: task.opportunity?.title ?? null,
-          assignmentKind: task.kind,
-          assignmentStatus: task.status,
-          assignee,
-          assignedBy,
-          owner: assignee,
-          overdue: task.dueAt <= now,
-        };
-      }),
+    ...scopedAssignments.map((task) => {
+      const assignee = { id: task.assignee.id, name: task.assignee.name };
+      const assignedBy = { id: task.createdBy.id, name: task.createdBy.name };
+      const isGeneral = task.kind === "GENERAL";
+      return {
+        kind: "assignment" as const,
+        id: task.id,
+        title: isGeneral ? task.title : (task.customer?.name ?? task.title),
+        subtitle: isGeneral
+          ? task.description ??
+            (task.status === "PENDING_CONFIRM" ? "待指派人确认完成" : "普通任务")
+          : task.title + (task.description ? ` · ${task.description}` : ""),
+        dueAt: task.dueAt,
+        customerId: task.customer?.id ?? null,
+        customerName: task.customer?.name ?? null,
+        opportunityId: task.opportunity?.id ?? null,
+        opportunityTitle: task.opportunity?.title ?? null,
+        assignmentKind: task.kind,
+        assignmentStatus: task.status,
+        assignee,
+        assignedBy,
+        owner: assignee,
+        overdue: task.dueAt <= now,
+      };
+    }),
   ];
 
   return {

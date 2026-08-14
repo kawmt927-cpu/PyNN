@@ -1,0 +1,2 @@
+-- SQLite stores enums as TEXT; new BAD_DEBT value is accepted by app after schema update.
+-- No data backfill required.

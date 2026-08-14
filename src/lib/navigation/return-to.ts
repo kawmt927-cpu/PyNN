@@ -20,6 +20,8 @@ const ALLOWED_PREFIXES = [
   "/customers/claims",
   "/notifications",
   "/mobile",
+  "/expenses",
+  "/hr",
 ];
 
 export function sanitizeReturnTo(value: string | null | undefined): string | null {
@@ -142,15 +144,73 @@ export function returnLabelForPath(path: string): string {
   if (pathOnly === "/contracts" || path.startsWith("/contracts?")) {
     return "返回合同列表";
   }
+  if (pathOnly === "/contracts/external-costs" || path.startsWith("/contracts/external-costs?")) {
+    return "返回外部成本";
+  }
   if (/^\/contracts\/new$/.test(pathOnly)) {
     return "返回新建合同";
+  }
+  if (/^\/contracts\/[^/]+\/edit$/.test(pathOnly)) {
+    return "返回编辑合同";
   }
   if (/^\/contracts\/[^/]+$/.test(pathOnly)) {
     return "返回合同详情";
   }
 
+  if (pathOnly === "/admin/ops" || path.startsWith("/admin/ops?")) {
+    return "返回运营看板";
+  }
+  if (pathOnly === "/admin/map" || path.startsWith("/admin/map?")) {
+    return "返回地图看板";
+  }
+  if (pathOnly === "/admin/stats" || path.startsWith("/admin/stats?")) {
+    return "返回统计管理";
+  }
+  if (pathOnly === "/admin/stats/channels" || path.startsWith("/admin/stats/channels?")) {
+    return "返回渠道覆盖";
+  }
+  if (pathOnly === "/admin/stats/assistant" || path.startsWith("/admin/stats/assistant?")) {
+    return "返回管理助手";
+  }
+  if (pathOnly === "/admin/channels" || path.startsWith("/admin/channels?")) {
+    return "返回渠道覆盖";
+  }
+  if (pathOnly === "/admin/users" || path.startsWith("/admin/users?")) {
+    return "返回用户管理";
+  }
+  if (pathOnly === "/admin/settings" || path.startsWith("/admin/settings?")) {
+    return "返回系统配置";
+  }
+
+  if (pathOnly === "/projects" || path.startsWith("/projects?")) {
+    return "返回项目列表";
+  }
+  if (/^\/projects\/[^/]+$/.test(pathOnly)) {
+    return "返回项目详情";
+  }
+
+  if (pathOnly === "/approvals" || path.startsWith("/approvals?")) {
+    return "返回审批";
+  }
+
+  if (pathOnly === "/expenses" || path.startsWith("/expenses?")) {
+    return "返回报销";
+  }
+
   if (pathOnly === "/follow-ups") {
     return "返回待跟进";
+  }
+
+  if (pathOnly === "/notifications" || path.startsWith("/notifications?")) {
+    return "返回通知";
+  }
+
+  if (pathOnly === "/today-work" || path.startsWith("/today-work?")) {
+    return "返回今日工作";
+  }
+
+  if (pathOnly === "/plans-tasks" || path.startsWith("/plans-tasks?")) {
+    return "返回计划与任务";
   }
 
   return "返回";

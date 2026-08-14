@@ -16,7 +16,7 @@ enum UserRole {
   PROJECT_MANAGER
   PROJECT_STAFF
   ADMIN
-  /** 行政人事（报销等能力后续再做） */
+  /** 行政人事：人员成本、报销打款等 */
   HR
 }
 
@@ -61,6 +61,12 @@ enum SigningType {
   INDIRECT
 }
 
+enum ContractBusinessType {
+  NEW_PROJECT
+  SECONDARY_PROJECT
+  MAINTENANCE
+}
+
 enum ContractStatus {
   PENDING_APPROVAL
   REJECTED
@@ -96,6 +102,15 @@ enum PaymentStatus {
   UNPAID
   PARTIAL
   PAID
+}
+
+/** 分期催收状态（「已完成」由回款满额推导，不落库） */
+enum InstallmentCollectionStatus {
+  NOT_STARTED
+  READY
+  IN_COLLECTION
+  DIFFICULT
+  BAD_DEBT
 }
 
 enum ContractProductCostType {
@@ -283,6 +298,8 @@ model User {
   projectCosts       ProjectCost[]
   staffAllocations   ProjectStaffAllocation[]
   monthlyCostAdjustments PersonnelMonthlyCostAdjustment[]
+  personnelLeaves        PersonnelLeave[]                 @relation("PersonnelLeaveSubject")
+  personnelLeavesCreated PersonnelLeave[]                 @relation("PersonnelLeaveCreator")
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
   customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
   contractsAsOurRep       Contract[]             @relation("ContractOurRep")
@@ -291,12 +308,18 @@ model User {
   contractPaymentsRecorded ContractPaymentRecord[] @relation("ContractPaymentRecorder")
   contractInvoicesRecorded ContractInvoiceRecord[] @relation("ContractInvoiceRecorder")
   externalCostPayoutsRecorded ExternalCostPayoutRecord[] @relation("ExternalCostPayoutRecorder")
+  contractDepositRecoveriesRecorded ContractDepositRecovery[] @relation("ContractDepositRecoveryRecorder")
+  contractProductsVoided      ContractProduct[]          @relation("ContractProductVoidedBy")
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
   opportunityStageLogs    OpportunityStageLog[]
   projectDevReviews       OpportunityStageLog[]  @relation("ProjectDevReviewer")
   opportunityFollowUps    OpportunityFollowUp[]
+  opportunityQuotesCreated OpportunityQuote[] @relation("OpportunityQuoteCreator")
+  opportunityQuoteAttachmentsUploaded OpportunityQuoteAttachment[] @relation("OpportunityQuoteAttachmentUploader")
   aiAgentConfigsUpdated   AiAgentConfig[]      @relation("AiAgentConfigUpdater")
   amapConfigsUpdated      AmapConfig[]         @relation("AmapConfigUpdater")
+  appFeatureFlagsUpdated  AppFeatureFlags[]    @relation("AppFeatureFlagsUpdater")
+  channelCoverageUpdated  ChannelCoverageConfig[] @relation("ChannelCoverageConfigUpdater")
   expenseTravelPoliciesUpdated ExpenseTravelPolicy[] @relation("ExpenseTravelPolicyUpdater")
   salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
   weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
@@ -377,9 +400,15 @@ model PersonnelMonthlyCostAdjustment {
   socialSecurityCompany  Decimal?
   /** 公积金公司承担（元/月） */
   housingFundCompany     Decimal?
-  /** 相对本月固定成本的增减（元，可为负） */
+  /** 相对本月固定成本的增减（元，可为负）；绩效与其他手工调整 */
   adjustmentAmount       Decimal  @default(0)
+  /** 按假种规则汇总的请假扣款（元，≥0）；关账时可覆盖 */
+  leaveDeductionAmount   Decimal  @default(0)
+  /** 关账时锁定的个人实际出勤天数 */
+  attendanceDays         Int?
   notes                  String?
+  /** 行政确认保存时间；为空则不参与项目人力成本核算 */
+  confirmedAt            DateTime?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
@@ -387,6 +416,7 @@ model PersonnelMonthlyCostAdjustment {
 
   @@unique([userId, year, month])
   @@index([userId, year, month])
+  @@index([confirmedAt])
 }
 
 // ─── CRM: Customer ───────────────────────────────────────
@@ -404,6 +434,8 @@ model Customer {
   source          String?
   customerType    String?
   customerGrade   String?
+  /** 渠道细分类型（ConfigOption channel_kind）；仅渠道客户有意义 */
+  channelKind     String?
   ownerId         String?
   notes           String?
   createdAt       DateTime         @default(now())
@@ -430,8 +462,22 @@ model Customer {
   weeklyAssignments SalesWeeklyAssignment[]
   planItems         SalesPlanItem[]
   assistantOwners   CustomerAssistant[]
+  coverageProvinces CustomerCoverageProvince[]
   expenseTrips      ExpenseTrip[]
   expenseInvoices   ExpenseInvoice[]
+}
+
+/** 渠道客户覆盖的省区（总公司档案 + 多省覆盖，用于按省统计，不打地图锚点） */
+model CustomerCoverageProvince {
+  customerId String
+  /** 归一化短省名，如「江苏」 */
+  province   String
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, province])
+  @@index([province])
 }
 
 model CustomerAssistant {
@@ -593,6 +639,7 @@ model Opportunity {
   contracts  Contract[]
   stageLogs  OpportunityStageLog[]
   followUps  OpportunityFollowUp[]
+  quotes     OpportunityQuote[]
   linkedFollowUps FollowUp[]
   followUpLinks   FollowUpOpportunity[]
   weeklyAssignments SalesWeeklyAssignment[]
@@ -663,6 +710,43 @@ model OpportunityFollowUp {
   @@index([opportunityId])
 }
 
+/** 商机报价单 */
+model OpportunityQuote {
+  id            String   @id @default(cuid())
+  opportunityId String
+  /** 报价金额 */
+  amount        Decimal
+  /** 报价日期 */
+  quotedAt      DateTime
+  notes         String?
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  opportunity Opportunity                 @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  createdBy   User                       @relation("OpportunityQuoteCreator", fields: [createdById], references: [id])
+  attachments OpportunityQuoteAttachment[]
+
+  @@index([opportunityId])
+  @@index([quotedAt])
+}
+
+model OpportunityQuoteAttachment {
+  id           String   @id @default(cuid())
+  quoteId      String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  quote      OpportunityQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  uploadedBy User             @relation("OpportunityQuoteAttachmentUploader", fields: [uploadedById], references: [id])
+
+  @@index([quoteId])
+}
+
 // ─── CRM: Contract ───────────────────────────────────────
 
 model Contract {
@@ -671,6 +755,7 @@ model Contract {
   title               String
   totalAmount         Decimal
   signingType         SigningType
+  businessType        ContractBusinessType @default(NEW_PROJECT)
   status              ContractStatus @default(PENDING_APPROVAL)
   signCustomerId      String
   endUserCustomerId   String
@@ -682,6 +767,10 @@ model Contract {
   signedAt            DateTime?
   effectiveAt         DateTime?
   expiresAt           DateTime?
+  maintenanceStartAt       DateTime?
+  maintenanceEndAt         DateTime?
+  maintenanceTotalAmount   Decimal?
+  annualMaintenanceAmount  Decimal?
   notes               String?
   submittedAt         DateTime?
   submittedById       String?
@@ -707,6 +796,7 @@ model Contract {
   invoiceRecords    ContractInvoiceRecord[]
   externalPayoutRecords ExternalCostPayoutRecord[]
   attachments       ContractAttachment[]
+  deposits          ContractDeposit[]
   project           Project?
 
   @@index([opportunityId])
@@ -759,14 +849,19 @@ model ContractProduct {
   actualCostPrice      Decimal                @default(0)
   costAdjustment       Decimal                @default(0)
   costAdjustmentReason String?
+  /** 作废保留：有实付时不物理删除，标记后不再登记新实付、默认不计入待付 */
+  voidedAt             DateTime?
+  voidedById           String?
 
   contract              Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
   productService        ProductServiceTemplate?    @relation(fields: [productServiceId], references: [id])
+  voidedBy              User?                      @relation("ContractProductVoidedBy", fields: [voidedById], references: [id])
   externalInstallments  ExternalCostInstallment[]
   externalPayoutRecords ExternalCostPayoutRecord[]
 
   @@index([contractId])
   @@index([costType])
+  @@index([voidedAt])
 }
 
 model ExternalCostInstallment {
@@ -818,6 +913,41 @@ model ContractPaymentRecord {
   @@index([paidAt])
 }
 
+/** 合同保证金：独立于内外部成本；支出计入年度总成本（收回不冲回）；未收回进待回款 */
+model ContractDeposit {
+  id               String   @id @default(cuid())
+  contractId       String
+  amount           Decimal
+  /** 支出日期 */
+  paidOutAt        DateTime
+  recoverCondition String?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  contract   Contract                   @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  recoveries ContractDepositRecovery[]
+
+  @@index([contractId])
+  @@index([paidOutAt])
+}
+
+model ContractDepositRecovery {
+  id           String   @id @default(cuid())
+  depositId    String
+  amount       Decimal
+  recoveredAt  DateTime
+  notes        String?
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  deposit    ContractDeposit @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  recordedBy User            @relation("ContractDepositRecoveryRecorder", fields: [recordedById], references: [id])
+
+  @@index([depositId])
+  @@index([recoveredAt])
+}
+
 /** 合同开票记录：可多条登记；合计允许超过合同金额 */
 model ContractInvoiceRecord {
   id              String   @id @default(cuid())
@@ -861,12 +991,15 @@ model PaymentInstallment {
   periodNumber  Int
   amount        Decimal
   condition     String?
+  /** 绑定项目阶段：阶段 COMPLETED 后「未开始」自动升为「可催款」 */
   phaseId       String?
   dueAt         DateTime?
   paymentStatus PaymentStatus @default(UNPAID)
   paidAmount    Decimal       @default(0)
   paidAt        DateTime?
   notes         String?
+  /** 催收状态；满额回款时展示为已完成（不写本字段） */
+  collectionStatus InstallmentCollectionStatus @default(NOT_STARTED)
 
   contract Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
   phase    ProjectPhase?  @relation(fields: [phaseId], references: [id])
@@ -1290,8 +1423,12 @@ model SalesDailyLog {
   submittedAt       DateTime?
   /** 20:00 催交已发送 */
   remind20SentAt    DateTime?
+  /** 对应站内通知 id（用于查已读） */
+  remind20NotificationId String?
   /** 21:00 催交已发送 */
   remind21SentAt    DateTime?
+  /** 对应站内通知 id（用于查已读） */
+  remind21NotificationId String?
   /** 超过 22:00 未交时锁定的迟交记录；补录不清除 */
   lateMarkedAt      DateTime?
   createdAt         DateTime            @default(now())
@@ -1429,6 +1566,28 @@ model AmapConfig {
   updatedById     String?
 
   updatedBy User? @relation("AmapConfigUpdater", fields: [updatedById], references: [id])
+}
+
+/** 系统功能开关（后台可配；环境变量可强制覆盖） */
+model AppFeatureFlags {
+  id                          String   @id @default("default")
+  expenseReimbursementEnabled Boolean  @default(false)
+  updatedAt                   DateTime @updatedAt
+  updatedById                 String?
+
+  updatedBy User? @relation("AppFeatureFlagsUpdater", fields: [updatedById], references: [id])
+}
+
+/** 各省统一的渠道覆盖家数目标（四类中仅前三类考核） */
+model ChannelCoverageConfig {
+  id              String   @id @default("default")
+  integratorTarget Int     @default(3)
+  hrpVendorTarget  Int     @default(3)
+  competitorTarget Int     @default(2)
+  updatedAt       DateTime @updatedAt
+  updatedById     String?
+
+  updatedBy User? @relation("ChannelCoverageConfigUpdater", fields: [updatedById], references: [id])
 }
 
 
@@ -1627,4 +1786,155 @@ model ExpensePayout {
 
   claim      ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
   recordedBy User         @relation("ExpensePayoutRecorder", fields: [recordedById], references: [id])
+}
+
+/** 报销费用细类（住宿/交通/补贴等），后台可维护 */
+model ExpenseFeeCategory {
+  id               String             @id @default(cuid())
+  key              String             @unique
+  label            String
+  enabled          Boolean            @default(true)
+  sortOrder        Int                @default(0)
+  /** 是否按城市住宿上限校验 */
+  enforceHotelCap  Boolean            @default(false)
+  /** 默认成本归属建议 */
+  suggestedTarget  ExpenseCostTarget?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([enabled, sortOrder])
+}
+
+// ─── Company calendar（法定假/调休；行政人事后续可扩展） ───
+
+enum CompanyCalendarDayKind {
+  /** 放假（含法定连休） */
+  HOLIDAY_OFF
+  /** 调休上班 */
+  MAKEUP_WORKDAY
+}
+
+/** 公司日历日：日报考核、后续人力出勤共用 */
+model CompanyCalendarDay {
+  id        String                 @id @default(cuid())
+  /** yyyy-MM-dd（本地日历日） */
+  dayKey    String                 @unique
+  year      Int
+  kind      CompanyCalendarDayKind
+  name      String?
+  /** holiday-cn | builtin | manual */
+  source    String                 @default("builtin")
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  @@index([year, kind])
+}
+
+/** 按年同步状态（12 月 cron 拉取明年国办安排） */
+model CompanyCalendarYearSync {
+  id         String    @id @default(cuid())
+  year       Int       @unique
+  status     String    @default("pending")
+  dayCount   Int       @default(0)
+  papersJson String?
+  message    String?
+  syncedAt   DateTime?
+  updatedAt  DateTime  @updatedAt
+}
+
+// ─── 请假假种与出勤 ───────────────────────────────────────
+
+/** 假种及计薪/出勤规则（行政可改系数） */
+model PersonnelLeaveType {
+  id                 String   @id @default(cuid())
+  key                String   @unique
+  label              String
+  /** 计薪系数 0～1：发薪比例。事假 0、病假可配、年假 1 */
+  payFactor          Float    @default(0)
+  /** 是否计入缺勤（减实际出勤天数） */
+  countsAsAbsence    Boolean  @default(true)
+  /** 是否免交日报 */
+  exemptDailyReport  Boolean  @default(true)
+  enabled            Boolean  @default(true)
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  leaves PersonnelLeave[]
+
+  @@index([enabled, sortOrder])
+}
+
+model PersonnelLeave {
+  id           String   @id @default(cuid())
+  userId       String
+  leaveTypeId  String
+  /** manual | wecom */
+  source       String   @default("manual")
+  /** active | cancelled */
+  status       String   @default("active")
+  startDayKey  String
+  endDayKey    String
+  note         String?
+  wecomSpNo    String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user      User                @relation("PersonnelLeaveSubject", fields: [userId], references: [id], onDelete: Cascade)
+  leaveType PersonnelLeaveType  @relation(fields: [leaveTypeId], references: [id])
+  createdBy User?               @relation("PersonnelLeaveCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  days      PersonnelLeaveDay[]
+
+  @@index([userId, status, startDayKey, endDayKey])
+  @@index([wecomSpNo])
+  @@index([source, status])
+}
+
+/** 请假按日展开（日报免考 / 出勤统计） */
+model PersonnelLeaveDay {
+  id          String  @id @default(cuid())
+  leaveId     String
+  userId      String
+  dayKey      String
+  leaveTypeId String
+  /** 与假种同步冗余，便于查询时不 join */
+  countsAsAbsence   Boolean @default(true)
+  exemptDailyReport Boolean @default(true)
+  /** manual | wecom */
+  source      String  @default("manual")
+  /** active | cancelled */
+  status      String  @default("active")
+
+  leave PersonnelLeave @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dayKey, leaveId])
+  @@index([userId, dayKey, status])
+  @@index([dayKey, status])
+}
+
+/** 日志/往来语义检索向量（OpenAI 兼容 embeddings） */
+model ActivityEmbedding {
+  id           String   @id @default(cuid())
+  /** DAILY_LOG | FOLLOW_UP */
+  sourceType   String
+  sourceId     String
+  userId       String
+  /** 日志日或往来发生时间，用于时间范围过滤 */
+  occurredAt   DateTime
+  /** 正文 sha256，未变则跳过重算 */
+  contentHash  String
+  model        String
+  dimensions   Int
+  /** JSON number[] */
+  vectorJson   String
+  /** 检索摘要用 */
+  textPreview  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([sourceType, sourceId])
+  @@index([occurredAt])
+  @@index([userId, occurredAt])
+  @@index([sourceType, occurredAt])
 }

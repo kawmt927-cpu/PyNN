@@ -82,6 +82,7 @@ function parseCustomerForm(formData: FormData) {
     source: parseOptionalField(formData.get("source")),
     customerType: parseOptionalField(formData.get("customerType")),
     customerGrade: parseOptionalField(formData.get("customerGrade")),
+    channelKind: parseOptionalField(formData.get("channelKind")),
     notes: formData.get("notes") || undefined,
     ownerId: parseOwnerField(formData.get("ownerId")),
     assistantOwnerIds: parseAssistantOwnerIds(formData),
@@ -93,10 +94,12 @@ async function validateCustomerConfigFields(data: {
   source?: string | null;
   customerType?: string | null;
   customerGrade?: string | null;
+  channelKind?: string | null;
 }) {
   const { CONFIG_CATEGORY, assertConfigValue, getConfigOptions } = await import(
     "@/lib/config-options"
   );
+  const { resolveChannelKindForCustomer } = await import("@/lib/customers/channel-kind");
   const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
   const enforcedType = enforceCustomerTypeForCategory(
     data.category,
@@ -111,6 +114,11 @@ async function validateCustomerConfigFields(data: {
     source: await assertConfigValue(CONFIG_CATEGORY.CUSTOMER_SOURCE, data.source),
     customerType,
     customerGrade: requireCustomerGradeForType(customerType, data.customerGrade, typeOptions),
+    channelKind: await resolveChannelKindForCustomer({
+      customerType,
+      channelKind: data.channelKind,
+      typeOptions,
+    }),
   };
 }
 
@@ -159,6 +167,7 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
         source: configFields.source,
         customerType: configFields.customerType,
         customerGrade: configFields.customerGrade,
+        channelKind: configFields.channelKind,
         notes: data.notes,
         ownerId,
       },
@@ -170,6 +179,19 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(customer.id, parseTagValues(formData));
+
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { replaceCustomerCoverageProvinces, parseCoverageProvincesFromForm } = await import(
+      "@/lib/customers/coverage-provinces"
+    );
+    const { getConfigOptions, CONFIG_CATEGORY } = await import("@/lib/config-options");
+    const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+    await replaceCustomerCoverageProvinces(
+      customer.id,
+      isChannelCustomerType(configFields.customerType, typeOptions)
+        ? parseCoverageProvincesFromForm(formData)
+        : []
+    );
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(
       "@/lib/audit/entity-operation-log"
@@ -197,6 +219,30 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     await assertCustomerContentWriteAccess(session.user.role, session.user.id, existing);
 
     const data = parseCustomerForm(formData);
+    const {
+      assertCustomerCategoryTransitionAllowed,
+      assertIndividualToCompanyConversion,
+      parseIndividualToCompanyContactFields,
+      upsertPrimaryContactFromPerson,
+    } = await import("@/lib/customers/convert-individual-to-company");
+
+    assertCustomerCategoryTransitionAllowed(existing.category, data.category);
+
+    const convertingIndividualToCompany =
+      existing.category === "INDIVIDUAL" && data.category === "COMPANY";
+    const conversionContact = convertingIndividualToCompany
+      ? parseIndividualToCompanyContactFields(formData)
+      : null;
+    if (convertingIndividualToCompany && conversionContact) {
+      await assertIndividualToCompanyConversion({
+        customerId: id,
+        companyName: data.name,
+        contactName: conversionContact.contactName,
+      });
+    } else if (data.name.trim() !== existing.name.trim()) {
+      await assertCustomerNameAvailable(data.name, id);
+    }
+
     const configFields = await validateCustomerConfigFields(data);
     const ownerId = canManageCustomerOwner(session.user.role)
       ? await resolveOwnerId(session.user.role, session.user.id, data.ownerId)
@@ -214,15 +260,16 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const nextData = {
       name: data.name,
       category: data.category,
-      hospitalLevel,
+      hospitalLevel: convertingIndividualToCompany ? null : hospitalLevel,
       province: data.province ?? null,
       city: data.city ?? null,
       district: data.district ?? null,
-      bedCount: data.bedCount ?? null,
+      bedCount: convertingIndividualToCompany ? null : data.bedCount ?? null,
       existingSystem: data.existingSystem ?? null,
       source: configFields.source,
       customerType: configFields.customerType,
       customerGrade: configFields.customerGrade,
+      channelKind: configFields.channelKind,
       notes: notesNormalized,
       ownerId,
     };
@@ -290,10 +337,10 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
         name: nextData.name,
         category: nextData.category,
         hospitalLevel: nextData.hospitalLevel,
-        province: nextData.province ?? undefined,
-        city: nextData.city ?? undefined,
-        district: nextData.district ?? undefined,
-        bedCount: nextData.bedCount ?? undefined,
+        province: nextData.province,
+        city: nextData.city,
+        district: nextData.district,
+        bedCount: nextData.bedCount,
         existingSystem: nextData.existingSystem,
         source: nextData.source,
         customerType: nextData.customerType,
@@ -303,6 +350,14 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
       },
     });
 
+    if (convertingIndividualToCompany && conversionContact) {
+      await upsertPrimaryContactFromPerson({
+        customerId: id,
+        contactName: conversionContact.contactName,
+        contactPhone: conversionContact.contactPhone,
+      });
+    }
+
     if (canSetAssistants) {
       await replaceCustomerAssistants(id, data.assistantOwnerIds, ownerId);
     }
@@ -310,10 +365,35 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(id, tagValues);
 
-    if (changes.length > 0) {
-      const { recordEntityOperation, ENTITY_TYPES } = await import(
-        "@/lib/audit/entity-operation-log"
-      );
+    const { replaceCustomerCoverageProvinces, parseCoverageProvincesFromForm } = await import(
+      "@/lib/customers/coverage-provinces"
+    );
+    await replaceCustomerCoverageProvinces(
+      id,
+      isChannelCustomerType(configFields.customerType)
+        ? parseCoverageProvincesFromForm(formData)
+        : []
+    );
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    if (convertingIndividualToCompany && conversionContact) {
+      const convertLines = [
+        ...changes,
+        `联系人：${conversionContact.contactName}${
+          conversionContact.contactPhone ? `（${conversionContact.contactPhone}）` : ""
+        }`,
+      ];
+      await recordEntityOperation({
+        entityType: ENTITY_TYPES.CUSTOMER,
+        entityId: id,
+        userId: session.user.id,
+        action: "更新",
+        summary: `个人客户「${existing.name}」转为公司「${data.name}」`,
+        detail: convertLines.join("\n"),
+      });
+    } else if (changes.length > 0) {
       await recordEntityOperation({
         entityType: ENTITY_TYPES.CUSTOMER,
         entityId: id,

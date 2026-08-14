@@ -20,7 +20,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
       ? await listCustomerAssignableUsers()
       : [];
 
-  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, tagOptions } =
+  const { sourceOptions, typeOptions, gradeOptions, channelGradeOptions, channelKindOptions, tagOptions } =
     await loadCustomerFormOptions();
 
   return (
@@ -39,6 +39,7 @@ export default async function CustomersNewPage({ searchParams }: Props) {
         typeOptions={typeOptions}
         gradeOptions={gradeOptions}
         channelGradeOptions={channelGradeOptions}
+        channelKindOptions={channelKindOptions}
         tagOptions={tagOptions}
       />
     </div>

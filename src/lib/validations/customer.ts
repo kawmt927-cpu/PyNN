@@ -21,6 +21,7 @@ export const customerFormSchema = z.object({
   source: z.string().optional().nullable(),
   customerType: z.string().min(1, "请选择关系类型"),
   customerGrade: z.string().optional().nullable(),
+  channelKind: z.string().optional().nullable(),
   tagValues: z.array(z.string()).optional(),
   notes: z.string().optional(),
   ownerId: z.string().optional().nullable(),

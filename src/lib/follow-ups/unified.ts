@@ -71,14 +71,10 @@ export function serializeCustomerPendingFollowPlan(
   };
 }
 
+/** 待跟进提醒仅主负责人；协作负责人可看客户但不进待办 */
 function customerOwnerFilter(role: UserRole, userId: string) {
   if (role === "SALES") {
-    return {
-      OR: [
-        { ownerId: userId },
-        { assistantOwners: { some: { userId } } },
-      ],
-    };
+    return { ownerId: userId };
   }
   return {};
 }

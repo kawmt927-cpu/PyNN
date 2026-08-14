@@ -38,6 +38,7 @@ export const customerDetailInclude = {
     },
   },
   tags: { select: { tagValue: true } },
+  coverageProvinces: { select: { province: true }, orderBy: { province: "asc" as const } },
 };
 
 export type CustomerListView = "mine" | "pool" | "all";
