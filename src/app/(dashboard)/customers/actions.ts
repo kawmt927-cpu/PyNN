@@ -46,6 +46,11 @@ function parseTagValues(formData: FormData): string[] {
   return formData.getAll("tagValues").map(String).filter(Boolean);
 }
 
+function parseNationwideChannelFlag(formData: FormData): boolean {
+  const value = formData.get("nationwideChannel")?.toString().trim() ?? "";
+  return value === "1" || value === "on" || value === "true";
+}
+
 function parseOptionalField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
   return value || null;
@@ -154,6 +159,13 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const canSetAssistants =
       canManageCustomerOwner(session.user.role) || session.user.role === "SALES";
 
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { getConfigOptions, CONFIG_CATEGORY } = await import("@/lib/config-options");
+    const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+    const isChannel = isChannelCustomerType(configFields.customerType, typeOptions);
+    const nationwideChannel =
+      isChannel && parseNationwideChannelFlag(formData);
+
     const customer = await prisma.customer.create({
       data: {
         name: data.name,
@@ -168,6 +180,7 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
         customerType: configFields.customerType,
         customerGrade: configFields.customerGrade,
         channelKind: configFields.channelKind,
+        nationwideChannel,
         notes: data.notes,
         ownerId,
       },
@@ -180,17 +193,12 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(customer.id, parseTagValues(formData));
 
-    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
     const { replaceCustomerCoverageProvinces, parseCoverageProvincesFromForm } = await import(
       "@/lib/customers/coverage-provinces"
     );
-    const { getConfigOptions, CONFIG_CATEGORY } = await import("@/lib/config-options");
-    const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
     await replaceCustomerCoverageProvinces(
       customer.id,
-      isChannelCustomerType(configFields.customerType, typeOptions)
-        ? parseCoverageProvincesFromForm(formData)
-        : []
+      nationwideChannel ? parseCoverageProvincesFromForm(formData) : []
     );
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(
@@ -257,22 +265,6 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
       data.category === "HOSPITAL" ? (data.hospitalLevel ?? null) : null;
     const notesNormalized =
       data.notes?.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim() || null;
-    const nextData = {
-      name: data.name,
-      category: data.category,
-      hospitalLevel: convertingIndividualToCompany ? null : hospitalLevel,
-      province: data.province ?? null,
-      city: data.city ?? null,
-      district: data.district ?? null,
-      bedCount: convertingIndividualToCompany ? null : data.bedCount ?? null,
-      existingSystem: data.existingSystem ?? null,
-      source: configFields.source,
-      customerType: configFields.customerType,
-      customerGrade: configFields.customerGrade,
-      channelKind: configFields.channelKind,
-      notes: notesNormalized,
-      ownerId,
-    };
 
     const {
       CONFIG_CATEGORY,
@@ -302,6 +294,28 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
         : Promise.resolve([] as { id: string; name: string }[]),
     ]);
 
+    const typeLabels = optionMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
+    const nationwideChannel =
+      isChannelCustomerType(configFields.customerType, typeLabels) &&
+      parseNationwideChannelFlag(formData);
+    const nextData = {
+      name: data.name,
+      category: data.category,
+      hospitalLevel: convertingIndividualToCompany ? null : hospitalLevel,
+      province: data.province ?? null,
+      city: data.city ?? null,
+      district: data.district ?? null,
+      bedCount: convertingIndividualToCompany ? null : data.bedCount ?? null,
+      existingSystem: data.existingSystem ?? null,
+      source: configFields.source,
+      customerType: configFields.customerType,
+      customerGrade: configFields.customerGrade,
+      channelKind: configFields.channelKind,
+      nationwideChannel,
+      notes: notesNormalized,
+      ownerId,
+    };
+
     const tagLabelByValue = Object.fromEntries(
       tagDefinitions.map((t) => [t.value, t.label])
     );
@@ -309,7 +323,6 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const nextAssistantNames = nextAssistants
       .map((aid) => assistantNameById.get(aid))
       .filter((n): n is string => Boolean(n));
-    const typeLabels = optionMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
     const changes = buildCustomerEditChanges(
       existing,
       {
@@ -345,6 +358,8 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
         source: nextData.source,
         customerType: nextData.customerType,
         customerGrade: nextData.customerGrade,
+        channelKind: nextData.channelKind,
+        nationwideChannel: nextData.nationwideChannel,
         notes: nextData.notes,
         ownerId,
       },
@@ -370,9 +385,7 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     );
     await replaceCustomerCoverageProvinces(
       id,
-      isChannelCustomerType(configFields.customerType)
-        ? parseCoverageProvincesFromForm(formData)
-        : []
+      nationwideChannel ? parseCoverageProvincesFromForm(formData) : []
     );
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(

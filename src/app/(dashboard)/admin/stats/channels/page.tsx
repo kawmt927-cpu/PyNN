@@ -20,7 +20,7 @@ export default async function StatsChannelsPage() {
           </p>
           <h1 className="mt-1 text-2xl font-bold">渠道覆盖</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            按渠道勾选的「覆盖省份」计家数；先覆盖上量（集成商 / HRP / 友商），再看质量。地图不展示渠道锚点。
+            按「全国性渠道」勾选的覆盖省份计家数；普通渠道按档案所在省。地图不展示渠道锚点。
           </p>
         </div>
         <Link

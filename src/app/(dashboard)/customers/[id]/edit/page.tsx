@@ -103,6 +103,7 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
           customerType: customer.customerType,
           customerGrade: customer.customerGrade,
           channelKind: customer.channelKind,
+          nationwideChannel: customer.nationwideChannel,
           coverageProvinces: customer.coverageProvinces?.map((r) => r.province) ?? [],
           notes: customer.notes,
           ownerId: customer.ownerId,

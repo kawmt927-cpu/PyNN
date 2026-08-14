@@ -23,7 +23,7 @@ export default async function StatsHubPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
-              按渠道「覆盖省份」统计集成商 / HRP / 友商家数与目标缺口（总公司可录一家、勾选多省）。地图不打渠道锚点。
+              按「全国性渠道」的覆盖省份统计；普通渠道按档案所在省。地图不打渠道锚点。
             </p>
             <Button asChild>
               <Link href="/admin/stats/channels">打开渠道覆盖</Link>

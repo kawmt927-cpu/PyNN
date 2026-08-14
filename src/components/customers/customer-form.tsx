@@ -53,6 +53,8 @@ type CustomerFormValues = {
   customerType: string | null;
   customerGrade: string | null;
   channelKind: string | null;
+  /** 全国性渠道才可勾选覆盖省份 */
+  nationwideChannel?: boolean;
   coverageProvinces?: string[];
   notes: string | null;
   ownerId: string | null;
@@ -130,6 +132,9 @@ export function CustomerForm({
   const [customerType, setCustomerType] = useState(initial?.customerType ?? "");
   const [customerGrade, setCustomerGrade] = useState(initial?.customerGrade ?? "");
   const [channelKind, setChannelKind] = useState(initial?.channelKind ?? "");
+  const [nationwideChannel, setNationwideChannel] = useState(
+    Boolean(initial?.nationwideChannel)
+  );
   const [name, setName] = useState(initial?.name ?? "");
   const [province, setProvince] = useState(initial?.province ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
@@ -387,6 +392,7 @@ export function CustomerForm({
             setCustomerGrade("");
             if (!isChannelCustomerType(value, typeOptions)) {
               setChannelKind("");
+              setNationwideChannel(false);
             }
           }}
           required
@@ -416,7 +422,27 @@ export function CustomerForm({
         )}
 
         {showChannelKind ? (
-          <CoverageProvincesField defaultValue={initial?.coverageProvinces ?? []} />
+          <div className={cn(FORM_FULL_WIDTH, "space-y-3")}>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="checkbox"
+                name="nationwideChannel"
+                value="1"
+                checked={nationwideChannel}
+                onChange={(e) => setNationwideChannel(e.target.checked)}
+                className="mt-0.5 size-3.5 rounded border"
+              />
+              <span className="space-y-1">
+                <span className="block text-sm font-medium leading-snug">全国性渠道</span>
+                <span className="block text-xs text-muted-foreground">
+                  仅全国性渠道可勾选覆盖省份；普通渠道按档案所在省/市统计，无需勾选，避免误操作。
+                </span>
+              </span>
+            </label>
+            {nationwideChannel ? (
+              <CoverageProvincesField defaultValue={initial?.coverageProvinces ?? []} />
+            ) : null}
+          </div>
         ) : null}
 
         {showGrade ? (
@@ -614,13 +640,15 @@ export function CustomerForm({
       ) : null}
       <ActionErrorDisplay error={error} />
 
-      <Button type="submit" disabled={pending}>
-        {pending
-          ? "提交中…"
-          : convertingToCompany
-            ? "确认转为公司"
-            : submitLabel}
-      </Button>
+      <div className="sticky bottom-0 z-10 -mx-1 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <Button type="submit" disabled={pending}>
+          {pending
+            ? "提交中…"
+            : convertingToCompany
+              ? "确认转为公司"
+              : submitLabel}
+        </Button>
+      </div>
     </form>
   );
 }

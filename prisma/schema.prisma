@@ -436,6 +436,8 @@ model Customer {
   customerGrade   String?
   /** 渠道细分类型（ConfigOption channel_kind）；仅渠道客户有意义 */
   channelKind     String?
+  /** 全国性渠道：仅此类可维护多省覆盖；普通渠道按档案省/市归属统计 */
+  nationwideChannel Boolean         @default(false)
   ownerId         String?
   notes           String?
   createdAt       DateTime         @default(now())
