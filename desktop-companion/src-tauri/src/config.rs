@@ -1,4 +1,7 @@
-//! App config + secret references (env / keychain placeholders). No secrets in repo.
+//! App config + secret references (env / keychain / optional local Kimi CLI file).
+//! No secrets in repo.
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +14,7 @@ pub struct AppConfig {
     pub cursor_api_key_ref: String,
     /// Personal Cursor usage is experimental (dashboard-style). Opt-in.
     pub cursor_usage_experimental: bool,
-    /// Kimi Code / membership token: env `KIMI_CODE_TOKEN` (primary quota).
+    /// Kimi Code / membership token: preferred env `KIMI_CODE_TOKEN` (aliases also tried).
     pub kimi_code_token_ref: String,
     /// Moonshot open-platform key: env `MOONSHOT_API_KEY`.
     pub moonshot_api_key_ref: String,
@@ -46,12 +49,77 @@ pub fn resolve_secret(secret_ref: &str) -> Option<String> {
         if v.trim().is_empty() {
             return None;
         }
-        return Some(v);
+        return Some(v.trim().to_string());
     }
     if secret_ref.starts_with("keychain:") {
         // TODO: macOS Keychain / Windows Credential Manager
         None
     } else {
         None
+    }
+}
+
+/// Kimi Code membership Bearer: Console `sk-kimi-…` API key **or** CLI OAuth access_token.
+///
+/// Order:
+/// 1. Configured secret ref (default `env:KIMI_CODE_TOKEN`)
+/// 2. Alias env vars: `KIMI_API_KEY`, `KIMI_CODE_API_KEY`
+/// 3. Optional local CLI credential file (`access_token`) — never committed
+pub fn resolve_kimi_code_token(primary_ref: &str) -> Option<(String, &'static str)> {
+    if let Some(v) = resolve_secret(primary_ref) {
+        return Some((v, "env"));
+    }
+    for name in ["KIMI_API_KEY", "KIMI_CODE_API_KEY"] {
+        if let Ok(v) = std::env::var(name) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return Some((t.to_string(), "env_alias"));
+            }
+        }
+    }
+    if let Some(v) = read_kimi_cli_access_token() {
+        return Some((v, "kimi_cli_file"));
+    }
+    None
+}
+
+fn read_kimi_cli_access_token() -> Option<String> {
+    let home = dirs_home()?;
+    let candidates = [
+        home.join(".kimi/credentials/kimi-code.json"),
+        home.join(".kimi-code/credentials/kimi-code.json"),
+    ];
+    for path in candidates {
+        if let Some(token) = parse_access_token_file(&path) {
+            return Some(token);
+        }
+    }
+    None
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn parse_access_token_file(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let token = v.get("access_token")?.as_str()?.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+/// Load `desktop-companion/.env` if present (does not override existing env).
+pub fn load_dotenv() {
+    // Prefer CWD (when launched via `npm run tauri dev` from desktop-companion/)
+    let _ = dotenvy::dotenv();
+    // Also try next to the executable's parent folders for packaged runs later
+    if let Ok(cwd) = std::env::current_dir() {
+        let _ = dotenvy::from_path(cwd.join(".env"));
     }
 }

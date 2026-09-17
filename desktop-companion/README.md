@@ -35,22 +35,14 @@ npm run tauri build
 
 | 用途 | 环境变量 / secretRef | 说明 |
 | --- | --- | --- |
-| Cloud Agents 状态 | `CURSOR_API_KEY` | Dashboard → API Keys；`env:CURSOR_API_KEY` |
-| Cursor 个人用量（半官方，未完全接线） | `CURSOR_USAGE_SESSION_TOKEN` | 实验；失败时深链 [Spending](https://cursor.com/dashboard/spending)，**不造假数** |
-| Kimi 会员额度（主） | `KIMI_CODE_TOKEN` | Code / 会员 token，半官方 `.../usages` |
-| Kimi 开放平台余额（次） | `MOONSHOT_API_KEY` | 官方 balance；注意国内/国际 base URL |
+| Cloud Agents 状态 | `CURSOR_API_KEY` | Dashboard → API Keys |
+| Cursor 个人用量（半官方，未完全接线） | `CURSOR_USAGE_SESSION_TOKEN` | 失败深链 Spending，**不造假数** |
+| **Kimi 会员额度（主）** | **`KIMI_CODE_TOKEN`**（别名 `KIMI_API_KEY`） | **Code Console `sk-kimi-…`**，或 `kimi login` 本地 OAuth；**不是** Moonshot 开放平台 Key。联调清单由协调员提供（`docs/kimi-membership-credentials.md`） |
+| Kimi 开放平台余额（次） | `MOONSHOT_API_KEY` | 官方 balance；与会员额度分离 |
 
-后续：`keychain:…` 占位将接到 macOS Keychain / Windows Credential Manager。
+启动时会尝试加载 `desktop-companion/.env`（不覆盖已有环境变量）。
 
-示例 `.env`（本地）：
-
-```env
-CURSOR_API_KEY=
-CURSOR_USAGE_SESSION_TOKEN=
-KIMI_CODE_TOKEN=
-MOONSHOT_API_KEY=
-```
-
+**Kimi 联调：** 只把 Key 写进本机 `.env`，聊天里说「已配置」即可，**不要贴密钥**。
 ## 功能状态（脚手架）
 
 | 模块 | 状态 |
