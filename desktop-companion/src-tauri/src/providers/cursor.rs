@@ -5,10 +5,10 @@
 //! Fail closed → Spending deep-link; never invent remaining %.
 //!
 //! ## Percentage semantics (see docs/spending-percent-audit.md)
-//! Spending UI “usage progress” text (`displayMessage`) uses **spend / limit**
-//! (`includedSpend/limit`), NOT `planUsage.totalPercentUsed` (pool-weighted
-//! internal metric). We prefer the spend-based / displayMessage percent so the
-//! companion matches the dashboard; pool-weighted % is labeled separately.
+//! **Hero number = Cursor mode only** (`planUsage.autoPercentUsed`).
+//! Other mode pools (`apiPercentUsed`) are listed in secondary text.
+//! Aggregate metrics (`displayMessage` / `includedSpend÷limit` / `totalPercentUsed`)
+//! are demoted — never the default hero when Cursor mode % is present.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -203,30 +203,48 @@ async fn fetch_usage_summary_cookie(cookie_value: &str) -> Result<QuotaSnapshot,
 struct ResolvedPercent {
     /// Rounded integer 0–100+ for display.
     rounded: i64,
-    /// Short Chinese label for the metric.
+    /// Short label for the metric (shown in unit / secondary).
     metric_label: &'static str,
 }
 
-/// Prefer Spending-dashboard progress (displayMessage / spend÷limit) over
-/// pool-weighted `totalPercentUsed` — official staff note that these diverge.
-fn resolve_spending_progress_percent(plan: &Value, body: &Value) -> Result<ResolvedPercent, String> {
-    // 1) displayMessage prose is what Spending shows as “You've used N%…”.
-    if let Some(p) = percent_from_display_messages(body) {
+/// Hero = Cursor mode (`autoPercentUsed`). Aggregate spend / pool-weighted
+/// only used when that field is absent — and always labeled.
+fn resolve_primary_percent(plan: &Value, body: &Value) -> Result<ResolvedPercent, String> {
+    // 1) Cursor mode pool (Auto + Composer / “Cursor Models” bar).
+    if let Some(p) = first_f64(plan, &["autoPercentUsed", "auto_percent_used"]) {
         return Ok(ResolvedPercent {
             rounded: p.round().clamp(0.0, 999.0) as i64,
-            metric_label: "套餐进度",
+            metric_label: "Cursor mode",
         });
     }
 
-    // 2) Spend / limit (cents) — same basis as displayMessage per Cursor staff.
+    // 2) Mode-specific prose only (not aggregate displayMessage).
+    if let Some(s) = body
+        .get("autoModelSelectedDisplayMessage")
+        .or_else(|| body.get("auto_model_selected_display_message"))
+        .and_then(|v| v.as_str())
+    {
+        if let Some(p) = parse_percent_in_prose(s) {
+            return Ok(ResolvedPercent {
+                rounded: p.round().clamp(0.0, 999.0) as i64,
+                metric_label: "Cursor mode",
+            });
+        }
+    }
+
+    // 3) Labeled fallbacks when Cursor mode field is missing (never invent).
     if let Some(p) = spend_based_percent(plan) {
         return Ok(ResolvedPercent {
             rounded: p.round().clamp(0.0, 999.0) as i64,
             metric_label: "套餐进度",
         });
     }
-
-    // 3) Fallback: pool-weighted totalPercentUsed (IDE / dual-bar aggregate).
+    if let Some(p) = percent_from_display_messages(body) {
+        return Ok(ResolvedPercent {
+            rounded: p.round().clamp(0.0, 999.0) as i64,
+            metric_label: "套餐进度",
+        });
+    }
     if let Some(p) = first_f64(plan, &["totalPercentUsed", "total_percent_used"]) {
         return Ok(ResolvedPercent {
             rounded: p.round().clamp(0.0, 999.0) as i64,
@@ -234,7 +252,7 @@ fn resolve_spending_progress_percent(plan: &Value, body: &Value) -> Result<Resol
         });
     }
 
-    Err("no displayMessage % / spend÷limit / totalPercentUsed".into())
+    Err("no autoPercentUsed / spend÷limit / displayMessage % / totalPercentUsed".into())
 }
 
 fn spend_based_percent(plan: &Value) -> Option<f64> {
@@ -302,10 +320,9 @@ fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, 
         .or_else(|| body.get("plan_usage"))
         .ok_or_else(|| "missing planUsage".to_string())?;
 
-    let resolved = resolve_spending_progress_percent(plan, body)?;
+    let resolved = resolve_primary_percent(plan, body)?;
     let primary = format!("{}%", resolved.rounded);
 
-    let pool_total = first_f64(plan, &["totalPercentUsed", "total_percent_used"]);
     let auto_pct = first_f64(plan, &["autoPercentUsed", "auto_percent_used"]);
     let api_pct = first_f64(plan, &["apiPercentUsed", "api_percent_used"]);
     let remaining_cents = first_i64(plan, &["remaining"]);
@@ -313,14 +330,14 @@ fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, 
     let included = first_i64(plan, &["includedSpend", "included_spend"]);
     let total_spend = first_i64(plan, &["totalSpend", "total_spend"]);
 
-    let display_msg = body
-        .get("displayMessage")
-        .or_else(|| body.get("display_message"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
+    // Mode breakdown first (include 0% for consistency when field is present).
     let mut secondary_parts = Vec::new();
-    secondary_parts.push(format!("口径：{}", resolved.metric_label));
+    if let Some(a) = auto_pct {
+        secondary_parts.push(format!("Cursor mode {:.0}%", a.round()));
+    }
+    if let Some(a) = api_pct {
+        secondary_parts.push(format!("Other Models {:.0}%", a.round()));
+    }
 
     if let (Some(rem), Some(lim)) = (remaining_cents, limit_cents) {
         secondary_parts.push(format!(
@@ -340,28 +357,17 @@ fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, 
         secondary_parts.push(format!("totalSpend ${:.2}", ts as f64 / 100.0));
     }
 
-    // When primary is spend-based, surface pool-weighted % if it differs.
-    if resolved.metric_label != "池加权" {
-        if let Some(p) = pool_total {
-            let pr = p.round() as i64;
-            if pr != resolved.rounded {
-                secondary_parts.push(format!("池加权 {pr}%"));
-            }
-        }
+    // Aggregate / pool-weighted intentionally omitted from default secondary
+    // (was confusing when shown next to Cursor mode %). Fallback hero still labeled.
+    if resolved.metric_label != "Cursor mode" {
+        secondary_parts.push(format!("口径：{}", resolved.metric_label));
     }
-    if let Some(a) = auto_pct {
-        secondary_parts.push(format!("Cursor Models {:.0}%", a.round()));
-    }
-    if let Some(a) = api_pct {
-        secondary_parts.push(format!("Other Models {:.0}%", a.round()));
-    }
-    if let Some(m) = display_msg {
-        secondary_parts.push(m);
-    }
+
     secondary_parts.push(format!("来源：{source} · 半官方"));
 
     let unit = match resolved.metric_label {
-        "套餐进度" => "已用（对齐 Spending）",
+        "Cursor mode" => "已用（Cursor mode）",
+        "套餐进度" => "已用（套餐进度）",
         "池加权" => "已用（池加权）",
         _ => "已用",
     };
@@ -370,7 +376,7 @@ fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, 
         id: "cursor_personal".into(),
         display_name: "Cursor Spending".into(),
         primary_value: Some(primary),
-        secondary_value: Some(secondary_parts.join(" · ")),
+        secondary_value: Some(secondary_parts.join("\n")),
         unit: Some(unit.into()),
         ok: true,
         error_message: None,
@@ -411,14 +417,17 @@ fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
     }
 
     let percent = first_f64(body, &[
+        "autoPercentUsed",
+        "auto_percent_used",
         "totalPercentUsed",
         "percentUsed",
         "usagePercent",
         "percentage",
     ])
     .or_else(|| {
-        body.get("individualUsage")
-            .and_then(|u| first_f64(u, &["totalPercentUsed", "percentUsed"]))
+        body.get("individualUsage").and_then(|u| {
+            first_f64(u, &["autoPercentUsed", "auto_percent_used", "totalPercentUsed", "percentUsed"])
+        })
     })
     .or_else(|| percent_from_display_messages(body));
 
@@ -430,7 +439,7 @@ fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
         id: "cursor_personal".into(),
         display_name: "Cursor Spending".into(),
         primary_value: Some(format!("{:.0}%", p.round())),
-        secondary_value: Some("来源：GET /api/usage-summary · 半官方 · 口径可能为池加权".into()),
+        secondary_value: Some("来源：GET /api/usage-summary · 半官方 · 优先 Cursor mode 字段".into()),
         unit: Some("已用".into()),
         ok: true,
         error_message: None,
@@ -505,29 +514,32 @@ mod tests {
     }
 
     #[test]
-    fn prefer_display_message_over_total_percent_used() {
-        // Live-test style: totalPercentUsed ≈ 39 but displayMessage says 43%.
+    fn hero_is_cursor_mode_auto_percent_not_aggregate() {
+        // User case: Cursor mode ~45%, other 0%, aggregate/spend ~41–43% must not be hero.
         let body = serde_json::json!({
             "planUsage": {
-                "totalPercentUsed": 39.3,
-                "includedSpend": 2000,
+                "totalPercentUsed": 41.2,
+                "includedSpend": 1900,
                 "remaining": 1140,
                 "limit": 4651,
-                "autoPercentUsed": 20.0,
-                "apiPercentUsed": 50.0
+                "autoPercentUsed": 45.2,
+                "apiPercentUsed": 0.0
             },
-            "displayMessage": "You've used 43% of your included usage"
+            "displayMessage": "You've used 41% of your included usage"
         });
         let snap = parse_period_usage_body(&body, "test").unwrap();
         assert!(snap.ok);
-        assert_eq!(snap.primary_value.as_deref(), Some("43%"));
-        assert!(snap.unit.as_deref().unwrap().contains("Spending"));
+        assert_eq!(snap.primary_value.as_deref(), Some("45%"));
+        assert!(snap.unit.as_deref().unwrap().contains("Cursor mode"));
         let sec = snap.secondary_value.unwrap();
-        assert!(sec.contains("池加权 39%") || sec.contains("池加权 39"));
+        assert!(sec.contains("Cursor mode 45%"));
+        assert!(sec.contains("Other Models 0%"));
+        assert!(!sec.contains("池加权"));
+        assert!(!sec.contains("口径：套餐进度"));
     }
 
     #[test]
-    fn prefer_spend_ratio_when_no_display_percent() {
+    fn fallback_spend_when_no_auto_percent() {
         let body = serde_json::json!({
             "planUsage": {
                 "totalPercentUsed": 39.3,
@@ -537,8 +549,10 @@ mod tests {
             "displayMessage": "You've hit your usage limit"
         });
         let snap = parse_period_usage_body(&body, "test").unwrap();
-        // 2000/4651 ≈ 43.0%
+        // 2000/4651 ≈ 43.0% — labeled 套餐进度 fallback only
         assert_eq!(snap.primary_value.as_deref(), Some("43%"));
+        assert!(snap.unit.as_deref().unwrap().contains("套餐进度"));
+        assert!(snap.secondary_value.unwrap().contains("口径：套餐进度"));
     }
 
     #[test]
@@ -554,21 +568,23 @@ mod tests {
     }
 
     #[test]
-    fn usage_summary_individual_usage_plan() {
+    fn usage_summary_individual_usage_plan_prefers_auto() {
         let body = serde_json::json!({
             "individualUsage": {
                 "plan": {
                     "totalPercentUsed": 39.3,
                     "includedSpend": 860,
                     "limit": 2000,
-                    "autoPercentUsed": 10.0,
-                    "apiPercentUsed": 20.0
+                    "autoPercentUsed": 45.0,
+                    "apiPercentUsed": 0.0
                 }
             },
             "displayMessage": "You've used 43% of your included usage"
         });
         let snap = parse_usage_summary_body(&body).unwrap();
-        assert_eq!(snap.primary_value.as_deref(), Some("43%"));
+        assert_eq!(snap.primary_value.as_deref(), Some("45%"));
+        let sec = snap.secondary_value.unwrap();
+        assert!(sec.contains("Other Models 0%"));
     }
 
     #[test]

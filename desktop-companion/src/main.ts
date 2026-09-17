@@ -131,7 +131,7 @@ function render(state: CompanionState) {
                : ""
            }`
         : q.secondaryValue
-          ? `<div class="muted">${escapeHtml(q.secondaryValue)}</div>`
+          ? `<div class="muted secondary-breakdown">${escapeHtml(q.secondaryValue)}</div>`
           : "";
       return `
       <li>

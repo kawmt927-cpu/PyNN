@@ -153,6 +153,12 @@ body {
   margin: 0 0 8px;
 }
 
+.secondary-breakdown {
+  white-space: pre-line;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
 .warn {
   color: #9a3412;
   background: #fff7ed;
