@@ -31,4 +31,4 @@ cd desktop-companion/src-tauri
 cargo test set_secret_persists_via_vault_when_keyring_mock_or_unavailable -- --nocapture
 ```
 
-After rebuilding on Mac, **re-paste** Cursor API Key（以及可选用量会话）once in Settings → Save → Refresh.
+After rebuilding on Mac, **re-paste** Spending 会话（以及若使用高级 API Key）once in Settings → Save → Refresh.

@@ -57,6 +57,7 @@ interface SettingsStatus {
   cursorApiKeySource: SecretSource;
   cursorUsageSessionConfigured: boolean;
   cursorUsageSessionSource: SecretSource;
+  cloudAgentsEnabled: boolean;
   notifyWhenUnfocused: boolean;
 }
 
@@ -81,6 +82,8 @@ const sourceLabel: Record<SecretSource, string> = {
   env: "环境变量",
   none: "未配置",
 };
+
+const SPENDING_URL = "https://cursor.com/dashboard/spending";
 
 function setDot(status: AgentUiStatus) {
   const dot = document.getElementById("status-dot")!;
@@ -171,18 +174,24 @@ function showNotifyToast(p: NotifyStubPayload) {
 }
 
 function renderSettingsStatus(s: SettingsStatus) {
-  const apiSrc = sourceLabel[s.cursorApiKeySource] ?? s.cursorApiKeySource;
-  document.getElementById("cursor-key-status")!.textContent = s.cursorApiKeyConfigured
-    ? `状态：已配置（${apiSrc}）— 输入框不回显`
-    : "状态：未配置 — 请粘贴 Cursor API Key 后保存";
-
   const usageSrc = sourceLabel[s.cursorUsageSessionSource] ?? s.cursorUsageSessionSource;
   document.getElementById("cursor-usage-status")!.textContent = s.cursorUsageSessionConfigured
-    ? `状态：已配置（${usageSrc}）— 半官方；失败仍链 Spending`
-    : "状态：未配置 — 可选；未配时额度行提示打开 Spending";
+    ? `状态：已配置（${usageSrc}）— 半官方；过期后请重新粘贴`
+    : "状态：未配置 — 请粘贴 Spending 会话后保存";
 
-  const box = document.getElementById("input-notify-unfocused") as HTMLInputElement;
-  box.checked = s.notifyWhenUnfocused;
+  const apiSrc = sourceLabel[s.cursorApiKeySource] ?? s.cursorApiKeySource;
+  const keyStatus = document.getElementById("cursor-key-status");
+  if (keyStatus) {
+    keyStatus.textContent = s.cursorApiKeyConfigured
+      ? `状态：已配置（${apiSrc}）— 输入框不回显 · 暂缓路径`
+      : "状态：未配置 — API Key 非必填";
+  }
+
+  const notifyBox = document.getElementById("input-notify-unfocused") as HTMLInputElement;
+  notifyBox.checked = s.notifyWhenUnfocused;
+
+  const cloudBox = document.getElementById("input-cloud-agents") as HTMLInputElement | null;
+  if (cloudBox) cloudBox.checked = s.cloudAgentsEnabled;
 }
 
 async function loadSettingsStatus() {
@@ -190,7 +199,7 @@ async function loadSettingsStatus() {
     const s = await invoke<SettingsStatus>("get_settings_status");
     renderSettingsStatus(s);
   } catch (e) {
-    document.getElementById("cursor-key-status")!.textContent = `状态读取失败：${e}`;
+    document.getElementById("cursor-usage-status")!.textContent = `状态读取失败：${e}`;
   }
 }
 
@@ -232,7 +241,7 @@ function focusSettings() {
   const panel = document.getElementById("settings-panel")!;
   panel.classList.add("highlight");
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  document.getElementById("input-cursor-key")?.focus();
+  document.getElementById("input-cursor-usage")?.focus();
   window.setTimeout(() => panel.classList.remove("highlight"), 1600);
 }
 
@@ -249,29 +258,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  document.getElementById("btn-save-cursor")!.addEventListener("click", async () => {
-    const input = document.getElementById("input-cursor-key") as HTMLInputElement;
-    try {
-      const s = await invoke<SettingsStatus>("save_cursor_api_key", { token: input.value });
-      input.value = "";
-      renderSettingsStatus(s);
-      setFeedback("已保存 Cursor API Key。正在刷新状态…", true);
-      await refresh();
-    } catch (e) {
-      setFeedback(`保存失败：${e}`, false);
-    }
-  });
-
-  document.getElementById("btn-clear-cursor")!.addEventListener("click", async () => {
-    try {
-      const s = await invoke<SettingsStatus>("clear_cursor_api_key");
-      (document.getElementById("input-cursor-key") as HTMLInputElement).value = "";
-      renderSettingsStatus(s);
-      setFeedback("已清除 Cursor API Key。", true);
-      await refresh();
-    } catch (e) {
-      setFeedback(`清除失败：${e}`, false);
-    }
+  document.getElementById("btn-open-spending")!.addEventListener("click", async () => {
+    await openUrl(SPENDING_URL);
   });
 
   document.getElementById("btn-save-usage")!.addEventListener("click", async () => {
@@ -282,7 +270,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
       input.value = "";
       renderSettingsStatus(s);
-      setFeedback("已保存用量会话。额度仍为半官方；失败请用 Spending。", true);
+      setFeedback("已保存 Spending 会话。正在刷新额度…", true);
       await refresh();
     } catch (e) {
       setFeedback(`保存失败：${e}`, false);
@@ -294,7 +282,32 @@ window.addEventListener("DOMContentLoaded", async () => {
       const s = await invoke<SettingsStatus>("clear_cursor_usage_session");
       (document.getElementById("input-cursor-usage") as HTMLInputElement).value = "";
       renderSettingsStatus(s);
-      setFeedback("已清除用量会话。", true);
+      setFeedback("已清除 Spending 会话。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`清除失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-save-cursor")!.addEventListener("click", async () => {
+    const input = document.getElementById("input-cursor-key") as HTMLInputElement;
+    try {
+      const s = await invoke<SettingsStatus>("save_cursor_api_key", { token: input.value });
+      input.value = "";
+      renderSettingsStatus(s);
+      setFeedback("已保存 API Key（暂缓路径）。若未开启 Cloud Agents，不会用于托盘主色。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`保存失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-clear-cursor")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("clear_cursor_api_key");
+      (document.getElementById("input-cursor-key") as HTMLInputElement).value = "";
+      renderSettingsStatus(s);
+      setFeedback("已清除 API Key。", true);
       await refresh();
     } catch (e) {
       setFeedback(`清除失败：${e}`, false);
@@ -307,6 +320,23 @@ window.addEventListener("DOMContentLoaded", async () => {
       const s = await invoke<SettingsStatus>("set_notify_when_unfocused", { enabled });
       renderSettingsStatus(s);
       setFeedback(enabled ? "已开启未聚焦通知桩。" : "已关闭未聚焦通知。", true);
+    } catch (err) {
+      setFeedback(`设置失败：${err}`, false);
+    }
+  });
+
+  document.getElementById("input-cloud-agents")!.addEventListener("change", async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    try {
+      const s = await invoke<SettingsStatus>("set_cloud_agents_enabled", { enabled });
+      renderSettingsStatus(s);
+      setFeedback(
+        enabled
+          ? "已启用 Cloud Agents（暂缓路径）。需 API Key；托盘会合并本机与云端状态。"
+          : "已关闭 Cloud Agents；仅本机 IDE 状态。",
+        true
+      );
+      await refresh();
     } catch (err) {
       setFeedback(`设置失败：${err}`, false);
     }

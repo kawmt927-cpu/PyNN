@@ -1,5 +1,5 @@
 //! App config + secret references (env / keychain). No secrets in repo.
-//! Cursor-only MVP — Kimi credential paths deferred / not compiled in.
+//! Cursor-only MVP — Spending session + local IDE status. API Key deferred.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,12 +12,14 @@ use crate::secrets::{self, SecretSource, CURSOR_API_KEY, CURSOR_USAGE_SESSION};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
-    /// Cursor API key for Cloud Agents: env or keychain.
+    /// Deferred: Cursor API key for optional Cloud Agents.
     pub cursor_api_key_ref: String,
-    /// Personal Cursor usage session (semi-official dashboard).
+    /// Spending / dashboard session (cookie or JWT) — primary quota auth.
     pub cursor_usage_session_ref: String,
-    /// Personal Cursor usage is experimental (dashboard-style). Opt-in.
+    /// Kept for back-compat; Spending fetch always attempted when session present.
     pub cursor_usage_experimental: bool,
+    /// When true, also poll Cloud Agents API (requires API Key). Default false.
+    pub cloud_agents_enabled: bool,
     pub custom_providers: Vec<GenericHttpProviderConfig>,
     pub agent_poll_seconds: u64,
     pub quota_poll_seconds: u64,
@@ -31,6 +33,7 @@ impl Default for AppConfig {
             cursor_api_key_ref: format!("keychain:{CURSOR_API_KEY}"),
             cursor_usage_session_ref: format!("keychain:{CURSOR_USAGE_SESSION}"),
             cursor_usage_experimental: true,
+            cloud_agents_enabled: false,
             custom_providers: vec![],
             agent_poll_seconds: 10,
             quota_poll_seconds: 120,
@@ -101,6 +104,7 @@ pub struct SettingsStatus {
     pub cursor_api_key_source: SecretSource,
     pub cursor_usage_session_configured: bool,
     pub cursor_usage_session_source: SecretSource,
+    pub cloud_agents_enabled: bool,
     pub notify_when_unfocused: bool,
 }
 
@@ -111,8 +115,8 @@ pub fn settings_status(config: &AppConfig) -> SettingsStatus {
         || env_token("CURSOR_API_KEY").is_some();
 
     let usage_store = secrets::secret_source(CURSOR_USAGE_SESSION);
-    let usage_configured = usage_store != SecretSource::None
-        || resolve_cursor_usage_session(config).is_some();
+    let usage_configured =
+        usage_store != SecretSource::None || resolve_cursor_usage_session(config).is_some();
 
     SettingsStatus {
         cursor_api_key_configured: api_configured,
@@ -131,11 +135,12 @@ pub fn settings_status(config: &AppConfig) -> SettingsStatus {
         } else {
             SecretSource::None
         },
+        cloud_agents_enabled: config.cloud_agents_enabled,
         notify_when_unfocused: config.notify_when_unfocused,
     }
 }
 
-/// Resolve Cursor API key: settings store → config ref → env.
+/// Resolve Cursor API key: settings store → config ref → env. (Deferred path.)
 pub fn resolve_cursor_api_key(config: &AppConfig) -> Option<String> {
     if let Some(v) = secrets::get_secret(CURSOR_API_KEY) {
         return Some(v);
@@ -146,7 +151,7 @@ pub fn resolve_cursor_api_key(config: &AppConfig) -> Option<String> {
     env_token("CURSOR_API_KEY")
 }
 
-/// Resolve Cursor personal usage session: settings → config ref → env.
+/// Resolve Spending session: settings → config ref → env.
 pub fn resolve_cursor_usage_session(config: &AppConfig) -> Option<String> {
     if let Some(v) = secrets::get_secret(CURSOR_USAGE_SESSION) {
         return Some(v);

@@ -1,227 +1,67 @@
-//! Cloud Agents status polling (official Cursor Cloud Agents API).
-//! Aggregate → tray colors: Working / Done / NeedsInput / Failed.
-
-use chrono::Utc;
-use serde_json::Value;
+//! Agent status aggregation.
+//! Primary: local Cursor IDE (`local_cursor_status`).
+//! Optional / deferred: Cloud Agents API (requires API Key; default off).
 
 use crate::config::{resolve_cursor_api_key, AppConfig};
+use crate::local_cursor_status;
 use crate::models::{AgentSnapshot, AgentUiStatus};
-use crate::providers::http_client;
 
-const API_BASE: &str = "https://api.cursor.com";
+mod cloud;
 
-pub async fn poll_cloud_agents(config: &AppConfig) -> (AgentUiStatus, Vec<AgentSnapshot>) {
-    let Some(api_key) = resolve_cursor_api_key(config) else {
-        return (
-            AgentUiStatus::Unknown,
-            vec![AgentSnapshot {
-                id: "stub".into(),
-                name: "未配置 Cursor API Key".into(),
-                status: AgentUiStatus::Unknown,
-                detail: Some(
-                    "在「设置」中粘贴 Cursor API Key，或设置环境变量 CURSOR_API_KEY".into(),
-                ),
-                updated_at: Utc::now(),
-            }],
-        );
-    };
+/// Poll agent status for tray / panel.
+pub async fn poll_agent_status(config: &AppConfig) -> (AgentUiStatus, Vec<AgentSnapshot>) {
+    let (local_ui, mut agents) = local_cursor_status::poll_local_cursor_status();
 
-    match list_and_map(&api_key).await {
-        Ok(agents) => {
-            let aggregate = aggregate_status(&agents);
-            (aggregate, agents)
+    if config.cloud_agents_enabled {
+        if resolve_cursor_api_key(config).is_some() {
+            let (cloud_ui, cloud_agents) = cloud::poll_cloud_agents(config).await;
+            agents.extend(cloud_agents);
+            return (aggregate_status(&agents, local_ui, cloud_ui), agents);
         }
-        Err(e) => (
-            AgentUiStatus::Failed,
-            vec![AgentSnapshot {
-                id: "error".into(),
-                name: "Cloud Agents".into(),
-                status: AgentUiStatus::Failed,
-                detail: Some(e),
-                updated_at: Utc::now(),
-            }],
-        ),
-    }
-}
-
-async fn list_and_map(api_key: &str) -> Result<Vec<AgentSnapshot>, String> {
-    let url = format!("{API_BASE}/v1/agents?limit=20");
-    let resp = http_client()
-        .get(&url)
-        .basic_auth(api_key, Some(""))
-        .send()
-        .await
-        .map_err(|e| format!("list agents: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!(
-            "list agents HTTP {} — 检查 API Key 是否有效",
-            resp.status()
-        ));
-    }
-
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-    let items = body
-        .get("items")
-        .or_else(|| body.get("agents"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut out = Vec::new();
-    for item in items.iter().take(10) {
-        let id = item
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let name = item
-            .get("name")
-            .or_else(|| item.get("title"))
-            .and_then(|v| v.as_str())
-            .unwrap_or(&id)
-            .to_string();
-        let agent_status = item
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("UNKNOWN");
-        let latest_run = item
-            .get("latestRunId")
-            .or_else(|| item.get("latest_run_id"))
-            .and_then(|v| v.as_str());
-
-        let (ui, detail) = map_agent(api_key, &id, agent_status, latest_run).await;
-        out.push(AgentSnapshot {
-            id,
-            name,
-            status: ui,
-            detail,
-            updated_at: Utc::now(),
+        agents.push(AgentSnapshot {
+            id: "cloud-disabled-no-key".into(),
+            name: "Cloud Agents（可选）".into(),
+            status: AgentUiStatus::Unknown,
+            detail: Some(
+                "已开启 Cloud Agents 但未配置 API Key（高级/暂缓路径）。".into(),
+            ),
+            updated_at: chrono::Utc::now(),
         });
     }
 
-    if out.is_empty() {
-        out.push(AgentSnapshot {
-            id: "empty".into(),
-            name: "暂无 Cloud Agent".into(),
-            status: AgentUiStatus::Done,
-            detail: Some("列表为空".into()),
-            updated_at: Utc::now(),
-        });
-    }
-
-    Ok(out)
+    (local_ui, agents)
 }
 
-async fn map_agent(
-    api_key: &str,
-    agent_id: &str,
-    agent_status: &str,
-    latest_run_id: Option<&str>,
-) -> (AgentUiStatus, Option<String>) {
-    // Prefer run-level status when available.
-    if let Some(run_id) = latest_run_id {
-        if let Ok(run_status) = fetch_run_status(api_key, agent_id, run_id).await {
-            return map_run_status(&run_status, agent_status);
-        }
-        // Fallback: try listing runs if single-run fetch failed.
-        if let Ok(run_status) = fetch_latest_run_via_list(api_key, agent_id).await {
-            return map_run_status(&run_status, agent_status);
-        }
-    } else if let Ok(run_status) = fetch_latest_run_via_list(api_key, agent_id).await {
-        return map_run_status(&run_status, agent_status);
-    }
-
-    match agent_status.to_ascii_uppercase().as_str() {
-        "ACTIVE" | "RUNNING" => (AgentUiStatus::Working, Some("agent ACTIVE".into())),
-        "IDLE" => (
-            AgentUiStatus::NeedsInput,
-            Some("agent IDLE ≈ 待跟进".into()),
-        ),
-        "ARCHIVED" | "FINISHED" | "COMPLETED" => (AgentUiStatus::Done, Some(agent_status.into())),
-        "ERROR" | "FAILED" => (AgentUiStatus::Failed, Some(agent_status.into())),
-        other => (AgentUiStatus::Unknown, Some(other.into())),
-    }
-}
-
-async fn fetch_run_status(api_key: &str, agent_id: &str, run_id: &str) -> Result<String, String> {
-    let url = format!("{API_BASE}/v1/agents/{agent_id}/runs/{run_id}");
-    let resp = http_client()
-        .get(&url)
-        .basic_auth(api_key, Some(""))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-    body.get("status")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "missing run status".into())
-}
-
-async fn fetch_latest_run_via_list(api_key: &str, agent_id: &str) -> Result<String, String> {
-    let url = format!("{API_BASE}/v1/agents/{agent_id}/runs?limit=1");
-    let resp = http_client()
-        .get(&url)
-        .basic_auth(api_key, Some(""))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-    let items = body
-        .get("items")
-        .or_else(|| body.get("runs"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    items
-        .first()
-        .and_then(|r| r.get("status"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no runs".into())
-}
-
-fn map_run_status(run_status: &str, agent_status: &str) -> (AgentUiStatus, Option<String>) {
-    let detail = Some(format!("run {run_status} · agent {agent_status}"));
-    match run_status.to_ascii_uppercase().as_str() {
-        "CREATING" | "RUNNING" | "PENDING" => (AgentUiStatus::Working, detail),
-        "FINISHED" | "COMPLETED" => {
-            // After finish, IDLE means waiting for follow-up / user.
-            if agent_status.eq_ignore_ascii_case("IDLE") {
-                (AgentUiStatus::NeedsInput, detail)
-            } else {
-                (AgentUiStatus::Done, detail)
-            }
-        }
-        "ERROR" | "FAILED" | "CANCELLED" | "CANCELED" | "EXPIRED" => {
-            (AgentUiStatus::Failed, detail)
-        }
-        _ => (AgentUiStatus::Unknown, detail),
-    }
-}
-
-fn aggregate_status(agents: &[AgentSnapshot]) -> AgentUiStatus {
+fn aggregate_status(
+    agents: &[AgentSnapshot],
+    local_ui: AgentUiStatus,
+    cloud_ui: AgentUiStatus,
+) -> AgentUiStatus {
     // Priority: working > needs input > failed > done > unknown
-    if agents.iter().any(|a| a.status == AgentUiStatus::Working) {
-        return AgentUiStatus::Working;
+    let mut best = local_ui;
+    for candidate in [cloud_ui]
+        .into_iter()
+        .chain(agents.iter().map(|a| a.status))
+    {
+        best = pick_higher(best, candidate);
     }
-    if agents.iter().any(|a| a.status == AgentUiStatus::NeedsInput) {
-        return AgentUiStatus::NeedsInput;
+    best
+}
+
+fn pick_higher(a: AgentUiStatus, b: AgentUiStatus) -> AgentUiStatus {
+    use AgentUiStatus::*;
+    let rank = |s: AgentUiStatus| match s {
+        Working => 5,
+        NeedsInput => 4,
+        Failed => 3,
+        Done => 2,
+        Unknown => 1,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
     }
-    if agents.iter().any(|a| a.status == AgentUiStatus::Failed) {
-        return AgentUiStatus::Failed;
-    }
-    if agents.iter().any(|a| a.status == AgentUiStatus::Done) {
-        return AgentUiStatus::Done;
-    }
-    AgentUiStatus::Unknown
 }
 
 #[cfg(test)]
@@ -229,29 +69,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aggregate_prefers_working() {
-        let agents = vec![
-            AgentSnapshot {
-                id: "1".into(),
-                name: "a".into(),
-                status: AgentUiStatus::Done,
-                detail: None,
-                updated_at: Utc::now(),
-            },
-            AgentSnapshot {
-                id: "2".into(),
-                name: "b".into(),
-                status: AgentUiStatus::Working,
-                detail: None,
-                updated_at: Utc::now(),
-            },
-        ];
-        assert_eq!(aggregate_status(&agents), AgentUiStatus::Working);
-    }
-
-    #[test]
-    fn map_finished_idle_is_needs_input() {
-        let (ui, _) = map_run_status("FINISHED", "IDLE");
-        assert_eq!(ui, AgentUiStatus::NeedsInput);
+    fn pick_prefers_working() {
+        assert_eq!(
+            pick_higher(AgentUiStatus::Done, AgentUiStatus::Working),
+            AgentUiStatus::Working
+        );
     }
 }

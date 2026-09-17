@@ -1,5 +1,6 @@
 mod agents;
 mod config;
+mod local_cursor_status;
 mod models;
 mod notify;
 mod providers;
@@ -27,7 +28,7 @@ struct AppState {
 
 async fn build_companion_state(config: &AppConfig) -> CompanionState {
     let quotas = providers::fetch_all_builtin(config).await;
-    let (agent_status, agents) = agents::poll_cloud_agents(config).await;
+    let (agent_status, agents) = agents::poll_agent_status(config).await;
     CompanionState {
         agent_status,
         agents,
@@ -139,6 +140,17 @@ fn set_notify_when_unfocused(
 ) -> Result<SettingsStatus, String> {
     let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
     cfg.notify_when_unfocused = enabled;
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn set_cloud_agents_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<SettingsStatus, String> {
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.cloud_agents_enabled = enabled;
     config::save_app_config(&cfg)?;
     Ok(settings_status(&cfg))
 }
@@ -309,6 +321,7 @@ pub fn run() {
             save_cursor_usage_session,
             clear_cursor_usage_session,
             set_notify_when_unfocused,
+            set_cloud_agents_enabled,
             list_custom_providers,
             upsert_custom_provider,
             remove_custom_provider,

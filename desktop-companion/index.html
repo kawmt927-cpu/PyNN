@@ -13,7 +13,7 @@
           <span id="status-dot" class="dot status-unknown" title="状态"></span>
           <div>
             <h1>Desktop Companion</h1>
-            <p class="sub">Cursor 额度 · Cloud Agent 状态</p>
+            <p class="sub">Cursor Spending · 本机 IDE 状态</p>
           </div>
         </div>
         <div class="top-actions">
@@ -23,9 +23,13 @@
       </header>
 
       <section class="card">
-        <h2>Agent 状态</h2>
+        <h2>本机 Agent 状态</h2>
         <p id="agent-summary" class="muted">加载中…</p>
         <ul id="agent-list" class="list"></ul>
+        <p class="hint">
+          主路径：Cursor Hooks → <code>~/.cursor/desktop-companion-status.json</code>。未装 hooks 时为灰色未知。
+          模板见仓库 <code>desktop-companion/hooks/</code>。
+        </p>
         <div class="demo-row">
           <span class="muted">托盘色预览：</span>
           <button type="button" data-demo="working">工作中</button>
@@ -36,66 +40,73 @@
       </section>
 
       <section class="card">
-        <h2>额度</h2>
+        <h2>额度（Spending）</h2>
         <p class="hint">
-          仅 Cursor 个人用量（半官方）。失败时打开 Spending，不显示假数字。Kimi 额度已暂缓，不在当前构建。
+          半官方 Dashboard / Connect 拉取。失败时打开 Spending，不显示假数字。无需 API Key。
         </p>
         <ul id="quota-list" class="list"></ul>
         <p id="last-updated" class="muted">上次更新：—</p>
       </section>
 
       <section id="settings-panel" class="card">
-        <h2>设置 · Cursor 凭证</h2>
+        <h2>设置 · Spending 会话</h2>
         <p class="hint">
-          在此粘贴保存。写入系统钥匙串（失败时用应用数据目录加密本地仓），
-          <strong>不会</strong>提交到仓库、也不会打日志。备用方式才是 <code>.env</code>。
+          粘贴后写入系统钥匙串（失败则本地加密仓），<strong>不会</strong>提交仓库或打日志。
         </p>
 
         <label class="field">
-          <span class="field-label">Cursor API Key（Cloud Agents 状态）</span>
-          <input
-            id="input-cursor-key"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="Dashboard → API Keys"
-          />
-        </label>
-        <p id="cursor-key-status" class="muted status-line">状态：检查中…</p>
-        <p class="warn">
-          用于轮询 Cloud Agents / Runs（工作中 / 已完成 / 待跟进）。在
-          <a href="https://cursor.com/dashboard" target="_blank" rel="noreferrer">cursor.com/dashboard</a>
-          创建 API Key。
-        </p>
-        <div class="btn-row">
-          <button id="btn-save-cursor" type="button" class="primary">保存</button>
-          <button id="btn-clear-cursor" type="button">清除</button>
-        </div>
-
-        <label class="field">
-          <span class="field-label">Cursor 用量会话（半官方 · 可选）</span>
+          <span class="field-label">Spending 会话（主鉴权 · 半官方）</span>
           <input
             id="input-cursor-usage"
             type="password"
             autocomplete="off"
             spellcheck="false"
-            placeholder="CURSOR_USAGE_SESSION_TOKEN / 会话 Cookie"
+            placeholder="WorkosCursorSessionToken 或 accessToken JWT"
           />
         </label>
         <p id="cursor-usage-status" class="muted status-line">状态：—</p>
         <p class="warn">
-          个人版<strong>无稳定公开用量 API</strong>。此字段为半官方 Dashboard 路径；未接线或失败时只提供
-          Spending 深链，<strong>不会造假 %</strong>。
+          <strong>从浏览器导入会话：</strong>登录
+          <a href="https://cursor.com/dashboard/spending" target="_blank" rel="noreferrer">Spending</a>
+          → DevTools → Application → Cookies → 复制 <code>WorkosCursorSessionToken</code> 整段。
+          也可粘贴本机 Cursor 的 <code>cursorAuth/accessToken</code>。Cookie/JWT 会过期；失败只链 Spending，不造假 %。
         </p>
         <div class="btn-row">
-          <button id="btn-save-usage" type="button">保存用量会话</button>
+          <button id="btn-save-usage" type="button" class="primary">保存会话</button>
           <button id="btn-clear-usage" type="button">清除</button>
+          <button id="btn-open-spending" type="button">打开 Spending</button>
         </div>
 
         <label class="field checkbox-row">
           <input id="input-notify-unfocused" type="checkbox" checked />
           <span>未聚焦时通知（完成 / 待跟进 / 失败 · 当前为桩）</span>
         </label>
+
+        <details class="advanced">
+          <summary>高级 · API Key（暂缓 / 非必填）</summary>
+          <p class="hint">
+            Cloud Agents API 不是本产品主路径。默认关闭。仅当你明确也要盯云端 Agent 时再开。
+          </p>
+          <label class="field checkbox-row">
+            <input id="input-cloud-agents" type="checkbox" />
+            <span>启用 Cloud Agents 轮询（需 API Key）</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Cursor API Key</span>
+            <input
+              id="input-cursor-key"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Dashboard → API Keys（可选）"
+            />
+          </label>
+          <p id="cursor-key-status" class="muted status-line">状态：检查中…</p>
+          <div class="btn-row">
+            <button id="btn-save-cursor" type="button">保存 API Key</button>
+            <button id="btn-clear-cursor" type="button">清除</button>
+          </div>
+        </details>
 
         <p id="settings-feedback" class="muted status-line" hidden></p>
         <p id="notify-toast" class="notify-toast" hidden></p>

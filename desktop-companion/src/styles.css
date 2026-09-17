@@ -260,6 +260,19 @@ button.primary:hover {
   margin-bottom: 6px;
 }
 
+.advanced {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
 .code {
   background: #1c2430;
   color: #e2e8f0;
