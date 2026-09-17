@@ -26,7 +26,7 @@ pub async fn poll_cloud_agents(config: &AppConfig) -> (AgentUiStatus, Vec<AgentS
 
     match list_and_map(&api_key).await {
         Ok(agents) => {
-            let aggregate = aggregate_status(&agents);
+            let aggregate = super::aggregate_agent_statuses(&agents);
             (aggregate, agents)
         }
         Err(e) => (
@@ -200,22 +200,6 @@ fn map_run_status(run_status: &str, agent_status: &str) -> (AgentUiStatus, Optio
         }
         _ => (AgentUiStatus::Unknown, detail),
     }
-}
-
-fn aggregate_status(agents: &[AgentSnapshot]) -> AgentUiStatus {
-    if agents.iter().any(|a| a.status == AgentUiStatus::Working) {
-        return AgentUiStatus::Working;
-    }
-    if agents.iter().any(|a| a.status == AgentUiStatus::NeedsInput) {
-        return AgentUiStatus::NeedsInput;
-    }
-    if agents.iter().any(|a| a.status == AgentUiStatus::Failed) {
-        return AgentUiStatus::Failed;
-    }
-    if agents.iter().any(|a| a.status == AgentUiStatus::Done) {
-        return AgentUiStatus::Done;
-    }
-    AgentUiStatus::Unknown
 }
 
 #[cfg(test)]

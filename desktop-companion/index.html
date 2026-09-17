@@ -24,19 +24,9 @@
 
       <section class="card">
         <h2>本机 Agent 状态</h2>
-        <p id="agent-summary" class="muted">加载中…</p>
         <ul id="agent-list" class="list"></ul>
-        <p class="hint">
-          主路径：Cursor Hooks → <code>~/.cursor/desktop-companion-status.json</code>。未装 hooks 时为灰色未知。
-          模板见仓库 <code>desktop-companion/hooks/</code>。
-        </p>
-        <div class="demo-row">
-          <span class="muted">托盘色预览：</span>
-          <button type="button" data-demo="working">工作中</button>
-          <button type="button" data-demo="done">完成</button>
-          <button type="button" data-demo="needs-input">待跟进</button>
-          <button type="button" data-demo="failed">失败</button>
-        </div>
+        <p id="agent-empty" class="muted" hidden>暂无本机 Agent 信号（未装 hooks 或尚未触发）。</p>
+        <p id="last-agent-note" class="hint" hidden></p>
       </section>
 
       <section class="card">
@@ -45,8 +35,18 @@
         <p id="last-updated" class="muted">上次更新：—</p>
       </section>
 
-      <section id="settings-panel" class="card">
-        <h2>设置 · Spending 会话</h2>
+      <p id="notify-toast" class="notify-toast" hidden></p>
+    </div>
+
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form method="dialog" class="settings-sheet" id="settings-panel">
+        <header class="settings-head">
+          <h2>设置 · Spending 会话</h2>
+          <button id="btn-close-settings" type="submit" value="cancel" aria-label="关闭">
+            关闭
+          </button>
+        </header>
+
         <p class="hint">
           默认<strong>自动</strong>读取本机 Cursor / 浏览器登录态，定时刷新；无需反复粘贴 Cookie。
           会话只进内存或钥匙串，<strong>不会</strong>打日志或提交仓库。
@@ -147,17 +147,19 @@
           </div>
         </details>
 
-        <p id="settings-feedback" class="muted status-line" hidden></p>
-        <p id="notify-toast" class="notify-toast" hidden></p>
-      </section>
+        <details class="advanced">
+          <summary>高级 · 自定义 HTTP 源（Cursor-only MVP 通常不需要）</summary>
+          <p class="hint">
+            Spending + 本机状态 MVP 不依赖此项。密钥只用 secretRef（env:/keychain:），勿写入仓库。
+          </p>
+          <pre id="custom-json" class="code"></pre>
+          <button id="btn-add-sample" type="button">添加示例源（禁用）</button>
+        </details>
 
-      <section class="card">
-        <h2>自定义 HTTP 源（设置桩）</h2>
-        <p class="hint">配置形状见方案；密钥只用 secretRef（env:/keychain:），勿写入仓库。</p>
-        <pre id="custom-json" class="code"></pre>
-        <button id="btn-add-sample" type="button">添加示例源（禁用）</button>
-      </section>
-    </div>
+        <p id="settings-feedback" class="muted status-line" hidden></p>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

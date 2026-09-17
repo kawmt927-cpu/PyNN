@@ -39,7 +39,19 @@ async fn build_companion_state(config: &AppConfig) -> CompanionState {
 }
 
 fn apply_status_side_effects(app: &AppHandle, state: &AppState, companion: &CompanionState) {
-    tray_status::apply_tray_status(app, companion.agent_status);
+    let used_percent = companion
+        .quotas
+        .iter()
+        .find_map(|q| {
+            if q.ok {
+                q.used_percent
+                    .filter(|p| p.is_finite())
+                    .map(|p| p.round().clamp(0.0, 100.0) as u32)
+            } else {
+                None
+            }
+        });
+    tray_status::apply_tray_status(app, companion.agent_status, used_percent);
 
     let previous = state
         .last_agent_status
@@ -268,7 +280,7 @@ fn demo_cycle_tray_status(app: AppHandle, status: String) -> AgentUiStatus {
         "failed" => AgentUiStatus::Failed,
         _ => AgentUiStatus::Unknown,
     };
-    tray_status::apply_tray_status(&app, ui);
+    tray_status::apply_tray_status(&app, ui, None);
     ui
 }
 
@@ -287,7 +299,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&show, &settings, &refresh, &quit])?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
-        .icon(tray_status::status_icon(AgentUiStatus::Unknown))
+        .icon(tray_status::status_icon(AgentUiStatus::Unknown, None))
         .tooltip("Desktop Companion · 未知")
         .menu(&menu)
         .show_menu_on_left_click(false)

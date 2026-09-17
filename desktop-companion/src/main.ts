@@ -99,16 +99,18 @@ const SPENDING_URL = "https://cursor.com/dashboard/spending";
 function setDot(status: AgentUiStatus) {
   const dot = document.getElementById("status-dot")!;
   dot.className = `dot status-${status}`;
+  // Top icon uses aggregated agent status (same priority as tray color).
   dot.title = statusLabel[status] ?? status;
 }
 
 function render(state: CompanionState) {
   setDot(state.agentStatus);
-  const summary = document.getElementById("agent-summary")!;
-  summary.textContent = `聚合状态：${statusLabel[state.agentStatus]}`;
 
   const agentList = document.getElementById("agent-list")!;
-  agentList.innerHTML = state.agents
+  const empty = document.getElementById("agent-empty")!;
+  const agents = state.agents ?? [];
+  empty.hidden = agents.length > 0;
+  agentList.innerHTML = agents
     .map(
       (a) => `
       <li>
@@ -164,7 +166,7 @@ function render(state: CompanionState) {
              </div>`
           : "";
       const meta = [
-        resetLabel ? `下次更新 ${escapeHtml(resetLabel)}` : null,
+        resetLabel ? `额度重置 ${escapeHtml(resetLabel)}` : null,
         q.secondaryValue ? escapeHtml(q.secondaryValue) : null,
       ]
         .filter(Boolean)
@@ -238,6 +240,19 @@ function showNotifyToast(p: NotifyStubPayload) {
   }, 6000);
 }
 
+function settingsDialog(): HTMLDialogElement {
+  return document.getElementById("settings-dialog") as HTMLDialogElement;
+}
+
+function openSettings() {
+  const dialog = settingsDialog();
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  void loadSettingsStatus();
+  document.getElementById("select-session-mode")?.focus();
+}
+
 function renderSettingsStatus(s: SettingsStatus) {
   const usageSrc = sourceLabel[s.cursorUsageSessionSource] ?? s.cursorUsageSessionSource;
   const modeHint =
@@ -297,13 +312,17 @@ async function refresh() {
     const state = await invoke<CompanionState>("get_companion_state");
     render(state);
   } catch (e) {
-    document.getElementById("agent-summary")!.textContent = `刷新失败：${e}`;
+    const empty = document.getElementById("agent-empty")!;
+    empty.hidden = false;
+    empty.textContent = `刷新失败：${e}`;
   }
 }
 
 async function refreshCustom() {
+  const el = document.getElementById("custom-json");
+  if (!el) return;
   const list = await invoke<GenericHttpProviderConfig[]>("list_custom_providers");
-  document.getElementById("custom-json")!.textContent = JSON.stringify(
+  el.textContent = JSON.stringify(
     list.length
       ? list
       : {
@@ -326,25 +345,13 @@ async function refreshCustom() {
   );
 }
 
-function focusSettings() {
-  const panel = document.getElementById("settings-panel")!;
-  panel.classList.add("highlight");
-  panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  document.getElementById("select-session-mode")?.focus();
-  window.setTimeout(() => panel.classList.remove("highlight"), 1600);
-}
-
 window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-refresh")!.addEventListener("click", () => refresh());
-  document.getElementById("btn-settings")!.addEventListener("click", () => focusSettings());
+  document.getElementById("btn-settings")!.addEventListener("click", () => openSettings());
 
-  document.querySelectorAll<HTMLButtonElement>("[data-demo]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const status = await invoke<AgentUiStatus>("demo_cycle_tray_status", {
-        status: btn.dataset.demo,
-      });
-      setDot(status);
-    });
+  const dialog = settingsDialog();
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) dialog.close();
   });
 
   document.getElementById("btn-open-spending")!.addEventListener("click", async () => {
@@ -516,7 +523,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   await listen("companion://open-settings", () => {
-    focusSettings();
+    openSettings();
   });
 
   await listen<CompanionState>("companion://state", (ev) => {

@@ -63,7 +63,7 @@ pub struct QuotaSnapshot {
     /// Billing / quota period start (UTC). Used for linear pace marker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period_start: Option<DateTime<Utc>>,
-    /// Next quota reset / “下次更新” (UTC). From `billingCycleEnd` when present.
+    /// Next quota reset / “额度重置” (UTC). From `billingCycleEnd` when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period_end: Option<DateTime<Utc>>,
     /// Expected usage % by now if spend were linear over `[period_start, period_end]`.

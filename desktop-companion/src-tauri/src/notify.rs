@@ -56,9 +56,9 @@ pub fn maybe_notify_status_change(
     }
 
     let (title, body) = match next {
-        AgentUiStatus::Done => ("Cloud Agent 已完成", "有运行已结束，可回 Cursor 查看。"),
-        AgentUiStatus::NeedsInput => ("Cloud Agent 待跟进", "可能在等你输入或确认。"),
-        AgentUiStatus::Failed => ("Cloud Agent 失败", "请打开面板查看详情。"),
+        AgentUiStatus::Done => ("本机 Agent 已完成", "有运行已结束，可回 Cursor 查看。"),
+        AgentUiStatus::NeedsInput => ("本机 Agent 待跟进", "可能在等你输入或确认（近似信号）。"),
+        AgentUiStatus::Failed => ("本机 Agent 失败", "请打开面板查看详情。"),
         _ => return,
     };
 
@@ -71,6 +71,6 @@ pub fn maybe_notify_status_change(
 
     // Stub: frontend can show a toast; real OS notifications come later.
     let _ = app.emit("companion://notify-stub", &payload);
-    tray_status::apply_tray_status(app, next);
+    tray_status::apply_tray_status(app, next, None);
     eprintln!("[notify-stub] {title}: {body}");
 }
