@@ -223,7 +223,8 @@ button.primary:hover {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
@@ -232,7 +233,8 @@ button.primary:hover {
   background: #fff;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: 2px solid rgba(15, 76, 92, 0.25);
   border-color: var(--accent);
 }

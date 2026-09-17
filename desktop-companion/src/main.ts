@@ -50,13 +50,19 @@ interface GenericHttpProviderConfig {
   pollSeconds: number;
 }
 
-type SecretSource = "keychain" | "localVault" | "env" | "none";
+type SecretSource = "keychain" | "localVault" | "env" | "auto" | "none";
 
 interface SettingsStatus {
   cursorApiKeyConfigured: boolean;
   cursorApiKeySource: SecretSource;
   cursorUsageSessionConfigured: boolean;
   cursorUsageSessionSource: SecretSource;
+  sessionAuthMode: string;
+  browserCookieSource: string;
+  autoSessionAvailable: boolean;
+  autoSessionSourceLabel: string | null;
+  autoSessionDetail: string | null;
+  quotaPollSeconds: number;
   cloudAgentsEnabled: boolean;
   notifyWhenUnfocused: boolean;
 }
@@ -80,6 +86,7 @@ const sourceLabel: Record<SecretSource, string> = {
   keychain: "系统钥匙串",
   localVault: "本地加密仓",
   env: "环境变量",
+  auto: "自动导入",
   none: "未配置",
 };
 
@@ -175,9 +182,33 @@ function showNotifyToast(p: NotifyStubPayload) {
 
 function renderSettingsStatus(s: SettingsStatus) {
   const usageSrc = sourceLabel[s.cursorUsageSessionSource] ?? s.cursorUsageSessionSource;
+  const modeHint =
+    s.sessionAuthMode === "manual"
+      ? "手动粘贴"
+      : s.autoSessionAvailable
+        ? `自动可用${s.autoSessionSourceLabel ? ` · ${s.autoSessionSourceLabel}` : ""}`
+        : "自动暂不可用";
   document.getElementById("cursor-usage-status")!.textContent = s.cursorUsageSessionConfigured
-    ? `状态：已配置（${usageSrc}）— 半官方；过期后请重新粘贴`
-    : "状态：未配置 — 请粘贴 Spending 会话后保存";
+    ? `状态：已配置（${usageSrc}）— ${modeHint} · 半官方`
+    : `状态：未配置 — ${modeHint}；可点「立即自动导入」或紧急粘贴`;
+
+  const detail = document.getElementById("auto-session-detail");
+  if (detail) {
+    detail.textContent = s.autoSessionDetail
+      ? `自动探测：${s.autoSessionDetail}`
+      : "自动探测：—";
+  }
+
+  const modeSelect = document.getElementById("select-session-mode") as HTMLSelectElement | null;
+  if (modeSelect) modeSelect.value = s.sessionAuthMode || "auto";
+
+  const browserSelect = document.getElementById("select-browser") as HTMLSelectElement | null;
+  if (browserSelect) browserSelect.value = s.browserCookieSource || "auto";
+
+  const pollInput = document.getElementById("input-quota-poll") as HTMLInputElement | null;
+  if (pollInput && document.activeElement !== pollInput) {
+    pollInput.value = String(s.quotaPollSeconds || 120);
+  }
 
   const apiSrc = sourceLabel[s.cursorApiKeySource] ?? s.cursorApiKeySource;
   const keyStatus = document.getElementById("cursor-key-status");
@@ -241,7 +272,7 @@ function focusSettings() {
   const panel = document.getElementById("settings-panel")!;
   panel.classList.add("highlight");
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  document.getElementById("input-cursor-usage")?.focus();
+  document.getElementById("select-session-mode")?.focus();
   window.setTimeout(() => panel.classList.remove("highlight"), 1600);
 }
 
@@ -262,6 +293,61 @@ window.addEventListener("DOMContentLoaded", async () => {
     await openUrl(SPENDING_URL);
   });
 
+  document.getElementById("select-session-mode")!.addEventListener("change", async (e) => {
+    const mode = (e.target as HTMLSelectElement).value;
+    try {
+      const s = await invoke<SettingsStatus>("set_session_auth_mode", { mode });
+      renderSettingsStatus(s);
+      setFeedback(`已切换会话模式：${mode}`, true);
+      await refresh();
+    } catch (err) {
+      setFeedback(`切换失败：${err}`, false);
+    }
+  });
+
+  document.getElementById("select-browser")!.addEventListener("change", async (e) => {
+    const source = (e.target as HTMLSelectElement).value;
+    try {
+      const s = await invoke<SettingsStatus>("set_browser_cookie_source", { source });
+      renderSettingsStatus(s);
+      setFeedback(`已选择浏览器：${source}`, true);
+    } catch (err) {
+      setFeedback(`设置失败：${err}`, false);
+    }
+  });
+
+  document.getElementById("input-quota-poll")!.addEventListener("change", async (e) => {
+    const seconds = Number((e.target as HTMLInputElement).value);
+    try {
+      const s = await invoke<SettingsStatus>("set_quota_poll_seconds", { seconds });
+      renderSettingsStatus(s);
+      setFeedback(`额度刷新间隔：${s.quotaPollSeconds} 秒（自动会话每次刷新会重读）`, true);
+    } catch (err) {
+      setFeedback(`设置失败：${err}`, false);
+    }
+  });
+
+  document.getElementById("btn-probe-auto")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("probe_auto_session");
+      renderSettingsStatus(s);
+      setFeedback(s.autoSessionAvailable ? "自动会话可用。" : "自动会话暂不可用 — 见探测详情。", s.autoSessionAvailable);
+    } catch (err) {
+      setFeedback(`探测失败：${err}`, false);
+    }
+  });
+
+  document.getElementById("btn-import-auto")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("import_auto_session_now");
+      renderSettingsStatus(s);
+      setFeedback("已自动导入会话并写入钥匙串/本地仓。正在刷新额度…", true);
+      await refresh();
+    } catch (err) {
+      setFeedback(`自动导入失败：${err}`, false);
+    }
+  });
+
   document.getElementById("btn-save-usage")!.addEventListener("click", async () => {
     const input = document.getElementById("input-cursor-usage") as HTMLInputElement;
     try {
@@ -270,7 +356,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
       input.value = "";
       renderSettingsStatus(s);
-      setFeedback("已保存 Spending 会话。正在刷新额度…", true);
+      setFeedback("已保存紧急粘贴会话。正在刷新额度…", true);
       await refresh();
     } catch (e) {
       setFeedback(`保存失败：${e}`, false);
@@ -282,7 +368,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       const s = await invoke<SettingsStatus>("clear_cursor_usage_session");
       (document.getElementById("input-cursor-usage") as HTMLInputElement).value = "";
       renderSettingsStatus(s);
-      setFeedback("已清除 Spending 会话。", true);
+      setFeedback("已清除已保存会话（不影响自动探测）。", true);
       await refresh();
     } catch (e) {
       setFeedback(`清除失败：${e}`, false);

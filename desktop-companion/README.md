@@ -28,9 +28,11 @@ npm run tauri dev
 
 ### 你需要做一次
 
-1. **Spending 会话（额度）**  
-   浏览器登录 [Spending](https://cursor.com/dashboard/spending) → DevTools → Cookies → 复制 `WorkosCursorSessionToken` → 浮窗 **设置** → 粘贴 → 保存（钥匙串）。  
-   会话过期后重新粘贴；失败只打开 Spending，不造假数字。
+1. **Spending 会话（额度 · 自动）**  
+   设置 → 会话方式选 **「自动」**（默认）→ 点 **「立即自动导入会话」**。  
+   优先读本机 Cursor `state.vscdb` 的 accessToken；否则读 Chrome/Arc/Edge/Brave 的 `WorkosCursorSessionToken`。  
+   macOS 首次可能要授权「完全磁盘访问」或钥匙串「允许」。  
+   定时刷新会重读会话，**不必反复粘贴 Cookie**。紧急时才展开手动粘贴。失败只打开 Spending，不造假数字。
 
 2. **本机 Hooks（状态色）**  
    见 [`hooks/README.md`](./hooks/README.md)：把模板装到 `~/.cursor/`，跑一轮 Agent，确认 `~/.cursor/desktop-companion-status.json` 有更新。未装 hooks → 托盘灰色「未知」。
@@ -47,12 +49,12 @@ npm run tauri build
 
 | 用途 | 推荐 | 备用环境变量 | 说明 |
 | --- | --- | --- | --- |
-| Spending 额度 | **应用内设置（主）** | `CURSOR_USAGE_SESSION_TOKEN` | Cookie 或 JWT；半官方；失败 → [Spending](https://cursor.com/dashboard/spending) |
+| Spending 额度 | **自动：Cursor IDE / 浏览器** | `CURSOR_USAGE_SESSION_TOKEN` | 半官方；失败 → [Spending](https://cursor.com/dashboard/spending)；粘贴仅紧急 |
 | Cloud Agents（暂缓） | 高级设置（可选） | `CURSOR_API_KEY` | 默认关闭；非本产品主路径 |
 
-**优先路径：** 设置 → Spending 会话 → 保存（系统钥匙串；失败则加密本地仓）。密钥**不会**回显、不会打日志、勿贴聊天。
+**优先路径：** 设置 → 自动导入会话（可写入钥匙串快照）。密钥**不会**回显、不会打日志、勿贴聊天。
 
-**钥匙串注意：** keyring v3 必须启用 `apple-native` / `windows-native`（见 [`KEYRING.md`](./KEYRING.md)）。本地重建后请**重新粘贴保存一次**。
+**钥匙串注意：** keyring v3 必须启用 `apple-native` / `windows-native`（见 [`KEYRING.md`](./KEYRING.md)）。自动导入失败时再用紧急粘贴。
 
 ## 状态色 + 通知
 

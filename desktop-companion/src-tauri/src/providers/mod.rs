@@ -70,7 +70,7 @@ pub fn missing_secret_snapshot(
     placeholder_failure(
         id,
         display_name,
-        &format!("未配置密钥（{secret_ref}）。请在「设置」中粘贴，或设置环境变量。仓库不存放密钥。"),
+        &format!("未配置会话（{secret_ref}）。请开启「自动从浏览器/Cursor 读取会话」，或紧急粘贴。仓库不存放密钥。"),
         fallback_url,
         experimental,
     )

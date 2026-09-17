@@ -5,6 +5,7 @@ mod models;
 mod notify;
 mod providers;
 mod secrets;
+mod session_auto;
 mod tray_status;
 
 use std::sync::Mutex;
@@ -130,6 +131,76 @@ fn save_cursor_usage_session(
 fn clear_cursor_usage_session(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
     secrets::delete_secret(CURSOR_USAGE_SESSION)?;
     let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn set_session_auth_mode(
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<SettingsStatus, String> {
+    let mode = mode.trim().to_string();
+    let allowed = ["auto", "auto_cursor", "auto_browser", "manual"];
+    if !allowed.contains(&mode.as_str()) {
+        return Err("无效的会话模式".into());
+    }
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.session_auth_mode = mode;
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn set_browser_cookie_source(
+    state: State<'_, AppState>,
+    source: String,
+) -> Result<SettingsStatus, String> {
+    let source = source.trim().to_lowercase();
+    let allowed = ["auto", "chrome", "arc", "edge", "brave"];
+    if !allowed.contains(&source.as_str()) {
+        return Err("无效的浏览器选择".into());
+    }
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.browser_cookie_source = source;
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn set_quota_poll_seconds(
+    state: State<'_, AppState>,
+    seconds: u64,
+) -> Result<SettingsStatus, String> {
+    let secs = seconds.clamp(60, 3600);
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.quota_poll_seconds = secs;
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn probe_auto_session(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn import_auto_session_now(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    let result = match cfg.session_auth_mode.as_str() {
+        "auto_browser" => session_auto::obtain_browser_session(&cfg.browser_cookie_source),
+        "auto_cursor" => session_auto::obtain_cursor_ide_session(),
+        "manual" => {
+            return Err("当前为手动模式。请先切换到「自动从浏览器/Cursor 读取会话」。".into());
+        }
+        _ => session_auto::obtain_auto_session(&cfg.browser_cookie_source),
+    };
+    let got = result?;
+    // Persist a snapshot so offline / next launch still works; value never logged.
+    secrets::set_secret(CURSOR_USAGE_SESSION, &got.token)?;
+    cfg.cursor_usage_session_ref = format!("keychain:{CURSOR_USAGE_SESSION}");
+    cfg.cursor_usage_experimental = true;
+    config::save_app_config(&cfg)?;
     Ok(settings_status(&cfg))
 }
 
@@ -260,17 +331,25 @@ fn spawn_status_poller(app: &tauri::App) {
     tauri::async_runtime::spawn(async move {
         // Initial delay so setup finishes.
         tokio::time::sleep(Duration::from_secs(2)).await;
+        let mut since_quota: u64 = 0;
         loop {
-            let (poll_secs, config) = {
+            let (agent_secs, quota_secs, config) = {
                 let state = handle.state::<AppState>();
                 let cfg = state
                     .config
                     .lock()
                     .map(|c| c.clone())
                     .unwrap_or_default();
-                (cfg.agent_poll_seconds.max(5), cfg)
+                (
+                    cfg.agent_poll_seconds.max(5),
+                    cfg.quota_poll_seconds.max(60),
+                    cfg,
+                )
             };
 
+            // Agent status every agent_secs; Spending (re-resolves auto session) at least
+            // every quota_secs — but we still rebuild full state each tick for simplicity.
+            // Auto session is re-read inside resolve_cursor_usage_session on each fetch.
             let companion = build_companion_state(&config).await;
             {
                 let state = handle.state::<AppState>();
@@ -278,7 +357,12 @@ fn spawn_status_poller(app: &tauri::App) {
             }
             let _ = handle.emit("companion://state", &companion);
 
-            tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+            since_quota = since_quota.saturating_add(agent_secs);
+            if since_quota >= quota_secs {
+                since_quota = 0;
+            }
+            let _ = since_quota; // reserved for future split polling
+            tokio::time::sleep(Duration::from_secs(agent_secs)).await;
         }
     });
 }
@@ -320,6 +404,11 @@ pub fn run() {
             clear_cursor_api_key,
             save_cursor_usage_session,
             clear_cursor_usage_session,
+            set_session_auth_mode,
+            set_browser_cookie_source,
+            set_quota_poll_seconds,
+            probe_auto_session,
+            import_auto_session_now,
             set_notify_when_unfocused,
             set_cloud_agents_enabled,
             list_custom_providers,

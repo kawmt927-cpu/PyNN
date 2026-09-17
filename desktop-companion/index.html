@@ -51,31 +51,73 @@
       <section id="settings-panel" class="card">
         <h2>设置 · Spending 会话</h2>
         <p class="hint">
-          粘贴后写入系统钥匙串（失败则本地加密仓），<strong>不会</strong>提交仓库或打日志。
+          默认<strong>自动</strong>读取本机 Cursor / 浏览器登录态，定时刷新；无需反复粘贴 Cookie。
+          会话只进内存或钥匙串，<strong>不会</strong>打日志或提交仓库。
         </p>
 
         <label class="field">
-          <span class="field-label">Spending 会话（主鉴权 · 半官方）</span>
-          <input
-            id="input-cursor-usage"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="WorkosCursorSessionToken 或 accessToken JWT"
-          />
+          <span class="field-label">会话获取方式</span>
+          <select id="select-session-mode">
+            <option value="auto">自动（Cursor IDE → 浏览器 → 已保存）</option>
+            <option value="auto_cursor">自动：仅 Cursor IDE</option>
+            <option value="auto_browser">自动：仅浏览器 Cookie</option>
+            <option value="manual">仅手动粘贴（紧急）</option>
+          </select>
         </label>
+
+        <label class="field">
+          <span class="field-label">浏览器（自动读 Cookie 时）</span>
+          <select id="select-browser">
+            <option value="auto">自动探测</option>
+            <option value="chrome">Chrome</option>
+            <option value="arc">Arc</option>
+            <option value="edge">Edge</option>
+            <option value="brave">Brave</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field-label">额度刷新间隔（秒）</span>
+          <input id="input-quota-poll" type="number" min="60" max="3600" step="30" value="120" />
+        </label>
+
         <p id="cursor-usage-status" class="muted status-line">状态：—</p>
-        <p class="warn">
-          <strong>从浏览器导入会话：</strong>登录
-          <a href="https://cursor.com/dashboard/spending" target="_blank" rel="noreferrer">Spending</a>
-          → DevTools → Application → Cookies → 复制 <code>WorkosCursorSessionToken</code> 整段。
-          也可粘贴本机 Cursor 的 <code>cursorAuth/accessToken</code>。Cookie/JWT 会过期；失败只链 Spending，不造假 %。
-        </p>
+        <p id="auto-session-detail" class="hint">自动探测：—</p>
+
         <div class="btn-row">
-          <button id="btn-save-usage" type="button" class="primary">保存会话</button>
-          <button id="btn-clear-usage" type="button">清除</button>
+          <button id="btn-import-auto" type="button" class="primary">立即自动导入会话</button>
+          <button id="btn-probe-auto" type="button">重新探测</button>
           <button id="btn-open-spending" type="button">打开 Spending</button>
         </div>
+
+        <details class="advanced" id="manual-paste-details">
+          <summary>紧急 · 手动粘贴会话</summary>
+          <p class="warn">
+            仅当自动导入失败时使用。登录
+            <a href="https://cursor.com/dashboard/spending" target="_blank" rel="noreferrer">Spending</a>
+            → DevTools → Cookies → 复制 <code>WorkosCursorSessionToken</code>。
+          </p>
+          <label class="field">
+            <span class="field-label">Spending 会话（紧急）</span>
+            <input
+              id="input-cursor-usage"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="WorkosCursorSessionToken 或 accessToken JWT"
+            />
+          </label>
+          <div class="btn-row">
+            <button id="btn-save-usage" type="button">保存粘贴会话</button>
+            <button id="btn-clear-usage" type="button">清除已保存</button>
+          </div>
+        </details>
+
+        <p class="warn">
+          <strong>权限说明（macOS）：</strong>首次读浏览器 Cookie / Cursor 状态库时，系统可能要求
+          「完全磁盘访问权限」或钥匙串「允许」。点一次允许即可；Safari 暂不支持自动读取。
+          浏览器锁库、加密变更会导致自动路径失败 — 属已知脆弱性。
+        </p>
 
         <label class="field checkbox-row">
           <input id="input-notify-unfocused" type="checkbox" checked />

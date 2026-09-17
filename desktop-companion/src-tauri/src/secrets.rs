@@ -337,6 +337,8 @@ pub enum SecretSource {
     Keychain,
     LocalVault,
     Env,
+    /// Resolved live from Cursor IDE / browser (not a stored secret).
+    Auto,
     None,
 }
 
