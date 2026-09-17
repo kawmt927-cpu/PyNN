@@ -15,6 +15,10 @@ interface QuotaSnapshot {
   fallbackUrl: string | null;
   experimental: boolean;
   updatedAt: string;
+  usedPercent?: number | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  expectedPacePercent?: number | null;
 }
 
 interface AgentSnapshot {
@@ -120,26 +124,60 @@ function render(state: CompanionState) {
   const quotaList = document.getElementById("quota-list")!;
   quotaList.innerHTML = state.quotas
     .map((q) => {
-      const value = q.ok
-        ? `${escapeHtml(q.primaryValue ?? "—")}${q.unit ? ` ${escapeHtml(q.unit)}` : ""}`
-        : "—";
-      const err = !q.ok
-        ? `<div class="error">${escapeHtml(q.errorMessage ?? "拉取失败")}</div>
-           ${
-             q.fallbackUrl
-               ? `<a class="fallback" href="#" data-url="${escapeHtml(q.fallbackUrl)}">打开 Spending 仪表盘</a>`
-               : ""
-           }`
-        : q.secondaryValue
-          ? `<div class="muted secondary-breakdown">${escapeHtml(q.secondaryValue)}</div>`
-          : "";
-      return `
-      <li>
+      if (!q.ok) {
+        return `
+      <li class="quota-row">
         <div class="row-title">
-          <span>${escapeHtml(q.displayName)}${q.experimental ? " · 半官方" : ""}</span>
-          <strong>${value}</strong>
+          <span>${escapeHtml(q.displayName)}</span>
+          <strong>—</strong>
         </div>
-        ${err}
+        <div class="error">${escapeHtml(q.errorMessage ?? "拉取失败")}</div>
+        ${
+          q.fallbackUrl
+            ? `<a class="fallback" href="#" data-url="${escapeHtml(q.fallbackUrl)}">打开 Spending</a>`
+            : ""
+        }
+      </li>`;
+      }
+
+      const pct =
+        typeof q.usedPercent === "number" && Number.isFinite(q.usedPercent)
+          ? Math.max(0, q.usedPercent)
+          : parsePercent(q.primaryValue);
+      const pace =
+        typeof q.expectedPacePercent === "number" && Number.isFinite(q.expectedPacePercent)
+          ? Math.min(100, Math.max(0, q.expectedPacePercent))
+          : null;
+      const fill = pct != null ? Math.min(100, pct) : 0;
+      const resetLabel = formatResetTime(q.periodEnd);
+      const value = escapeHtml(q.primaryValue ?? "—");
+      const unit = q.unit ? ` <span class="quota-unit">${escapeHtml(q.unit)}</span>` : "";
+      const bar =
+        pct != null
+          ? `<div class="usage-bar" title="填充=已用；竖线=按时间进度的预期节奏">
+               <div class="usage-bar-fill" style="width:${fill}%"></div>
+               ${
+                 pace != null
+                   ? `<div class="usage-bar-pace" style="left:${pace}%" aria-hidden="true"></div>`
+                   : ""
+               }
+             </div>`
+          : "";
+      const meta = [
+        resetLabel ? `下次更新 ${escapeHtml(resetLabel)}` : null,
+        q.secondaryValue ? escapeHtml(q.secondaryValue) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      return `
+      <li class="quota-row">
+        <div class="row-title">
+          <span>${escapeHtml(q.displayName)}</span>
+          <strong class="quota-hero">${value}${unit}</strong>
+        </div>
+        ${bar}
+        ${meta ? `<div class="muted quota-meta">${meta}</div>` : ""}
       </li>`;
     })
     .join("");
@@ -153,6 +191,26 @@ function render(state: CompanionState) {
       const url = (el as HTMLElement).dataset.url;
       if (url) await openUrl(url);
     });
+  });
+}
+
+function parsePercent(primary: string | null): number | null {
+  if (!primary) return null;
+  const m = primary.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatResetTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -189,7 +247,7 @@ function renderSettingsStatus(s: SettingsStatus) {
         ? `自动可用${s.autoSessionSourceLabel ? ` · ${s.autoSessionSourceLabel}` : ""}`
         : "自动暂不可用";
   document.getElementById("cursor-usage-status")!.textContent = s.cursorUsageSessionConfigured
-    ? `状态：已配置（${usageSrc}）— ${modeHint} · 半官方`
+    ? `状态：已配置（${usageSrc}）— ${modeHint}`
     : `状态：未配置 — ${modeHint}；可点「立即自动导入」或紧急粘贴`;
 
   const detail = document.getElementById("auto-session-detail");

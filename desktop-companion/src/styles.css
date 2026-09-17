@@ -159,6 +159,58 @@ body {
   margin-top: 4px;
 }
 
+.quota-row {
+  padding: 10px 0;
+}
+
+.quota-hero {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.quota-unit {
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.usage-bar {
+  position: relative;
+  height: 8px;
+  margin: 8px 0 6px;
+  border-radius: 4px;
+  background: #e8e2d8;
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #0f4c5c 0%, #1a7a6d 100%);
+  min-width: 0;
+  transition: width 0.35s ease;
+}
+
+.usage-bar-pace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #1c2430;
+  opacity: 0.75;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.quota-meta {
+  margin: 0;
+  font-size: 0.72rem;
+  white-space: pre-line;
+  line-height: 1.4;
+}
+
 .warn {
   color: #9a3412;
   background: #fff7ed;

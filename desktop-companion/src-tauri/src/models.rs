@@ -57,6 +57,18 @@ pub struct QuotaSnapshot {
     pub fallback_url: Option<String>,
     pub experimental: bool,
     pub updated_at: DateTime<Utc>,
+    /// Numeric used % for progress-bar fill (same metric as primaryValue when available).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_percent: Option<f64>,
+    /// Billing / quota period start (UTC). Used for linear pace marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_start: Option<DateTime<Utc>>,
+    /// Next quota reset / “下次更新” (UTC). From `billingCycleEnd` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_end: Option<DateTime<Utc>>,
+    /// Expected usage % by now if spend were linear over `[period_start, period_end]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_pace_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

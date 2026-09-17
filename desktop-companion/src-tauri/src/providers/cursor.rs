@@ -6,12 +6,12 @@
 //!
 //! ## Percentage semantics (see docs/spending-percent-audit.md)
 //! **Hero number = Cursor mode only** (`planUsage.autoPercentUsed`).
-//! Other mode pools (`apiPercentUsed`) are listed in secondary text.
-//! Aggregate metrics (`displayMessage` / `includedSpend÷limit` / `totalPercentUsed`)
-//! are demoted — never the default hero when Cursor mode % is present.
+//! Progress bar fill = same %. Vertical pace marker = linear elapsed time
+//! over `billingCycleStart` → `billingCycleEnd` (infer start if only end).
+//! Dollar “已用 $xx” is never shown (often wrong vs Spending UI).
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
 use serde_json::Value;
 
 use crate::config::{resolve_cursor_usage_session, AppConfig};
@@ -314,7 +314,7 @@ fn parse_percent_in_prose(s: &str) -> Option<f64> {
     None
 }
 
-fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, String> {
+fn parse_period_usage_body(body: &Value, _source: &str) -> Result<QuotaSnapshot, String> {
     let plan = body
         .get("planUsage")
         .or_else(|| body.get("plan_usage"))
@@ -322,68 +322,171 @@ fn parse_period_usage_body(body: &Value, source: &str) -> Result<QuotaSnapshot, 
 
     let resolved = resolve_primary_percent(plan, body)?;
     let primary = format!("{}%", resolved.rounded);
+    let used_percent = Some(resolved.rounded as f64);
 
-    let auto_pct = first_f64(plan, &["autoPercentUsed", "auto_percent_used"]);
     let api_pct = first_f64(plan, &["apiPercentUsed", "api_percent_used"]);
-    let remaining_cents = first_i64(plan, &["remaining"]);
-    let limit_cents = first_i64(plan, &["limit"]);
-    let included = first_i64(plan, &["includedSpend", "included_spend"]);
-    let total_spend = first_i64(plan, &["totalSpend", "total_spend"]);
 
-    // Mode breakdown first (include 0% for consistency when field is present).
+    // Minimal secondary: only Other Models when non-zero; never dollar “已用 $xx”.
     let mut secondary_parts = Vec::new();
-    if let Some(a) = auto_pct {
-        secondary_parts.push(format!("Cursor mode {:.0}%", a.round()));
-    }
     if let Some(a) = api_pct {
-        secondary_parts.push(format!("Other Models {:.0}%", a.round()));
+        if a.round() > 0.0 {
+            secondary_parts.push(format!("Other Models {:.0}%", a.round()));
+        }
     }
-
-    if let (Some(rem), Some(lim)) = (remaining_cents, limit_cents) {
-        secondary_parts.push(format!(
-            "剩余 ${:.2} / 额度 ${:.2}",
-            rem as f64 / 100.0,
-            lim as f64 / 100.0
-        ));
-    } else if let (Some(inc), Some(lim)) = (included, limit_cents) {
-        secondary_parts.push(format!(
-            "已用 ${:.2} / 额度 ${:.2}",
-            inc as f64 / 100.0,
-            lim as f64 / 100.0
-        ));
-    } else if let Some(inc) = included {
-        secondary_parts.push(format!("已用 included ${:.2}", inc as f64 / 100.0));
-    } else if let Some(ts) = total_spend {
-        secondary_parts.push(format!("totalSpend ${:.2}", ts as f64 / 100.0));
-    }
-
-    // Aggregate / pool-weighted intentionally omitted from default secondary
-    // (was confusing when shown next to Cursor mode %). Fallback hero still labeled.
     if resolved.metric_label != "Cursor mode" {
         secondary_parts.push(format!("口径：{}", resolved.metric_label));
     }
 
-    secondary_parts.push(format!("来源：{source} · 半官方"));
+    let (period_start, period_end) = resolve_billing_period(body);
+    let expected_pace_percent = expected_pace_percent(period_start, period_end, Utc::now());
 
     let unit = match resolved.metric_label {
-        "Cursor mode" => "已用（Cursor mode）",
-        "套餐进度" => "已用（套餐进度）",
-        "池加权" => "已用（池加权）",
-        _ => "已用",
+        "Cursor mode" => "Cursor mode",
+        "套餐进度" => "套餐进度",
+        "池加权" => "池加权",
+        _ => "",
     };
 
     Ok(QuotaSnapshot {
         id: "cursor_personal".into(),
         display_name: "Cursor Spending".into(),
         primary_value: Some(primary),
-        secondary_value: Some(secondary_parts.join("\n")),
-        unit: Some(unit.into()),
+        secondary_value: if secondary_parts.is_empty() {
+            None
+        } else {
+            Some(secondary_parts.join("\n"))
+        },
+        unit: if unit.is_empty() {
+            None
+        } else {
+            Some(unit.into())
+        },
         ok: true,
         error_message: None,
         fallback_url: Some(SPENDING_URL.into()),
         experimental: true,
         updated_at: Utc::now(),
+        used_percent,
+        period_start,
+        period_end,
+        expected_pace_percent,
     })
+}
+
+/// Parse `billingCycleStart` / `billingCycleEnd` (epoch ms string/number or RFC3339).
+/// If only end is present, infer start as previous calendar month same day.
+fn resolve_billing_period(body: &Value) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    let end = first_timestamp(
+        body,
+        &[
+            "billingCycleEnd",
+            "billing_cycle_end",
+            "periodEnd",
+            "period_end",
+            "nextResetAt",
+            "next_reset_at",
+        ],
+    );
+    let start = first_timestamp(
+        body,
+        &[
+            "billingCycleStart",
+            "billing_cycle_start",
+            "periodStart",
+            "period_start",
+        ],
+    )
+    .or_else(|| end.map(infer_period_start_from_end));
+
+    (start, end)
+}
+
+/// Fallback when API only gives end: previous month, same calendar day (clamp day).
+fn infer_period_start_from_end(end: DateTime<Utc>) -> DateTime<Utc> {
+    let y = end.year();
+    let m = end.month();
+    let d = end.day();
+    let (py, pm) = if m == 1 {
+        (y - 1, 12)
+    } else {
+        (y, m - 1)
+    };
+    let max_day = days_in_month(py, pm);
+    let day = d.min(max_day);
+    Utc.with_ymd_and_hms(py, pm, day, end.hour(), end.minute(), end.second())
+        .single()
+        .unwrap_or_else(|| end - Duration::days(30))
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (ny, nm) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let first_next = Utc.with_ymd_and_hms(ny, nm, 1, 0, 0, 0).single();
+    let first_this = Utc.with_ymd_and_hms(year, month, 1, 0, 0, 0).single();
+    match (first_this, first_next) {
+        (Some(a), Some(b)) => (b - a).num_days() as u32,
+        _ => 30,
+    }
+}
+
+fn expected_pace_percent(
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<f64> {
+    let (start, end) = (start?, end?);
+    let total = (end - start).num_milliseconds();
+    if total <= 0 {
+        return None;
+    }
+    let elapsed = (now - start).num_milliseconds().clamp(0, total);
+    Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0))
+}
+
+fn first_timestamp(v: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
+    for k in keys {
+        if let Some(n) = v.get(*k) {
+            if let Some(dt) = parse_api_timestamp(n) {
+                return Some(dt);
+            }
+        }
+    }
+    None
+}
+
+/// Accept epoch ms (number or digit string), epoch seconds, or RFC3339.
+fn parse_api_timestamp(v: &Value) -> Option<DateTime<Utc>> {
+    if let Some(i) = v.as_i64() {
+        return epoch_to_datetime(i);
+    }
+    if let Some(f) = v.as_f64() {
+        if f.is_finite() {
+            return epoch_to_datetime(f as i64);
+        }
+    }
+    if let Some(s) = v.as_str() {
+        let t = s.trim();
+        if let Ok(i) = t.parse::<i64>() {
+            return epoch_to_datetime(i);
+        }
+        if let Ok(dt) = DateTime::parse_from_rfc3339(t) {
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
+    None
+}
+
+fn epoch_to_datetime(n: i64) -> Option<DateTime<Utc>> {
+    // Heuristic: ≥ 1e12 → milliseconds; else seconds.
+    let secs = if n.abs() >= 1_000_000_000_000 {
+        n / 1000
+    } else {
+        n
+    };
+    DateTime::from_timestamp(secs, 0)
 }
 
 fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
@@ -400,7 +503,7 @@ fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
                 .and_then(|u| u.get("plan"))
         })
     {
-        // Reuse period parser with a synthetic wrapper so displayMessage on root still works.
+        // Reuse period parser with a synthetic wrapper so displayMessage / billing cycle on root still work.
         let mut wrapper = serde_json::Map::new();
         wrapper.insert("planUsage".into(), plan.clone());
         for k in [
@@ -408,6 +511,14 @@ fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
             "display_message",
             "autoModelSelectedDisplayMessage",
             "namedModelSelectedDisplayMessage",
+            "billingCycleStart",
+            "billing_cycle_start",
+            "billingCycleEnd",
+            "billing_cycle_end",
+            "periodStart",
+            "period_start",
+            "periodEnd",
+            "period_end",
         ] {
             if let Some(v) = body.get(k) {
                 wrapper.insert(k.into(), v.clone());
@@ -435,17 +546,24 @@ fn parse_usage_summary_body(body: &Value) -> Result<QuotaSnapshot, String> {
         return Err("usage-summary: no recognizable percent field".into());
     };
 
+    let (period_start, period_end) = resolve_billing_period(body);
+    let expected_pace_percent = expected_pace_percent(period_start, period_end, Utc::now());
+
     Ok(QuotaSnapshot {
         id: "cursor_personal".into(),
         display_name: "Cursor Spending".into(),
         primary_value: Some(format!("{:.0}%", p.round())),
-        secondary_value: Some("来源：GET /api/usage-summary · 半官方 · 优先 Cursor mode 字段".into()),
+        secondary_value: None,
         unit: Some("已用".into()),
         ok: true,
         error_message: None,
         fallback_url: Some(SPENDING_URL.into()),
         experimental: true,
         updated_at: Utc::now(),
+        used_percent: Some(p.round()),
+        period_start,
+        period_end,
+        expected_pace_percent,
     })
 }
 
@@ -517,6 +635,8 @@ mod tests {
     fn hero_is_cursor_mode_auto_percent_not_aggregate() {
         // User case: Cursor mode ~45%, other 0%, aggregate/spend ~41–43% must not be hero.
         let body = serde_json::json!({
+            "billingCycleStart": "1783279259000",
+            "billingCycleEnd": "1785957659000",
             "planUsage": {
                 "totalPercentUsed": 41.2,
                 "includedSpend": 1900,
@@ -530,12 +650,13 @@ mod tests {
         let snap = parse_period_usage_body(&body, "test").unwrap();
         assert!(snap.ok);
         assert_eq!(snap.primary_value.as_deref(), Some("45%"));
+        assert_eq!(snap.used_percent, Some(45.0));
         assert!(snap.unit.as_deref().unwrap().contains("Cursor mode"));
-        let sec = snap.secondary_value.unwrap();
-        assert!(sec.contains("Cursor mode 45%"));
-        assert!(sec.contains("Other Models 0%"));
-        assert!(!sec.contains("池加权"));
-        assert!(!sec.contains("口径：套餐进度"));
+        // Declutter: no dollar line, no source/半官方, no Other Models 0%.
+        assert!(snap.secondary_value.is_none());
+        assert!(snap.period_end.is_some());
+        assert!(snap.period_start.is_some());
+        assert!(snap.expected_pace_percent.is_some());
     }
 
     #[test]
@@ -583,8 +704,56 @@ mod tests {
         });
         let snap = parse_usage_summary_body(&body).unwrap();
         assert_eq!(snap.primary_value.as_deref(), Some("45%"));
+        // Other Models 0% dropped from secondary
+        assert!(snap.secondary_value.is_none());
+    }
+
+    #[test]
+    fn shows_other_models_only_when_nonzero() {
+        let body = serde_json::json!({
+            "planUsage": {
+                "autoPercentUsed": 45.0,
+                "apiPercentUsed": 12.0
+            }
+        });
+        let snap = parse_period_usage_body(&body, "test").unwrap();
         let sec = snap.secondary_value.unwrap();
-        assert!(sec.contains("Other Models 0%"));
+        assert!(sec.contains("Other Models 12%"));
+        assert!(!sec.contains('$'));
+        assert!(!sec.contains("半官方"));
+    }
+
+    #[test]
+    fn billing_cycle_epoch_ms_and_pace() {
+        let start_ms = 1_700_000_000_000_i64;
+        let end_ms = 1_702_592_000_000_i64;
+        let body = serde_json::json!({
+            "billingCycleStart": start_ms.to_string(),
+            "billingCycleEnd": end_ms.to_string(),
+            "planUsage": { "autoPercentUsed": 45.0, "apiPercentUsed": 0.0 }
+        });
+        let snap = parse_period_usage_body(&body, "test").unwrap();
+        assert_eq!(
+            snap.period_start,
+            DateTime::from_timestamp(start_ms / 1000, 0)
+        );
+        assert_eq!(
+            snap.period_end,
+            DateTime::from_timestamp(end_ms / 1000, 0)
+        );
+        // Midpoint → ~50% pace
+        let mid = DateTime::from_timestamp((start_ms + end_ms) / 2000, 0).unwrap();
+        let pace = expected_pace_percent(snap.period_start, snap.period_end, mid).unwrap();
+        assert!((pace - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn infer_start_when_only_end() {
+        let end = Utc.with_ymd_and_hms(2026, 4, 15, 12, 0, 0).unwrap();
+        let start = infer_period_start_from_end(end);
+        assert_eq!(start.year(), 2026);
+        assert_eq!(start.month(), 3);
+        assert_eq!(start.day(), 15);
     }
 
     #[test]

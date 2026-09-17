@@ -57,6 +57,10 @@ pub fn placeholder_failure(
         fallback_url: fallback_url.map(|s| s.into()),
         experimental,
         updated_at: Utc::now(),
+        used_percent: None,
+        period_start: None,
+        period_end: None,
+        expected_pace_percent: None,
     }
 }
 

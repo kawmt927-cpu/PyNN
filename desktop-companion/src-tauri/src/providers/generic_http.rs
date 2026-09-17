@@ -105,6 +105,10 @@ impl QuotaProvider for GenericHttpProvider {
                         fallback_url: None,
                         experimental: false,
                         updated_at: Utc::now(),
+                        used_percent: None,
+                        period_start: None,
+                        period_end: None,
+                        expected_pace_percent: None,
                     }
                 }
                 Err(e) => placeholder_failure(
