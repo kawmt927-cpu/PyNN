@@ -29,15 +29,15 @@ npm run tauri dev
 ### 你需要做一次
 
 1. **Spending 会话（额度 · 自动）**  
-   设置 → 会话方式选 **「自动」**（默认）→ 点 **「立即自动导入会话」**。  
+   点 **设置**（弹窗）→ 会话方式选 **「自动」**（默认）→ 点 **「立即自动导入会话」**。  
    优先读本机 Cursor `state.vscdb` 的 accessToken；否则读 Chrome/Arc/Edge/Brave 的 `WorkosCursorSessionToken`。  
    macOS 首次可能要授权「完全磁盘访问」或钥匙串「允许」。  
    定时刷新会重读会话，**不必反复粘贴 Cookie**。紧急时才展开手动粘贴。失败只打开 Spending，不造假数字。
 
-2. **本机 Hooks（状态色）**  
-   见 [`hooks/README.md`](./hooks/README.md)：把模板装到 `~/.cursor/`，跑一轮 Agent，确认 `~/.cursor/desktop-companion-status.json` 有更新。未装 hooks → 托盘灰色「未知」。
+2. **本机 Hooks（状态色 · 多 Agent）**  
+   见 [`hooks/README.md`](./hooks/README.md)：把模板装到 `~/.cursor/`，跑一轮 Agent，确认 `~/.cursor/desktop-companion-status.json` 的 `agents[]` 有更新。面板按**项目名**列出各 Agent；托盘色圆叠加用量 %。未装 hooks → 托盘灰色「未知」。
 
-不必配置 API Key。高级折叠里可选手动开 Cloud Agents（暂缓）。
+不必配置 API Key。设置弹窗 → 高级：可选手动开 Cloud Agents（暂缓）；自定义 HTTP 源一般不必用。
 
 打包：
 
@@ -62,11 +62,12 @@ npm run tauri build
 | --- | --- | --- |
 | 工作中 | 琥珀 | `beforeSubmitPrompt` / 工具进行中 |
 | 已完成 | 绿 | `stop` → completed |
-| 待跟进 | 紫 | **近似**：完成后无新一轮 |
+| 待跟进 | 紫 | **近似**：完成后无新一轮 / 显式 needs-input（非官方 WAITING） |
 | 失败 | 红 | `stop` → error / aborted |
 | 未知 | 灰 | 未装 hooks / 无状态文件 |
 
-后台按 `agent_poll_seconds`（默认 10s）读本地状态文件；托盘图标随状态变色。  
+托盘聚合优先级：**失败 → 待跟进 → 已完成 → 全部工作中**。色圆上显示 Spending 已用 % 整数。  
+后台按 `agent_poll_seconds`（默认 10s）读本地状态文件。  
 未聚焦时：完成 / 待跟进 / 失败 发 **通知桩**。
 
 ## 功能状态
