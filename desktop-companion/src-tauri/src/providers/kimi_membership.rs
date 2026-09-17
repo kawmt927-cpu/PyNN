@@ -1,41 +1,40 @@
-//! Kimi Code / membership quota — PRIMARY.
+//! Kimi **会员 · 用量进度**（主行）— 对齐官方桌面「总使用量 / Kimi vs Code」图例。
 //!
-//! Auth (Bearer only — no cookies):
-//! - Preferred: Console API key `sk-kimi-…` via `KIMI_CODE_TOKEN` / `KIMI_API_KEY`
-//! - Fallback: OAuth `access_token` from local `kimi login` credentials file
+//! NOT Kimi Code Console (`sk-kimi-` / `api.kimi.com/coding/v1/usages`).
 //!
-//! Endpoint (semi-official / community + CLI ecosystem):
-//!   GET {base}/usages  default base https://api.kimi.com/coding/v1
-//!
-//! Do NOT use Moonshot Open Platform keys here.
+//! Semi-official Connect RPC used by kimi.com / desktop membership UI:
+//!   POST /apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscriptionStats
+//! Auth: consumer Access Token (= cookie `kimi-auth`), via env `KIMI_AUTH_TOKEN`.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::config::{resolve_kimi_code_token, AppConfig};
+use crate::config::{resolve_kimi_member_token, AppConfig};
 use crate::models::QuotaSnapshot;
 use crate::providers::{http_client, placeholder_failure, QuotaProvider};
 
-const FALLBACK_URL: &str = "https://www.kimi.com/code";
-const HELP_MIXED_KEY: &str =
-    "请确认使用 Kimi Code Console 的 sk-kimi-… Key（或 kimi login 的 access_token），不要用开放平台 Moonshot Key。";
+const STATS_URL: &str =
+    "https://www.kimi.com/apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscriptionStats";
+const SUB_URL: &str =
+    "https://www.kimi.com/apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscription";
+const FALLBACK_URL: &str = "https://www.kimi.com";
+const HELP: &str =
+    "需要网页/桌面登录会话 Token（Cookie kimi-auth → KIMI_AUTH_TOKEN），不是 Code 的 sk-kimi- Key。";
 
 pub struct KimiMembershipProvider {
     token: Option<String>,
     token_source: Option<&'static str>,
-    base_url: String,
     token_ref: String,
 }
 
 impl KimiMembershipProvider {
     pub fn from_config(config: &AppConfig) -> Self {
-        let resolved = resolve_kimi_code_token(&config.kimi_code_token_ref);
+        let resolved = resolve_kimi_member_token(&config.kimi_auth_token_ref);
         Self {
             token: resolved.as_ref().map(|(t, _)| t.clone()),
             token_source: resolved.map(|(_, s)| s),
-            base_url: config.kimi_code_base_url.clone(),
-            token_ref: config.kimi_code_token_ref.clone(),
+            token_ref: config.kimi_auth_token_ref.clone(),
         }
     }
 }
@@ -43,22 +42,21 @@ impl KimiMembershipProvider {
 #[async_trait]
 impl QuotaProvider for KimiMembershipProvider {
     fn id(&self) -> &str {
-        "kimi_code_membership"
+        "kimi_member_usage"
     }
 
     async fn fetch(&self) -> QuotaSnapshot {
         let Some(token) = &self.token else {
             return QuotaSnapshot {
                 id: self.id().into(),
-                display_name: "Kimi 会员额度".into(),
+                display_name: "Kimi 会员 · 用量进度".into(),
                 primary_value: None,
                 secondary_value: None,
                 unit: None,
                 ok: false,
                 error_message: Some(format!(
-                    "未配置凭证。请在 desktop-companion/.env 设置 KIMI_CODE_TOKEN=sk-kimi-… \
-                     （或 KIMI_API_KEY），或先执行 kimi login。详见 docs/kimi-membership-credentials.md。\
-                     （期望 ref: {}）",
+                    "未配置会员会话。请将浏览器/桌面 Cookie「kimi-auth」写入本机 .env 的 \
+                     KIMI_AUTH_TOKEN=（勿发聊天）。{HELP}（ref: {}）",
                     self.token_ref
                 )),
                 fallback_url: Some(FALLBACK_URL.into()),
@@ -67,58 +65,13 @@ impl QuotaProvider for KimiMembershipProvider {
             };
         };
 
-        let url = format!("{}/usages", self.base_url.trim_end_matches('/'));
-        let res = http_client()
-            .get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            // Some Code endpoints gate on UA; harmless for usages in most clients.
-            .header("User-Agent", "KimiCLI/1.0 (desktop-companion)")
-            .send()
-            .await;
-
-        match res {
-            Ok(resp) => {
-                let status = resp.status();
-                if status.is_success() {
-                    match resp.json::<Value>().await {
-                        Ok(body) => {
-                            let mut snap = parse_usages(body);
-                            if snap.ok {
-                                if let Some(src) = self.token_source {
-                                    snap.secondary_value = Some(match snap.secondary_value {
-                                        Some(s) => format!("{s} · 凭证来源 {src}"),
-                                        None => format!("凭证来源 {src}"),
-                                    });
-                                }
-                            }
-                            snap
-                        }
-                        Err(e) => placeholder_failure(
-                            self.id(),
-                            "Kimi 会员额度",
-                            &format!("响应解析失败: {e}"),
-                            Some(FALLBACK_URL),
-                            true,
-                        ),
-                    }
-                } else {
-                    let body_hint = resp.text().await.unwrap_or_default();
-                    let short = body_hint.chars().take(120).collect::<String>();
-                    let msg = match status.as_u16() {
-                        401 => format!("HTTP 401 鉴权失败。{HELP_MIXED_KEY} {short}"),
-                        403 => format!(
-                            "HTTP 403 拒绝访问。检查会员是否有效、Key 是否被吊销。{short}"
-                        ),
-                        code => format!("HTTP {code}（半官方 /usages，可能变更）{short}"),
-                    };
-                    placeholder_failure(self.id(), "Kimi 会员额度", &msg, Some(FALLBACK_URL), true)
-                }
-            }
-            Err(e) => placeholder_failure(
+        let stats = post_connect(STATS_URL, token, serde_json::json!({})).await;
+        match stats {
+            Ok(body) => parse_stats(body, self.token_source, token).await,
+            Err(msg) => placeholder_failure(
                 self.id(),
-                "Kimi 会员额度",
-                &format!("请求失败: {e}"),
+                "Kimi 会员 · 用量进度",
+                &format!("{msg}。{HELP}"),
                 Some(FALLBACK_URL),
                 true,
             ),
@@ -126,71 +79,117 @@ impl QuotaProvider for KimiMembershipProvider {
     }
 }
 
-fn parse_usages(body: Value) -> QuotaSnapshot {
-    let usage = body.get("usage");
-    let limit = usage
-        .and_then(|u| u.get("limit"))
-        .and_then(|v| json_to_string(v));
-    let used = usage
-        .and_then(|u| u.get("used"))
-        .and_then(|v| json_to_string(v));
-    let remaining = usage
-        .and_then(|u| u.get("remaining"))
-        .and_then(|v| json_to_string(v));
-    let reset = usage
-        .and_then(|u| {
-            u.get("reset_at")
-                .or_else(|| u.get("resetTime"))
-                .or_else(|| u.get("resetAt"))
-        })
-        .and_then(|v| json_to_string(v));
+async fn post_connect(url: &str, token: &str, body: Value) -> Result<Value, String> {
+    let resp = http_client()
+        .post(url)
+        .bearer_auth(token)
+        .header("Cookie", format!("kimi-auth={token}"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "*/*")
+        .header("connect-protocol-version", "1")
+        .header("Origin", "https://www.kimi.com")
+        .header("Referer", "https://www.kimi.com/")
+        .header("x-msh-platform", "web")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
 
-    let primary = match (&remaining, &used, &limit) {
-        (Some(r), _, Some(l)) => Some(format!("剩余 {r} / {l}")),
-        (Some(r), _, None) => Some(format!("剩余 {r}")),
-        (None, Some(u), Some(l)) => Some(format!("已用 {u} / {l}")),
-        _ => None,
-    };
-
-    let window = body
-        .get("limits")
-        .and_then(|a| a.as_array())
-        .and_then(|a| a.first())
-        .and_then(|w| {
-            let detail = w.get("detail")?;
-            let rem = detail.get("remaining").and_then(json_to_string)?;
-            let lim = detail.get("limit").and_then(json_to_string)?;
-            Some(format!("窗口剩余 {rem}/{lim}"))
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let short: String = text.chars().take(160).collect();
+        return Err(match status.as_u16() {
+            401 => format!("HTTP 401 会话无效或过期。请重新复制 kimi-auth。{short}"),
+            403 => format!("HTTP 403 拒绝访问。{short}"),
+            code => format!("HTTP {code}（半官方 GetSubscriptionStats）。{short}"),
         });
+    }
+    serde_json::from_str(&text).map_err(|e| format!("JSON 解析失败: {e}"))
+}
 
-    let secondary = match (window, reset) {
-        (Some(w), Some(r)) => Some(format!("{w} · 重置 {r}")),
-        (Some(w), None) => Some(w),
-        (None, Some(r)) => Some(format!("重置 {r}")),
-        _ => None,
+async fn parse_stats(
+    body: Value,
+    token_source: Option<&'static str>,
+    token: &str,
+) -> QuotaSnapshot {
+    let bal = body
+        .get("subscriptionBalance")
+        .or_else(|| body.get("subscription_balance"));
+
+    let total = bal
+        .and_then(|b| {
+            b.get("amountUsedRatio")
+                .or_else(|| b.get("amount_used_ratio"))
+        })
+        .and_then(as_f64);
+
+    let code_ratio = bal
+        .and_then(|b| {
+            b.get("kimiCodeUsedRatio")
+                .or_else(|| b.get("kimi_code_used_ratio"))
+        })
+        .and_then(as_f64)
+        .unwrap_or(0.0);
+
+    let expire = bal
+        .and_then(|b| b.get("expireTime").or_else(|| b.get("expire_time")))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let Some(total_r) = total else {
+        return placeholder_failure(
+            "kimi_member_usage",
+            "Kimi 会员 · 用量进度",
+            "响应缺少 subscriptionBalance.amountUsedRatio（未伪造数值）",
+            Some(FALLBACK_URL),
+            true,
+        );
     };
 
-    if primary.is_none() {
-        return QuotaSnapshot {
-            id: "kimi_code_membership".into(),
-            display_name: "Kimi 会员额度".into(),
-            primary_value: None,
-            secondary_value: None,
-            unit: None,
-            ok: false,
-            error_message: Some("响应缺少可识别额度字段（未伪造数值）".into()),
-            fallback_url: Some(FALLBACK_URL.into()),
-            experimental: true,
-            updated_at: Utc::now(),
-        };
+    // Mirror desktop legend: Kimi (non-Code) + Code segments of the monthly pool.
+    let kimi_r = (total_r - code_ratio).max(0.0);
+    let primary = format!(
+        "总使用量 {:.2}% · Kimi {:.2}% · Code {:.2}%",
+        total_r * 100.0,
+        kimi_r * 100.0,
+        code_ratio * 100.0
+    );
+
+    let mut secondary_parts = Vec::new();
+    if let Some(exp) = &expire {
+        secondary_parts.push(format!("重置/到期 {exp}"));
     }
 
+    // Best-effort plan title (Allegretto etc.)
+    if let Ok(sub) = post_connect(SUB_URL, token, serde_json::json!({})).await {
+        if let Some(title) = sub
+            .pointer("/subscription/goods/title")
+            .or_else(|| sub.pointer("/purchaseSubscription/goods/title"))
+            .and_then(|v| v.as_str())
+        {
+            secondary_parts.insert(0, title.to_string());
+        }
+        if let Some(end) = sub
+            .pointer("/subscription/currentEndTime")
+            .or_else(|| sub.pointer("/subscription/current_end_time"))
+            .and_then(|v| v.as_str())
+        {
+            secondary_parts.push(format!("有效期至 {end}"));
+        }
+    }
+
+    if let Some(src) = token_source {
+        secondary_parts.push(format!("凭证 {src}"));
+    }
+    secondary_parts.push("Code 5h/7d 未在主行展示".into());
+
     QuotaSnapshot {
-        id: "kimi_code_membership".into(),
-        display_name: "Kimi 会员额度".into(),
-        primary_value: primary,
-        secondary_value: secondary,
-        unit: None,
+        id: "kimi_member_usage".into(),
+        display_name: "Kimi 会员 · 用量进度".into(),
+        primary_value: Some(primary),
+        secondary_value: Some(secondary_parts.join(" · ")),
+        unit: Some("%".into()),
         ok: true,
         error_message: None,
         fallback_url: None,
@@ -199,10 +198,7 @@ fn parse_usages(body: Value) -> QuotaSnapshot {
     }
 }
 
-fn json_to_string(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    }
+fn as_f64(v: &Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
