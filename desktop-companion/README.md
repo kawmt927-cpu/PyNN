@@ -1,6 +1,7 @@
-# Desktop Companion (MVP scaffold)
+# Desktop Companion (Cursor-only MVP)
 
-常驻托盘 + 小浮窗：Cloud Agent 状态色标、Cursor / Kimi 额度槽、可自定义 HTTP 额度源。
+常驻托盘 + 小浮窗：**Cursor 个人用量**（半官方）+ **Cloud Agent 运行状态**色标。  
+Kimi 会员 / 开放平台额度已从主产品路径移除（暂缓）。
 
 与仓库内医院 CRM（Next.js）**无关**，独立目录 `desktop-companion/`。
 
@@ -21,8 +22,12 @@ npm install
 npm run tauri dev
 ```
 
-首次启动后，在浮窗点 **设置**（或托盘菜单「设置…」）粘贴 **Kimi 会员 Token**（Cookie `kimi-auth`）→ **保存** → **刷新**。  
-不必再依赖终端 / `.env`（仍可作为备用）。
+首次启动后，浮窗点 **设置**（或托盘「设置…」）：
+
+1. **Cursor API Key** → 保存 → 刷新（Cloud Agents 状态色）
+2. （可选）**Cursor 用量会话** → 保存（半官方；失败只给 Spending 链）
+
+不必依赖 `.env`（仍可作为备用）。
 
 打包：
 
@@ -37,43 +42,54 @@ npm run tauri build
 
 | 用途 | 推荐 | 备用环境变量 | 说明 |
 | --- | --- | --- | --- |
-| **Kimi 会员 · 用量进度（主）** | **应用内设置** | `KIMI_AUTH_TOKEN` | Cookie **`kimi-auth`**（账号 Access Token）。对齐官方桌面「总使用量 / Kimi vs Code」。**不是** `sk-kimi-` |
-| Cloud Agents | 应用内设置（可选） | `CURSOR_API_KEY` | Dashboard API Keys |
-| Cursor 个人用量 | — | `CURSOR_USAGE_SESSION_TOKEN` | 半官方；失败深链 Spending |
-| 开放平台余额（次） | 应用内设置（可选） | `MOONSHOT_API_KEY` | 官方 balance |
+| Cloud Agents 状态 | **应用内设置** | `CURSOR_API_KEY` | Dashboard API Keys；托盘色 = 工作中 / 完成 / 待跟进 / 失败 |
+| Cursor 个人用量 | 应用内设置（可选） | `CURSOR_USAGE_SESSION_TOKEN` | **半官方**；个人版无稳定公开 API；失败 → [Spending](https://cursor.com/dashboard/spending)，**禁止假数字** |
 
-**优先路径：** 浮窗「设置 · 凭证」→ 粘贴 → 保存（系统钥匙串；失败则应用数据目录加密本地仓）。密钥**不会**回显、不会打日志、勿贴聊天。  
+**优先路径：** 浮窗「设置 · Cursor 凭证」→ 粘贴 → 保存（系统钥匙串；失败则加密本地仓）。密钥**不会**回显、不会打日志、勿贴聊天。
 
-**钥匙串注意：** keyring v3 必须启用 `apple-native` / `windows-native`（见 [`KEYRING.md`](./KEYRING.md)）；否则会落入进程内 mock，「已保存」但不持久。本地重建后请**重新粘贴保存一次** Token。
+**钥匙串注意：** keyring v3 必须启用 `apple-native` / `windows-native`（见 [`KEYRING.md`](./KEYRING.md)）。本地重建后请**重新粘贴保存一次**。
 
-**备用：** `cp .env.example .env` 后写入 `KIMI_AUTH_TOKEN=`（勿提交）。解析顺序：应用内存储 → 环境变量。
+**备用：** `cp .env.example .env` 后写入上述变量（勿提交）。解析顺序：应用内存储 → 环境变量。
 
-凭证说明：`docs/kimi-membership-credentials.md`（Agent Store）。
+## 状态色 + 通知
 
-## 功能状态（脚手架）
+| 语义 | 色 | 含义 |
+| --- | --- | --- |
+| 工作中 | 琥珀 | Agent / Run 进行中 |
+| 已完成 | 绿 | Run 结束 |
+| 待跟进 | 紫 | IDLE / 等用户 |
+| 失败 | 红 | ERROR 等 |
+
+后台按 `agent_poll_seconds`（默认 10s）轮询；托盘图标随聚合状态变色。  
+未聚焦时：完成 / 待跟进 / 失败 发 **通知桩**（事件 + 面板提示；OS 通知后续接线）。
+
+## 功能状态
 
 | 模块 | 状态 |
 | --- | --- |
-| 系统托盘 + 显示/隐藏面板 | ✅ |
-| **应用内设置（Kimi Token）** | ✅ 钥匙串 / 本地加密仓 |
-| 三色状态占位 / 聚合 | ✅（有 Cursor Key 时拉 Cloud Agents） |
-| 额度：Kimi 会员 → Cursor → Kimi 余额 | ✅ 接口桩；有会话则实请求（Cursor 用量仍待 Dashboard 接线） |
-| 自定义 HTTP 源 CRUD 内存桩 | ✅ |
-| 未聚焦通知 | ⏳ TODO |
+| 系统托盘 + 色标 | ✅ |
+| Cloud Agents 轮询 | ✅（需 Cursor API Key） |
+| Cursor 用量行 | ✅ 半官方桩；失败深链 Spending |
+| 应用内 Cursor 凭证 | ✅ 钥匙串 / 本地加密仓 |
+| 未聚焦通知 | ✅ 桩（事件 / toast） |
+| Kimi 会员 / 开放平台 | ❌ 暂缓，不在当前构建 |
+| 自定义 HTTP 源 CRUD | ✅ 内存/配置桩 |
 
 ## 架构速览
 
 ```
 src-tauri/src/
   agents/          Cloud Agents 轮询
-  providers/       kimi_membership, cursor, kimi_balance, generic_http
+  providers/       cursor, generic_http
+  tray_status.rs   托盘色标
+  notify.rs        未聚焦通知桩
   config.rs        secretRef 解析（settings → env）
   secrets.rs       OS keychain + 本地加密仓
-  models.rs        DTO + 自定义源配置形状
-  lib.rs           tray + Tauri commands + settings IPC
+  models.rs        DTO
+  lib.rs           tray + poller + settings IPC
 ```
 
-方案文档（Agent Store）：`docs/desktop-widget-plan.md`
+方案文档（Agent Store）：`docs/desktop-widget-plan.md`、`docs/cursor-only-mvp.md`
 
 ## 许可
 

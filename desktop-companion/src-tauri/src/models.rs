@@ -20,7 +20,6 @@ pub enum AgentUiStatus {
 }
 
 impl AgentUiStatus {
-    #[allow(dead_code)]
     pub fn label_zh(self) -> &'static str {
         match self {
             Self::Working => "工作中",

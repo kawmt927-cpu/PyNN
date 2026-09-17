@@ -13,7 +13,7 @@
           <span id="status-dot" class="dot status-unknown" title="状态"></span>
           <div>
             <h1>Desktop Companion</h1>
-            <p class="sub">额度 · Cloud Agent 状态</p>
+            <p class="sub">Cursor 额度 · Cloud Agent 状态</p>
           </div>
         </div>
         <div class="top-actions">
@@ -31,67 +31,74 @@
           <button type="button" data-demo="working">工作中</button>
           <button type="button" data-demo="done">完成</button>
           <button type="button" data-demo="needs-input">待跟进</button>
+          <button type="button" data-demo="failed">失败</button>
         </div>
       </section>
 
       <section class="card">
         <h2>额度</h2>
-        <p class="hint">顺序：Kimi 会员用量进度（主）→ Cursor 个人 → Kimi 开放平台余额 → 自定义。Code 5h/7d 非主行。</p>
+        <p class="hint">
+          仅 Cursor 个人用量（半官方）。失败时打开 Spending，不显示假数字。Kimi 额度已暂缓，不在当前构建。
+        </p>
         <ul id="quota-list" class="list"></ul>
         <p id="last-updated" class="muted">上次更新：—</p>
       </section>
 
       <section id="settings-panel" class="card">
-        <h2>设置 · 凭证</h2>
+        <h2>设置 · Cursor 凭证</h2>
         <p class="hint">
-          推荐在此粘贴保存。Token 写入系统钥匙串（失败时用应用数据目录加密本地仓），
+          在此粘贴保存。写入系统钥匙串（失败时用应用数据目录加密本地仓），
           <strong>不会</strong>提交到仓库、也不会打日志。备用方式才是 <code>.env</code>。
         </p>
 
         <label class="field">
-          <span class="field-label">Kimi 会员 Token（kimi-auth / Access Token）</span>
+          <span class="field-label">Cursor API Key（Cloud Agents 状态）</span>
           <input
-            id="input-kimi-auth"
+            id="input-cursor-key"
             type="password"
             autocomplete="off"
             spellcheck="false"
-            placeholder="粘贴浏览器 Cookie「kimi-auth」的 JWT"
+            placeholder="Dashboard → API Keys"
           />
         </label>
-        <p id="kimi-auth-status" class="muted status-line">状态：检查中…</p>
+        <p id="cursor-key-status" class="muted status-line">状态：检查中…</p>
         <p class="warn">
-          从 kimi.com 登录后 → 开发者工具 → Application → Cookies → <code>kimi-auth</code> 复制 Value。
-          <strong>不要</strong>粘贴 <code>sk-kimi-</code> Code Console Key。
+          用于轮询 Cloud Agents / Runs（工作中 / 已完成 / 待跟进）。在
+          <a href="https://cursor.com/dashboard" target="_blank" rel="noreferrer">cursor.com/dashboard</a>
+          创建 API Key。
         </p>
         <div class="btn-row">
-          <button id="btn-save-kimi" type="button" class="primary">保存</button>
-          <button id="btn-clear-kimi" type="button">清除</button>
+          <button id="btn-save-cursor" type="button" class="primary">保存</button>
+          <button id="btn-clear-cursor" type="button">清除</button>
         </div>
 
-        <details class="stubs">
-          <summary>其他密钥（可选）</summary>
-          <label class="field">
-            <span class="field-label">Cursor API Key（Cloud Agents）</span>
-            <input id="input-cursor-key" type="password" autocomplete="off" spellcheck="false" placeholder="可选" />
-          </label>
-          <p id="cursor-key-status" class="muted status-line">状态：—</p>
-          <div class="btn-row">
-            <button id="btn-save-cursor" type="button">保存</button>
-            <button id="btn-clear-cursor" type="button">清除</button>
-          </div>
+        <label class="field">
+          <span class="field-label">Cursor 用量会话（半官方 · 可选）</span>
+          <input
+            id="input-cursor-usage"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="CURSOR_USAGE_SESSION_TOKEN / 会话 Cookie"
+          />
+        </label>
+        <p id="cursor-usage-status" class="muted status-line">状态：—</p>
+        <p class="warn">
+          个人版<strong>无稳定公开用量 API</strong>。此字段为半官方 Dashboard 路径；未接线或失败时只提供
+          Spending 深链，<strong>不会造假 %</strong>。
+        </p>
+        <div class="btn-row">
+          <button id="btn-save-usage" type="button">保存用量会话</button>
+          <button id="btn-clear-usage" type="button">清除</button>
+        </div>
 
-          <label class="field">
-            <span class="field-label">Moonshot / 开放平台 Key</span>
-            <input id="input-moonshot-key" type="password" autocomplete="off" spellcheck="false" placeholder="可选 · 次要余额行" />
-          </label>
-          <p id="moonshot-key-status" class="muted status-line">状态：—</p>
-          <div class="btn-row">
-            <button id="btn-save-moonshot" type="button">保存</button>
-            <button id="btn-clear-moonshot" type="button">清除</button>
-          </div>
-        </details>
+        <label class="field checkbox-row">
+          <input id="input-notify-unfocused" type="checkbox" checked />
+          <span>未聚焦时通知（完成 / 待跟进 / 失败 · 当前为桩）</span>
+        </label>
 
         <p id="settings-feedback" class="muted status-line" hidden></p>
+        <p id="notify-toast" class="notify-toast" hidden></p>
       </section>
 
       <section class="card">

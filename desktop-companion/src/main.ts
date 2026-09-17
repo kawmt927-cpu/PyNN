@@ -53,11 +53,18 @@ interface GenericHttpProviderConfig {
 type SecretSource = "keychain" | "localVault" | "env" | "none";
 
 interface SettingsStatus {
-  kimiAuthConfigured: boolean;
-  kimiAuthSource: SecretSource;
   cursorApiKeyConfigured: boolean;
-  moonshotApiKeyConfigured: boolean;
-  kimiEffectiveSource: string;
+  cursorApiKeySource: SecretSource;
+  cursorUsageSessionConfigured: boolean;
+  cursorUsageSessionSource: SecretSource;
+  notifyWhenUnfocused: boolean;
+}
+
+interface NotifyStubPayload {
+  title: string;
+  body: string;
+  status: AgentUiStatus;
+  stub: boolean;
 }
 
 const statusLabel: Record<AgentUiStatus, string> = {
@@ -93,7 +100,7 @@ function render(state: CompanionState) {
       <li>
         <div class="row-title">
           <span>${escapeHtml(a.name)}</span>
-          <span class="badge">${statusLabel[a.status]}</span>
+          <span class="badge badge-${a.status}">${statusLabel[a.status]}</span>
         </div>
         ${a.detail ? `<div class="muted">${escapeHtml(a.detail)}</div>` : ""}
       </li>`
@@ -110,7 +117,7 @@ function render(state: CompanionState) {
         ? `<div class="error">${escapeHtml(q.errorMessage ?? "拉取失败")}</div>
            ${
              q.fallbackUrl
-               ? `<a class="fallback" href="#" data-url="${escapeHtml(q.fallbackUrl)}">打开仪表盘</a>`
+               ? `<a class="fallback" href="#" data-url="${escapeHtml(q.fallbackUrl)}">打开 Spending 仪表盘</a>`
                : ""
            }`
         : q.secondaryValue
@@ -154,21 +161,28 @@ function setFeedback(msg: string, ok: boolean) {
   el.className = `status-line ${ok ? "ok-msg" : "error"}`;
 }
 
+function showNotifyToast(p: NotifyStubPayload) {
+  const el = document.getElementById("notify-toast")!;
+  el.hidden = false;
+  el.textContent = `${p.title} — ${p.body}${p.stub ? "（通知桩）" : ""}`;
+  window.setTimeout(() => {
+    el.hidden = true;
+  }, 6000);
+}
+
 function renderSettingsStatus(s: SettingsStatus) {
-  const kimi = document.getElementById("kimi-auth-status")!;
-  const src = sourceLabel[s.kimiAuthSource] ?? s.kimiAuthSource;
-  const effective = s.kimiEffectiveSource;
-  kimi.textContent = s.kimiAuthConfigured
-    ? `状态：已配置（${src} · 生效来源 ${effective}）— 输入框不回显密钥`
-    : "状态：未配置 — 请粘贴 kimi-auth 后保存";
-
+  const apiSrc = sourceLabel[s.cursorApiKeySource] ?? s.cursorApiKeySource;
   document.getElementById("cursor-key-status")!.textContent = s.cursorApiKeyConfigured
-    ? "状态：已配置（不回显）"
-    : "状态：未配置（可选）";
+    ? `状态：已配置（${apiSrc}）— 输入框不回显`
+    : "状态：未配置 — 请粘贴 Cursor API Key 后保存";
 
-  document.getElementById("moonshot-key-status")!.textContent = s.moonshotApiKeyConfigured
-    ? "状态：已配置（不回显）"
-    : "状态：未配置（可选）";
+  const usageSrc = sourceLabel[s.cursorUsageSessionSource] ?? s.cursorUsageSessionSource;
+  document.getElementById("cursor-usage-status")!.textContent = s.cursorUsageSessionConfigured
+    ? `状态：已配置（${usageSrc}）— 半官方；失败仍链 Spending`
+    : "状态：未配置 — 可选；未配时额度行提示打开 Spending";
+
+  const box = document.getElementById("input-notify-unfocused") as HTMLInputElement;
+  box.checked = s.notifyWhenUnfocused;
 }
 
 async function loadSettingsStatus() {
@@ -176,7 +190,7 @@ async function loadSettingsStatus() {
     const s = await invoke<SettingsStatus>("get_settings_status");
     renderSettingsStatus(s);
   } catch (e) {
-    document.getElementById("kimi-auth-status")!.textContent = `状态读取失败：${e}`;
+    document.getElementById("cursor-key-status")!.textContent = `状态读取失败：${e}`;
   }
 }
 
@@ -218,7 +232,7 @@ function focusSettings() {
   const panel = document.getElementById("settings-panel")!;
   panel.classList.add("highlight");
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  document.getElementById("input-kimi-auth")?.focus();
+  document.getElementById("input-cursor-key")?.focus();
   window.setTimeout(() => panel.classList.remove("highlight"), 1600);
 }
 
@@ -235,39 +249,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  document.getElementById("btn-save-kimi")!.addEventListener("click", async () => {
-    const input = document.getElementById("input-kimi-auth") as HTMLInputElement;
-    const token = input.value;
-    try {
-      const s = await invoke<SettingsStatus>("save_kimi_auth_token", { token });
-      input.value = "";
-      renderSettingsStatus(s);
-      setFeedback("已保存 Kimi 会员 Token。正在刷新额度…", true);
-      await refresh();
-    } catch (e) {
-      setFeedback(`保存失败：${e}`, false);
-    }
-  });
-
-  document.getElementById("btn-clear-kimi")!.addEventListener("click", async () => {
-    try {
-      const s = await invoke<SettingsStatus>("clear_kimi_auth_token");
-      (document.getElementById("input-kimi-auth") as HTMLInputElement).value = "";
-      renderSettingsStatus(s);
-      setFeedback("已清除应用内 Kimi Token（环境变量若仍存在仍会生效）。", true);
-      await refresh();
-    } catch (e) {
-      setFeedback(`清除失败：${e}`, false);
-    }
-  });
-
   document.getElementById("btn-save-cursor")!.addEventListener("click", async () => {
     const input = document.getElementById("input-cursor-key") as HTMLInputElement;
     try {
       const s = await invoke<SettingsStatus>("save_cursor_api_key", { token: input.value });
       input.value = "";
       renderSettingsStatus(s);
-      setFeedback("已保存 Cursor API Key。", true);
+      setFeedback("已保存 Cursor API Key。正在刷新状态…", true);
       await refresh();
     } catch (e) {
       setFeedback(`保存失败：${e}`, false);
@@ -286,28 +274,41 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  document.getElementById("btn-save-moonshot")!.addEventListener("click", async () => {
-    const input = document.getElementById("input-moonshot-key") as HTMLInputElement;
+  document.getElementById("btn-save-usage")!.addEventListener("click", async () => {
+    const input = document.getElementById("input-cursor-usage") as HTMLInputElement;
     try {
-      const s = await invoke<SettingsStatus>("save_moonshot_api_key", { token: input.value });
+      const s = await invoke<SettingsStatus>("save_cursor_usage_session", {
+        token: input.value,
+      });
       input.value = "";
       renderSettingsStatus(s);
-      setFeedback("已保存 Moonshot Key。", true);
+      setFeedback("已保存用量会话。额度仍为半官方；失败请用 Spending。", true);
       await refresh();
     } catch (e) {
       setFeedback(`保存失败：${e}`, false);
     }
   });
 
-  document.getElementById("btn-clear-moonshot")!.addEventListener("click", async () => {
+  document.getElementById("btn-clear-usage")!.addEventListener("click", async () => {
     try {
-      const s = await invoke<SettingsStatus>("clear_moonshot_api_key");
-      (document.getElementById("input-moonshot-key") as HTMLInputElement).value = "";
+      const s = await invoke<SettingsStatus>("clear_cursor_usage_session");
+      (document.getElementById("input-cursor-usage") as HTMLInputElement).value = "";
       renderSettingsStatus(s);
-      setFeedback("已清除 Moonshot Key。", true);
+      setFeedback("已清除用量会话。", true);
       await refresh();
     } catch (e) {
       setFeedback(`清除失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("input-notify-unfocused")!.addEventListener("change", async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    try {
+      const s = await invoke<SettingsStatus>("set_notify_when_unfocused", { enabled });
+      renderSettingsStatus(s);
+      setFeedback(enabled ? "已开启未聚焦通知桩。" : "已关闭未聚焦通知。", true);
+    } catch (err) {
+      setFeedback(`设置失败：${err}`, false);
     }
   });
 
@@ -342,6 +343,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   await listen("companion://open-settings", () => {
     focusSettings();
+  });
+
+  await listen<CompanionState>("companion://state", (ev) => {
+    render(ev.payload);
+  });
+
+  await listen<NotifyStubPayload>("companion://notify-stub", (ev) => {
+    showNotifyToast(ev.payload);
   });
 
   await loadSettingsStatus();

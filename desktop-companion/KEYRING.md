@@ -6,7 +6,7 @@
 
 - `set_password` / `get_password` succeed inside the same process → UI showed「已保存」
 - Nothing is written to macOS Keychain / Windows Credential Manager / `secrets.enc`
-- After Refresh / restart →「未配置会员会话」
+- After Refresh / restart → credentials appear missing
 
 ## Fix
 
@@ -31,4 +31,4 @@ cd desktop-companion/src-tauri
 cargo test set_secret_persists_via_vault_when_keyring_mock_or_unavailable -- --nocapture
 ```
 
-After rebuilding on Mac, **re-paste** `kimi-auth` once in Settings → Save → Refresh.
+After rebuilding on Mac, **re-paste** Cursor API Key（以及可选用量会话）once in Settings → Save → Refresh.

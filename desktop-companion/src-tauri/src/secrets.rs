@@ -11,9 +11,8 @@ use serde::{Deserialize, Serialize};
 const SERVICE: &str = "com.vibecoding.desktop-companion";
 
 /// Well-known secret ids (keychain account / file keys).
-pub const KIMI_AUTH: &str = "kimi-auth";
 pub const CURSOR_API_KEY: &str = "cursor-api-key";
-pub const MOONSHOT_API_KEY: &str = "moonshot-api-key";
+pub const CURSOR_USAGE_SESSION: &str = "cursor-usage-session";
 
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -326,6 +325,7 @@ pub fn delete_secret(id: &str) -> Result<(), String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn has_secret(id: &str) -> bool {
     get_secret(id).is_some()
 }
@@ -358,21 +358,6 @@ pub fn secret_source(id: &str) -> SecretSource {
     SecretSource::None
 }
 
-/// Reject Code Console keys that users sometimes paste by mistake.
-pub fn validate_kimi_member_token(token: &str) -> Result<(), String> {
-    let t = token.trim();
-    if t.is_empty() {
-        return Err("Token 为空".into());
-    }
-    if t.starts_with("sk-kimi-") || t.starts_with("sk-") {
-        return Err(
-            "这看起来像 Code / API Key（sk-…），不是会员会话 Token。请粘贴浏览器 Cookie「kimi-auth」的 JWT。"
-                .into(),
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,13 +371,6 @@ mod tests {
             std::process::id(),
             TEST_SEQ.fetch_add(1, Ordering::SeqCst)
         )
-    }
-
-    #[test]
-    fn validate_rejects_code_api_key() {
-        assert!(validate_kimi_member_token("sk-kimi-abc").is_err());
-        assert!(validate_kimi_member_token("sk-abc").is_err());
-        assert!(validate_kimi_member_token("eyJhbGciOi.fake.jwt").is_ok());
     }
 
     /// Failure mode smoke: if keyring is mock / unavailable, set_secret must still
@@ -415,7 +393,7 @@ mod tests {
         std::env::set_var("DESKTOP_COMPANION_DATA_DIR", &dir);
 
         let id = unique_id("smoke");
-        let value = "test-member-token-not-a-secret-prod-value";
+        let value = "test-cursor-token-not-a-secret-prod-value";
 
         set_secret(&id, value).expect("set_secret must succeed via vault fallback");
         let got = get_secret(&id).expect("read-back must succeed");

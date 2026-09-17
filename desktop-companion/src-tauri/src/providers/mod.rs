@@ -1,9 +1,7 @@
-//! Quota provider adapters.
+//! Quota provider adapters (Cursor-only MVP).
 
 mod cursor;
 mod generic_http;
-mod kimi_balance;
-mod kimi_membership;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -16,8 +14,6 @@ use crate::models::QuotaSnapshot;
 
 pub use cursor::CursorPersonalProvider;
 pub use generic_http::GenericHttpProvider;
-pub use kimi_balance::KimiBalanceProvider;
-pub use kimi_membership::KimiMembershipProvider;
 
 #[async_trait]
 pub trait QuotaProvider: Send + Sync {
@@ -28,15 +24,9 @@ pub trait QuotaProvider: Send + Sync {
 pub async fn fetch_all_builtin(config: &AppConfig) -> Vec<QuotaSnapshot> {
     let mut rows = Vec::new();
 
-    // Priority: Kimi membership (primary) → Cursor personal → Kimi balance
-    let membership = KimiMembershipProvider::from_config(config);
-    rows.push(membership.fetch().await);
-
+    // Cursor-only MVP: personal usage row (+ optional custom HTTP sources).
     let cursor = CursorPersonalProvider::from_config(config);
     rows.push(cursor.fetch().await);
-
-    let balance = KimiBalanceProvider::from_config(config);
-    rows.push(balance.fetch().await);
 
     for custom in &config.custom_providers {
         if !custom.enabled {
@@ -80,7 +70,7 @@ pub fn missing_secret_snapshot(
     placeholder_failure(
         id,
         display_name,
-        &format!("未配置密钥（{secret_ref}）。请设置环境变量或钥匙串，仓库不存放密钥。"),
+        &format!("未配置密钥（{secret_ref}）。请在「设置」中粘贴，或设置环境变量。仓库不存放密钥。"),
         fallback_url,
         experimental,
     )

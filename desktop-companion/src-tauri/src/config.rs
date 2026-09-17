@@ -1,4 +1,5 @@
 //! App config + secret references (env / keychain). No secrets in repo.
+//! Cursor-only MVP — Kimi credential paths deferred / not compiled in.
 
 use std::fs;
 use std::path::PathBuf;
@@ -6,38 +7,34 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::models::GenericHttpProviderConfig;
-use crate::secrets::{self, SecretSource, CURSOR_API_KEY, KIMI_AUTH, MOONSHOT_API_KEY};
+use crate::secrets::{self, SecretSource, CURSOR_API_KEY, CURSOR_USAGE_SESSION};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppConfig {
     /// Cursor API key for Cloud Agents: env or keychain.
     pub cursor_api_key_ref: String,
+    /// Personal Cursor usage session (semi-official dashboard).
+    pub cursor_usage_session_ref: String,
     /// Personal Cursor usage is experimental (dashboard-style). Opt-in.
     pub cursor_usage_experimental: bool,
-    /// Kimi **member** session (= cookie `kimi-auth`).
-    pub kimi_auth_token_ref: String,
-    /// Moonshot open-platform key.
-    pub moonshot_api_key_ref: String,
-    /// Domestic default; switch for international.
-    pub moonshot_base_url: String,
     pub custom_providers: Vec<GenericHttpProviderConfig>,
     pub agent_poll_seconds: u64,
     pub quota_poll_seconds: u64,
+    /// When true, emit notification stubs on Done / NeedsInput / Failed while unfocused.
+    pub notify_when_unfocused: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             cursor_api_key_ref: format!("keychain:{CURSOR_API_KEY}"),
+            cursor_usage_session_ref: format!("keychain:{CURSOR_USAGE_SESSION}"),
             cursor_usage_experimental: true,
-            // Prefer in-app keychain; resolve_kimi_member_token still falls back to env.
-            kimi_auth_token_ref: format!("keychain:{KIMI_AUTH}"),
-            moonshot_api_key_ref: format!("keychain:{MOONSHOT_API_KEY}"),
-            moonshot_base_url: "https://api.moonshot.cn".into(),
             custom_providers: vec![],
             agent_poll_seconds: 10,
             quota_poll_seconds: 120,
+            notify_when_unfocused: true,
         }
     }
 }
@@ -96,87 +93,45 @@ fn env_token(name: &str) -> Option<String> {
     })
 }
 
-/// Consumer membership Access Token for GetSubscriptionStats (NOT Code API key).
-///
-/// Order: **in-app settings store** (`keychain:kimi-auth`) → configured ref →
-/// env `KIMI_AUTH_TOKEN` / aliases.
-pub fn resolve_kimi_member_token(primary_ref: &str) -> Option<(String, &'static str)> {
-    // 1) Settings store first (always), regardless of ref string.
-    if let Some(v) = secrets::get_secret(KIMI_AUTH) {
-        let src = match secrets::secret_source(KIMI_AUTH) {
-            SecretSource::Keychain => "settings",
-            SecretSource::LocalVault => "settings",
-            _ => "settings",
-        };
-        return Some((v, src));
-    }
-
-    // 2) Configured ref (env:… or other keychain id).
-    if !primary_ref.ends_with(KIMI_AUTH) {
-        if let Some(v) = resolve_secret(primary_ref) {
-            let src = if primary_ref.starts_with("env:") {
-                "env"
-            } else {
-                "settings"
-            };
-            return Some((v, src));
-        }
-    } else if let Some(name) = primary_ref.strip_prefix("env:") {
-        if let Some(v) = env_token(name) {
-            return Some((v, "env"));
-        }
-    }
-
-    // 3) Standard env fallbacks.
-    for (name, label) in [
-        ("KIMI_AUTH_TOKEN", "env"),
-        ("KIMI_WEB_TOKEN", "env_alias"),
-        ("KIMI_ACCESS_TOKEN", "env_alias"),
-    ] {
-        if let Some(v) = env_token(name) {
-            return Some((v, label));
-        }
-    }
-    None
-}
-
 /// Status for settings UI (no secret values).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsStatus {
-    pub kimi_auth_configured: bool,
-    pub kimi_auth_source: SecretSource,
     pub cursor_api_key_configured: bool,
-    pub moonshot_api_key_configured: bool,
-    /// Effective membership source after resolve (settings / env / none).
-    pub kimi_effective_source: String,
+    pub cursor_api_key_source: SecretSource,
+    pub cursor_usage_session_configured: bool,
+    pub cursor_usage_session_source: SecretSource,
+    pub notify_when_unfocused: bool,
 }
 
 pub fn settings_status(config: &AppConfig) -> SettingsStatus {
-    let kimi_store = secrets::secret_source(KIMI_AUTH);
-    let kimi_configured = kimi_store != SecretSource::None
-        || resolve_kimi_member_token(&config.kimi_auth_token_ref).is_some();
+    let api_store = secrets::secret_source(CURSOR_API_KEY);
+    let api_configured = api_store != SecretSource::None
+        || resolve_secret(&config.cursor_api_key_ref).is_some()
+        || env_token("CURSOR_API_KEY").is_some();
 
-    let effective = resolve_kimi_member_token(&config.kimi_auth_token_ref)
-        .map(|(_, s)| s.to_string())
-        .unwrap_or_else(|| "none".into());
+    let usage_store = secrets::secret_source(CURSOR_USAGE_SESSION);
+    let usage_configured = usage_store != SecretSource::None
+        || resolve_cursor_usage_session(config).is_some();
 
     SettingsStatus {
-        kimi_auth_configured: kimi_configured,
-        kimi_auth_source: if kimi_store != SecretSource::None {
-            kimi_store
-        } else if effective.starts_with("env") {
+        cursor_api_key_configured: api_configured,
+        cursor_api_key_source: if api_store != SecretSource::None {
+            api_store
+        } else if env_token("CURSOR_API_KEY").is_some() {
             SecretSource::Env
         } else {
             SecretSource::None
         },
-        cursor_api_key_configured: secrets::has_secret(CURSOR_API_KEY)
-            || resolve_secret(&config.cursor_api_key_ref).is_some()
-            || env_token("CURSOR_API_KEY").is_some(),
-        moonshot_api_key_configured: secrets::has_secret(MOONSHOT_API_KEY)
-            || resolve_secret(&config.moonshot_api_key_ref).is_some()
-            || env_token("MOONSHOT_API_KEY").is_some(),
-        kimi_effective_source: effective,
+        cursor_usage_session_configured: usage_configured,
+        cursor_usage_session_source: if usage_store != SecretSource::None {
+            usage_store
+        } else if env_token("CURSOR_USAGE_SESSION_TOKEN").is_some() {
+            SecretSource::Env
+        } else {
+            SecretSource::None
+        },
+        notify_when_unfocused: config.notify_when_unfocused,
     }
 }
 
@@ -191,15 +146,15 @@ pub fn resolve_cursor_api_key(config: &AppConfig) -> Option<String> {
     env_token("CURSOR_API_KEY")
 }
 
-/// Resolve Moonshot key: settings store → config ref → env.
-pub fn resolve_moonshot_api_key(config: &AppConfig) -> Option<String> {
-    if let Some(v) = secrets::get_secret(MOONSHOT_API_KEY) {
+/// Resolve Cursor personal usage session: settings → config ref → env.
+pub fn resolve_cursor_usage_session(config: &AppConfig) -> Option<String> {
+    if let Some(v) = secrets::get_secret(CURSOR_USAGE_SESSION) {
         return Some(v);
     }
-    if let Some(v) = resolve_secret(&config.moonshot_api_key_ref) {
+    if let Some(v) = resolve_secret(&config.cursor_usage_session_ref) {
         return Some(v);
     }
-    env_token("MOONSHOT_API_KEY")
+    env_token("CURSOR_USAGE_SESSION_TOKEN")
 }
 
 /// Load `desktop-companion/.env` if present (does not override existing env).

@@ -1,43 +1,76 @@
 mod agents;
 mod config;
 mod models;
+mod notify;
 mod providers;
 mod secrets;
+mod tray_status;
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use chrono::Utc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, State,
+    AppHandle, Emitter, Manager, State,
 };
 
 use config::{settings_status, AppConfig, SettingsStatus};
 use models::{AgentUiStatus, CompanionState, GenericHttpProviderConfig};
-use secrets::{CURSOR_API_KEY, KIMI_AUTH, MOONSHOT_API_KEY};
+use secrets::{CURSOR_API_KEY, CURSOR_USAGE_SESSION};
 
 struct AppState {
     config: Mutex<AppConfig>,
+    last_agent_status: Mutex<Option<AgentUiStatus>>,
+}
+
+async fn build_companion_state(config: &AppConfig) -> CompanionState {
+    let quotas = providers::fetch_all_builtin(config).await;
+    let (agent_status, agents) = agents::poll_cloud_agents(config).await;
+    CompanionState {
+        agent_status,
+        agents,
+        quotas,
+        last_updated: Utc::now(),
+    }
+}
+
+fn apply_status_side_effects(app: &AppHandle, state: &AppState, companion: &CompanionState) {
+    tray_status::apply_tray_status(app, companion.agent_status);
+
+    let previous = state
+        .last_agent_status
+        .lock()
+        .ok()
+        .and_then(|g| *g);
+    let notify = state
+        .config
+        .lock()
+        .map(|c| c.notify_when_unfocused)
+        .unwrap_or(true);
+
+    notify::maybe_notify_status_change(app, previous, companion.agent_status, notify);
+
+    if let Ok(mut guard) = state.last_agent_status.lock() {
+        *guard = Some(companion.agent_status);
+    }
 }
 
 #[tauri::command]
-async fn get_companion_state(state: State<'_, AppState>) -> Result<CompanionState, String> {
+async fn get_companion_state(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CompanionState, String> {
     let config = state
         .config
         .lock()
         .map_err(|_| "config lock".to_string())?
         .clone();
 
-    let quotas = providers::fetch_all_builtin(&config).await;
-    let (agent_status, agents) = agents::poll_cloud_agents(&config).await;
-
-    Ok(CompanionState {
-        agent_status,
-        agents,
-        quotas,
-        last_updated: Utc::now(),
-    })
+    let companion = build_companion_state(&config).await;
+    apply_status_side_effects(&app, &state, &companion);
+    Ok(companion)
 }
 
 #[tauri::command]
@@ -51,31 +84,6 @@ fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 
 #[tauri::command]
 fn get_settings_status(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
-    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
-    Ok(settings_status(&cfg))
-}
-
-#[tauri::command]
-fn save_kimi_auth_token(state: State<'_, AppState>, token: String) -> Result<SettingsStatus, String> {
-    secrets::validate_kimi_member_token(&token)?;
-    secrets::set_secret(KIMI_AUTH, &token)?;
-
-    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
-    cfg.kimi_auth_token_ref = format!("keychain:{KIMI_AUTH}");
-    config::save_app_config(&cfg)?;
-    let status = settings_status(&cfg);
-    if !status.kimi_auth_configured || status.kimi_auth_source == secrets::SecretSource::None {
-        return Err(
-            "凭证未能持久化：保存后仍读不到会员会话。请重试；若反复失败，检查钥匙串权限或应用数据目录。"
-                .into(),
-        );
-    }
-    Ok(status)
-}
-
-#[tauri::command]
-fn clear_kimi_auth_token(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
-    secrets::delete_secret(KIMI_AUTH)?;
     let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
     Ok(settings_status(&cfg))
 }
@@ -101,7 +109,7 @@ fn clear_cursor_api_key(state: State<'_, AppState>) -> Result<SettingsStatus, St
 }
 
 #[tauri::command]
-fn save_moonshot_api_key(
+fn save_cursor_usage_session(
     state: State<'_, AppState>,
     token: String,
 ) -> Result<SettingsStatus, String> {
@@ -109,17 +117,29 @@ fn save_moonshot_api_key(
     if t.is_empty() {
         return Err("内容为空".into());
     }
-    secrets::set_secret(MOONSHOT_API_KEY, t)?;
+    secrets::set_secret(CURSOR_USAGE_SESSION, t)?;
     let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
-    cfg.moonshot_api_key_ref = format!("keychain:{MOONSHOT_API_KEY}");
+    cfg.cursor_usage_session_ref = format!("keychain:{CURSOR_USAGE_SESSION}");
+    cfg.cursor_usage_experimental = true;
     config::save_app_config(&cfg)?;
     Ok(settings_status(&cfg))
 }
 
 #[tauri::command]
-fn clear_moonshot_api_key(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
-    secrets::delete_secret(MOONSHOT_API_KEY)?;
+fn clear_cursor_usage_session(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    secrets::delete_secret(CURSOR_USAGE_SESSION)?;
     let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn set_notify_when_unfocused(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<SettingsStatus, String> {
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.notify_when_unfocused = enabled;
+    config::save_app_config(&cfg)?;
     Ok(settings_status(&cfg))
 }
 
@@ -157,14 +177,16 @@ fn remove_custom_provider(state: State<'_, AppState>, id: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn demo_cycle_tray_status(status: String) -> AgentUiStatus {
-    match status.as_str() {
+fn demo_cycle_tray_status(app: AppHandle, status: String) -> AgentUiStatus {
+    let ui = match status.as_str() {
         "working" => AgentUiStatus::Working,
         "done" => AgentUiStatus::Done,
         "needs-input" => AgentUiStatus::NeedsInput,
         "failed" => AgentUiStatus::Failed,
         _ => AgentUiStatus::Unknown,
-    }
+    };
+    tray_status::apply_tray_status(&app, ui);
+    ui
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -181,14 +203,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &settings, &refresh, &quit])?;
 
-    let icon = app
-        .default_window_icon()
-        .expect("default window icon")
-        .clone();
-
     let _tray = TrayIconBuilder::with_id("main-tray")
-        .icon(icon)
-        .tooltip("Desktop Companion")
+        .icon(tray_status::status_icon(AgentUiStatus::Unknown))
+        .tooltip("Desktop Companion · 未知")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -226,6 +243,34 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+fn spawn_status_poller(app: &tauri::App) {
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        // Initial delay so setup finishes.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        loop {
+            let (poll_secs, config) = {
+                let state = handle.state::<AppState>();
+                let cfg = state
+                    .config
+                    .lock()
+                    .map(|c| c.clone())
+                    .unwrap_or_default();
+                (cfg.agent_poll_seconds.max(5), cfg)
+            };
+
+            let companion = build_companion_state(&config).await;
+            {
+                let state = handle.state::<AppState>();
+                apply_status_side_effects(&handle, &state, &companion);
+            }
+            let _ = handle.emit("companion://state", &companion);
+
+            tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     config::load_dotenv();
@@ -234,17 +279,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             config: Mutex::new(AppConfig::default()),
+            last_agent_status: Mutex::new(None),
         })
         .setup(|app| {
             // App data dir for config + encrypted secret vault fallback.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| {
-                    dirs::data_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join("desktop-companion")
-                });
+            let data_dir = app.path().app_data_dir().unwrap_or_else(|_| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("desktop-companion")
+            });
             let _ = std::fs::create_dir_all(&data_dir);
             secrets::init_app_data_dir(data_dir);
 
@@ -254,18 +297,18 @@ pub fn run() {
             }
 
             setup_tray(app)?;
+            spawn_status_poller(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_companion_state,
             get_app_config,
             get_settings_status,
-            save_kimi_auth_token,
-            clear_kimi_auth_token,
             save_cursor_api_key,
             clear_cursor_api_key,
-            save_moonshot_api_key,
-            clear_moonshot_api_key,
+            save_cursor_usage_session,
+            clear_cursor_usage_session,
+            set_notify_when_unfocused,
             list_custom_providers,
             upsert_custom_provider,
             remove_custom_provider,
