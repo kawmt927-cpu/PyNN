@@ -16,7 +16,10 @@
             <p class="sub">额度 · Cloud Agent 状态</p>
           </div>
         </div>
-        <button id="btn-refresh" type="button">刷新</button>
+        <div class="top-actions">
+          <button id="btn-settings" type="button">设置</button>
+          <button id="btn-refresh" type="button">刷新</button>
+        </div>
       </header>
 
       <section class="card">
@@ -36,6 +39,59 @@
         <p class="hint">顺序：Kimi 会员用量进度（主）→ Cursor 个人 → Kimi 开放平台余额 → 自定义。Code 5h/7d 非主行。</p>
         <ul id="quota-list" class="list"></ul>
         <p id="last-updated" class="muted">上次更新：—</p>
+      </section>
+
+      <section id="settings-panel" class="card">
+        <h2>设置 · 凭证</h2>
+        <p class="hint">
+          推荐在此粘贴保存。Token 写入系统钥匙串（失败时用应用数据目录加密本地仓），
+          <strong>不会</strong>提交到仓库、也不会打日志。备用方式才是 <code>.env</code>。
+        </p>
+
+        <label class="field">
+          <span class="field-label">Kimi 会员 Token（kimi-auth / Access Token）</span>
+          <input
+            id="input-kimi-auth"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="粘贴浏览器 Cookie「kimi-auth」的 JWT"
+          />
+        </label>
+        <p id="kimi-auth-status" class="muted status-line">状态：检查中…</p>
+        <p class="warn">
+          从 kimi.com 登录后 → 开发者工具 → Application → Cookies → <code>kimi-auth</code> 复制 Value。
+          <strong>不要</strong>粘贴 <code>sk-kimi-</code> Code Console Key。
+        </p>
+        <div class="btn-row">
+          <button id="btn-save-kimi" type="button" class="primary">保存</button>
+          <button id="btn-clear-kimi" type="button">清除</button>
+        </div>
+
+        <details class="stubs">
+          <summary>其他密钥（可选）</summary>
+          <label class="field">
+            <span class="field-label">Cursor API Key（Cloud Agents）</span>
+            <input id="input-cursor-key" type="password" autocomplete="off" spellcheck="false" placeholder="可选" />
+          </label>
+          <p id="cursor-key-status" class="muted status-line">状态：—</p>
+          <div class="btn-row">
+            <button id="btn-save-cursor" type="button">保存</button>
+            <button id="btn-clear-cursor" type="button">清除</button>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Moonshot / 开放平台 Key</span>
+            <input id="input-moonshot-key" type="password" autocomplete="off" spellcheck="false" placeholder="可选 · 次要余额行" />
+          </label>
+          <p id="moonshot-key-status" class="muted status-line">状态：—</p>
+          <div class="btn-row">
+            <button id="btn-save-moonshot" type="button">保存</button>
+            <button id="btn-clear-moonshot" type="button">清除</button>
+          </div>
+        </details>
+
+        <p id="settings-feedback" class="muted status-line" hidden></p>
       </section>
 
       <section class="card">

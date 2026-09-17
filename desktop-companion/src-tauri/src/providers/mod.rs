@@ -8,7 +8,10 @@ mod kimi_membership;
 use async_trait::async_trait;
 use chrono::Utc;
 
-use crate::config::{resolve_secret, AppConfig};
+use crate::config::AppConfig;
+
+#[allow(unused_imports)]
+pub use crate::config::resolve_secret;
 use crate::models::QuotaSnapshot;
 
 pub use cursor::CursorPersonalProvider;

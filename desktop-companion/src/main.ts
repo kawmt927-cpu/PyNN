@@ -50,12 +50,29 @@ interface GenericHttpProviderConfig {
   pollSeconds: number;
 }
 
+type SecretSource = "keychain" | "localVault" | "env" | "none";
+
+interface SettingsStatus {
+  kimiAuthConfigured: boolean;
+  kimiAuthSource: SecretSource;
+  cursorApiKeyConfigured: boolean;
+  moonshotApiKeyConfigured: boolean;
+  kimiEffectiveSource: string;
+}
+
 const statusLabel: Record<AgentUiStatus, string> = {
   working: "工作中",
   done: "已完成",
   "needs-input": "待跟进",
   failed: "失败",
   unknown: "未知",
+};
+
+const sourceLabel: Record<SecretSource, string> = {
+  keychain: "系统钥匙串",
+  localVault: "本地加密仓",
+  env: "环境变量",
+  none: "未配置",
 };
 
 function setDot(status: AgentUiStatus) {
@@ -130,6 +147,39 @@ function escapeHtml(s: string) {
     .replaceAll('"', "&quot;");
 }
 
+function setFeedback(msg: string, ok: boolean) {
+  const el = document.getElementById("settings-feedback")!;
+  el.hidden = !msg;
+  el.textContent = msg;
+  el.className = `status-line ${ok ? "ok-msg" : "error"}`;
+}
+
+function renderSettingsStatus(s: SettingsStatus) {
+  const kimi = document.getElementById("kimi-auth-status")!;
+  const src = sourceLabel[s.kimiAuthSource] ?? s.kimiAuthSource;
+  const effective = s.kimiEffectiveSource;
+  kimi.textContent = s.kimiAuthConfigured
+    ? `状态：已配置（${src} · 生效来源 ${effective}）— 输入框不回显密钥`
+    : "状态：未配置 — 请粘贴 kimi-auth 后保存";
+
+  document.getElementById("cursor-key-status")!.textContent = s.cursorApiKeyConfigured
+    ? "状态：已配置（不回显）"
+    : "状态：未配置（可选）";
+
+  document.getElementById("moonshot-key-status")!.textContent = s.moonshotApiKeyConfigured
+    ? "状态：已配置（不回显）"
+    : "状态：未配置（可选）";
+}
+
+async function loadSettingsStatus() {
+  try {
+    const s = await invoke<SettingsStatus>("get_settings_status");
+    renderSettingsStatus(s);
+  } catch (e) {
+    document.getElementById("kimi-auth-status")!.textContent = `状态读取失败：${e}`;
+  }
+}
+
 async function refresh() {
   try {
     const state = await invoke<CompanionState>("get_companion_state");
@@ -164,8 +214,17 @@ async function refreshCustom() {
   );
 }
 
+function focusSettings() {
+  const panel = document.getElementById("settings-panel")!;
+  panel.classList.add("highlight");
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById("input-kimi-auth")?.focus();
+  window.setTimeout(() => panel.classList.remove("highlight"), 1600);
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-refresh")!.addEventListener("click", () => refresh());
+  document.getElementById("btn-settings")!.addEventListener("click", () => focusSettings());
 
   document.querySelectorAll<HTMLButtonElement>("[data-demo]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -174,6 +233,82 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
       setDot(status);
     });
+  });
+
+  document.getElementById("btn-save-kimi")!.addEventListener("click", async () => {
+    const input = document.getElementById("input-kimi-auth") as HTMLInputElement;
+    const token = input.value;
+    try {
+      const s = await invoke<SettingsStatus>("save_kimi_auth_token", { token });
+      input.value = "";
+      renderSettingsStatus(s);
+      setFeedback("已保存 Kimi 会员 Token。正在刷新额度…", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`保存失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-clear-kimi")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("clear_kimi_auth_token");
+      (document.getElementById("input-kimi-auth") as HTMLInputElement).value = "";
+      renderSettingsStatus(s);
+      setFeedback("已清除应用内 Kimi Token（环境变量若仍存在仍会生效）。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`清除失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-save-cursor")!.addEventListener("click", async () => {
+    const input = document.getElementById("input-cursor-key") as HTMLInputElement;
+    try {
+      const s = await invoke<SettingsStatus>("save_cursor_api_key", { token: input.value });
+      input.value = "";
+      renderSettingsStatus(s);
+      setFeedback("已保存 Cursor API Key。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`保存失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-clear-cursor")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("clear_cursor_api_key");
+      (document.getElementById("input-cursor-key") as HTMLInputElement).value = "";
+      renderSettingsStatus(s);
+      setFeedback("已清除 Cursor API Key。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`清除失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-save-moonshot")!.addEventListener("click", async () => {
+    const input = document.getElementById("input-moonshot-key") as HTMLInputElement;
+    try {
+      const s = await invoke<SettingsStatus>("save_moonshot_api_key", { token: input.value });
+      input.value = "";
+      renderSettingsStatus(s);
+      setFeedback("已保存 Moonshot Key。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`保存失败：${e}`, false);
+    }
+  });
+
+  document.getElementById("btn-clear-moonshot")!.addEventListener("click", async () => {
+    try {
+      const s = await invoke<SettingsStatus>("clear_moonshot_api_key");
+      (document.getElementById("input-moonshot-key") as HTMLInputElement).value = "";
+      renderSettingsStatus(s);
+      setFeedback("已清除 Moonshot Key。", true);
+      await refresh();
+    } catch (e) {
+      setFeedback(`清除失败：${e}`, false);
+    }
   });
 
   document.getElementById("btn-add-sample")!.addEventListener("click", async () => {
@@ -205,6 +340,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     void refresh();
   });
 
+  await listen("companion://open-settings", () => {
+    focusSettings();
+  });
+
+  await loadSettingsStatus();
   await refresh();
   await refreshCustom();
 });

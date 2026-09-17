@@ -2,6 +2,7 @@ mod agents;
 mod config;
 mod models;
 mod providers;
+mod secrets;
 
 use std::sync::Mutex;
 
@@ -12,8 +13,9 @@ use tauri::{
     Emitter, Manager, State,
 };
 
-use config::AppConfig;
+use config::{settings_status, AppConfig, SettingsStatus};
 use models::{AgentUiStatus, CompanionState, GenericHttpProviderConfig};
+use secrets::{CURSOR_API_KEY, KIMI_AUTH, MOONSHOT_API_KEY};
 
 struct AppState {
     config: Mutex<AppConfig>,
@@ -48,6 +50,73 @@ fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+fn get_settings_status(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn save_kimi_auth_token(state: State<'_, AppState>, token: String) -> Result<SettingsStatus, String> {
+    secrets::validate_kimi_member_token(&token)?;
+    secrets::set_secret(KIMI_AUTH, &token)?;
+
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.kimi_auth_token_ref = format!("keychain:{KIMI_AUTH}");
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn clear_kimi_auth_token(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    secrets::delete_secret(KIMI_AUTH)?;
+    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn save_cursor_api_key(state: State<'_, AppState>, token: String) -> Result<SettingsStatus, String> {
+    let t = token.trim();
+    if t.is_empty() {
+        return Err("内容为空".into());
+    }
+    secrets::set_secret(CURSOR_API_KEY, t)?;
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.cursor_api_key_ref = format!("keychain:{CURSOR_API_KEY}");
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn clear_cursor_api_key(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    secrets::delete_secret(CURSOR_API_KEY)?;
+    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn save_moonshot_api_key(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<SettingsStatus, String> {
+    let t = token.trim();
+    if t.is_empty() {
+        return Err("内容为空".into());
+    }
+    secrets::set_secret(MOONSHOT_API_KEY, t)?;
+    let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    cfg.moonshot_api_key_ref = format!("keychain:{MOONSHOT_API_KEY}");
+    config::save_app_config(&cfg)?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
+fn clear_moonshot_api_key(state: State<'_, AppState>) -> Result<SettingsStatus, String> {
+    secrets::delete_secret(MOONSHOT_API_KEY)?;
+    let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
+    Ok(settings_status(&cfg))
+}
+
+#[tauri::command]
 fn list_custom_providers(state: State<'_, AppState>) -> Result<Vec<GenericHttpProviderConfig>, String> {
     let cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
     Ok(cfg.custom_providers.clone())
@@ -68,6 +137,7 @@ fn upsert_custom_provider(
     } else {
         cfg.custom_providers.push(provider);
     }
+    let _ = config::save_app_config(&cfg);
     Ok(())
 }
 
@@ -75,6 +145,7 @@ fn upsert_custom_provider(
 fn remove_custom_provider(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
     cfg.custom_providers.retain(|p| p.id != id);
+    let _ = config::save_app_config(&cfg);
     Ok(())
 }
 
@@ -89,11 +160,19 @@ fn demo_cycle_tray_status(status: String) -> AgentUiStatus {
     }
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示面板", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "刷新", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &refresh, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &settings, &refresh, &quit])?;
 
     let icon = app
         .default_window_icon()
@@ -106,11 +185,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+            "show" => show_main_window(app),
+            "settings" => {
+                show_main_window(app);
+                let _ = app.emit("companion://open-settings", ());
             }
             "refresh" => {
                 let _ = app.emit("companion://refresh", ());
@@ -151,12 +229,36 @@ pub fn run() {
             config: Mutex::new(AppConfig::default()),
         })
         .setup(|app| {
+            // App data dir for config + encrypted secret vault fallback.
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| {
+                    dirs::data_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("desktop-companion")
+                });
+            let _ = std::fs::create_dir_all(&data_dir);
+            secrets::init_app_data_dir(data_dir);
+
+            // Replace default managed config with persisted refs (no secret values).
+            if let Ok(mut guard) = app.state::<AppState>().config.lock() {
+                *guard = config::load_app_config();
+            }
+
             setup_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_companion_state,
             get_app_config,
+            get_settings_status,
+            save_kimi_auth_token,
+            clear_kimi_auth_token,
+            save_cursor_api_key,
+            clear_cursor_api_key,
+            save_moonshot_api_key,
+            clear_moonshot_api_key,
             list_custom_providers,
             upsert_custom_provider,
             remove_custom_provider,

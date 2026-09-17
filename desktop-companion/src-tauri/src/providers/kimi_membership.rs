@@ -20,7 +20,7 @@ const SUB_URL: &str =
     "https://www.kimi.com/apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscription";
 const FALLBACK_URL: &str = "https://www.kimi.com";
 const HELP: &str =
-    "需要网页/桌面登录会话 Token（Cookie kimi-auth → KIMI_AUTH_TOKEN），不是 Code 的 sk-kimi- Key。";
+    "需要网页/桌面登录会话 Token（Cookie kimi-auth）。请在应用「设置」中粘贴保存，或备用环境变量 KIMI_AUTH_TOKEN。不要使用 Code 的 sk-kimi- Key。";
 
 pub struct KimiMembershipProvider {
     token: Option<String>,
@@ -55,8 +55,8 @@ impl QuotaProvider for KimiMembershipProvider {
                 unit: None,
                 ok: false,
                 error_message: Some(format!(
-                    "未配置会员会话。请将浏览器/桌面 Cookie「kimi-auth」写入本机 .env 的 \
-                     KIMI_AUTH_TOKEN=（勿发聊天）。{HELP}（ref: {}）",
+                    "未配置会员会话。请打开「设置」粘贴 Cookie「kimi-auth」（Access Token）并保存，\
+                     然后点刷新（勿发聊天）。{HELP}（ref: {}）",
                     self.token_ref
                 )),
                 fallback_url: Some(FALLBACK_URL.into()),

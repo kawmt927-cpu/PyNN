@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::config::AppConfig;
+use crate::config::{resolve_moonshot_api_key, AppConfig};
 use crate::models::QuotaSnapshot;
 use crate::providers::{
-    http_client, missing_secret_snapshot, placeholder_failure, resolve_secret, QuotaProvider,
+    http_client, missing_secret_snapshot, placeholder_failure, QuotaProvider,
 };
 
 pub struct KimiBalanceProvider {
@@ -19,7 +19,7 @@ pub struct KimiBalanceProvider {
 impl KimiBalanceProvider {
     pub fn from_config(config: &AppConfig) -> Self {
         Self {
-            api_key: resolve_secret(&config.moonshot_api_key_ref),
+            api_key: resolve_moonshot_api_key(config),
             base_url: config.moonshot_base_url.clone(),
             key_ref: config.moonshot_api_key_ref.clone(),
         }

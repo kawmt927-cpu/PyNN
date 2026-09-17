@@ -3,21 +3,21 @@
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::config::{resolve_secret, AppConfig};
+use crate::config::{resolve_cursor_api_key, AppConfig};
 use crate::models::{AgentSnapshot, AgentUiStatus};
 use crate::providers::http_client;
 
 const API_BASE: &str = "https://api.cursor.com";
 
 pub async fn poll_cloud_agents(config: &AppConfig) -> (AgentUiStatus, Vec<AgentSnapshot>) {
-    let Some(api_key) = resolve_secret(&config.cursor_api_key_ref) else {
+    let Some(api_key) = resolve_cursor_api_key(config) else {
         return (
             AgentUiStatus::Unknown,
             vec![AgentSnapshot {
                 id: "stub".into(),
-                name: "未配置 CURSOR_API_KEY".into(),
+                name: "未配置 Cursor API Key".into(),
                 status: AgentUiStatus::Unknown,
-                detail: Some("设置 env:CURSOR_API_KEY 后可轮询 Cloud Agents".into()),
+                detail: Some("在「设置」中粘贴 Cursor API Key，或设置环境变量 CURSOR_API_KEY".into()),
                 updated_at: Utc::now(),
             }],
         );

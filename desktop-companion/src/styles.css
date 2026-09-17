@@ -10,6 +10,7 @@
   --needs: #7c3aed;
   --failed: #b91c1c;
   --unknown: #94a3b8;
+  --accent: #0f4c5c;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
@@ -39,6 +40,11 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.top-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .brand {
@@ -122,10 +128,25 @@ body {
   margin: 0 0 8px;
 }
 
+.warn {
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
 .error {
   color: var(--failed);
   font-size: 0.78rem;
   margin-top: 4px;
+}
+
+.ok-msg {
+  color: var(--done);
 }
 
 a.fallback {
@@ -147,12 +168,71 @@ button:hover {
   background: #f8fafc;
 }
 
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+button.primary:hover {
+  filter: brightness(1.08);
+}
+
 .demo-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   margin-top: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 6px;
+}
+
+.field-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.field input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  background: #fff;
+}
+
+.field input:focus {
+  outline: 2px solid rgba(15, 76, 92, 0.25);
+  border-color: var(--accent);
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.status-line {
+  margin: 0 0 8px;
+}
+
+.stubs {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.stubs summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 6px;
 }
 
 .code {
@@ -163,4 +243,9 @@ button:hover {
   font-size: 0.7rem;
   overflow: auto;
   max-height: 140px;
+}
+
+#settings-panel:focus-within,
+#settings-panel.highlight {
+  box-shadow: 0 0 0 2px rgba(15, 76, 92, 0.2);
 }
