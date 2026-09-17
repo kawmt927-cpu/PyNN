@@ -44,6 +44,8 @@ npm run tauri build
 
 **优先路径：** 浮窗「设置 · 凭证」→ 粘贴 → 保存（系统钥匙串；失败则应用数据目录加密本地仓）。密钥**不会**回显、不会打日志、勿贴聊天。  
 
+**钥匙串注意：** keyring v3 必须启用 `apple-native` / `windows-native`（见 [`KEYRING.md`](./KEYRING.md)）；否则会落入进程内 mock，「已保存」但不持久。本地重建后请**重新粘贴保存一次** Token。
+
 **备用：** `cp .env.example .env` 后写入 `KIMI_AUTH_TOKEN=`（勿提交）。解析顺序：应用内存储 → 环境变量。
 
 凭证说明：`docs/kimi-membership-credentials.md`（Agent Store）。

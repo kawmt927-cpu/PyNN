@@ -23,7 +23,10 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 dotenvy = "0.15"
-keyring = "3"
+# keyring v3 has NO default platform stores — without features it uses in-process
+# mock (set succeeds, nothing persists → fake "已保存"). Enable real OS stores:
+# macOS Keychain, Windows Credential Manager, Linux Secret Service.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 dirs = "6"
 
 [profile.release]

@@ -31,6 +31,12 @@ pub fn app_data_dir_public() -> PathBuf {
 }
 
 fn app_data_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("DESKTOP_COMPANION_DATA_DIR") {
+        let path = PathBuf::from(p);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
+    }
     app_data_dir_public()
 }
 
@@ -144,28 +150,101 @@ fn keyring_entry(id: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, id).map_err(|e| format!("钥匙串不可用: {e}"))
 }
 
+/// True when the active keyring backend is the in-process mock (no OS store feature
+/// for this target, or mock forced). Mock `set_password` succeeds but does not persist.
+fn keyring_is_in_process_mock() -> bool {
+    match keyring::Entry::new(SERVICE, "__desktop_companion_persistence_probe__") {
+        Ok(entry) => entry_is_mock(&entry),
+        Err(_) => true,
+    }
+}
+
+fn entry_is_mock(entry: &keyring::Entry) -> bool {
+    entry
+        .get_credential()
+        .downcast_ref::<keyring::mock::MockCredential>()
+        .is_some()
+}
+
+/// Attempt OS keychain write. Returns Ok(true) if a real (non-mock) store accepted
+/// the value; Ok(false) if keyring is unavailable/mock (caller should use vault);
+/// Err only for unexpected hard failures after a real store was selected.
+fn try_set_os_keyring(id: &str, value: &str) -> Result<bool, String> {
+    if keyring_is_in_process_mock() {
+        return Ok(false);
+    }
+    let entry = match keyring_entry(id) {
+        Ok(e) => e,
+        Err(_) => return Ok(false),
+    };
+    if entry_is_mock(&entry) {
+        return Ok(false);
+    }
+    match entry.set_password(value) {
+        Ok(()) => Ok(true),
+        Err(e) => {
+            // Real store present but write failed — fall back to vault rather than
+            // reporting success; caller still verifies read-back.
+            let _ = e;
+            Ok(false)
+        }
+    }
+}
+
+fn passwords_match(stored: &str, expected: &str) -> bool {
+    stored.trim() == expected.trim()
+}
+
 /// Persist a secret. Prefer OS keychain; fall back to local vault under app data.
+/// Always verifies read-back before returning Ok — never report success for mock-only writes.
 pub fn set_secret(id: &str, value: &str) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("内容为空".into());
     }
 
-    match keyring_entry(id).and_then(|e| {
-        e.set_password(trimmed)
-            .map_err(|err| format!("钥匙串写入失败: {err}"))
-    }) {
-        Ok(()) => {
-            // Keep file vault in sync empty for this id if we used keychain.
+    let mut keyring_wrote = false;
+    match try_set_os_keyring(id, trimmed) {
+        Ok(true) => {
+            keyring_wrote = true;
+            // Prefer keychain as source of truth; drop vault copy for this id.
             let _ = delete_file_secret(id);
-            return Ok(());
         }
-        Err(_) => {
-            // Fall through to encrypted local store.
+        Ok(false) => {
+            // Mock / unavailable — use encrypted local vault.
         }
+        Err(e) => return Err(e),
     }
 
-    set_file_secret(id, trimmed)
+    if keyring_wrote {
+        if let Some(got) = get_secret(id) {
+            if passwords_match(&got, trimmed) {
+                return Ok(());
+            }
+        }
+        // Keychain claimed success but read-back failed — try vault before erroring.
+        let _ = keyring_entry(id).and_then(|e| {
+            e.delete_credential()
+                .or_else(|err| match err {
+                    keyring::Error::NoEntry => Ok(()),
+                    other => Err(format!("钥匙串清理失败: {other}")),
+                })
+        });
+    }
+
+    set_file_secret(id, trimmed)?;
+
+    match get_secret(id) {
+        Some(got) if passwords_match(&got, trimmed) => Ok(()),
+        Some(_) => Err(
+            "凭证未能持久化：写入后读回内容不一致。请重试保存，或检查系统钥匙串 / 应用数据目录权限。"
+                .into(),
+        ),
+        None => Err(
+            "凭证未能持久化：钥匙串不可用且本地加密仓读回失败。请检查应用数据目录权限后重试。"
+                .into(),
+        ),
+    }
 }
 
 fn set_file_secret(id: &str, value: &str) -> Result<(), String> {
@@ -197,11 +276,16 @@ fn get_file_secret(id: &str) -> Option<String> {
 }
 
 pub fn get_secret(id: &str) -> Option<String> {
-    if let Ok(entry) = keyring_entry(id) {
-        if let Ok(pw) = entry.get_password() {
-            let t = pw.trim();
-            if !t.is_empty() {
-                return Some(t.to_string());
+    // Skip in-process mock: values there are not durable across restarts.
+    if !keyring_is_in_process_mock() {
+        if let Ok(entry) = keyring_entry(id) {
+            if !entry_is_mock(&entry) {
+                if let Ok(pw) = entry.get_password() {
+                    let t = pw.trim();
+                    if !t.is_empty() {
+                        return Some(t.to_string());
+                    }
+                }
             }
         }
     }
@@ -257,10 +341,14 @@ pub enum SecretSource {
 }
 
 pub fn secret_source(id: &str) -> SecretSource {
-    if let Ok(entry) = keyring_entry(id) {
-        if let Ok(pw) = entry.get_password() {
-            if !pw.trim().is_empty() {
-                return SecretSource::Keychain;
+    if !keyring_is_in_process_mock() {
+        if let Ok(entry) = keyring_entry(id) {
+            if !entry_is_mock(&entry) {
+                if let Ok(pw) = entry.get_password() {
+                    if !pw.trim().is_empty() {
+                        return SecretSource::Keychain;
+                    }
+                }
             }
         }
     }
@@ -283,4 +371,69 @@ pub fn validate_kimi_member_token(token: &str) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_id(prefix: &str) -> String {
+        format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            TEST_SEQ.fetch_add(1, Ordering::SeqCst)
+        )
+    }
+
+    #[test]
+    fn validate_rejects_code_api_key() {
+        assert!(validate_kimi_member_token("sk-kimi-abc").is_err());
+        assert!(validate_kimi_member_token("sk-abc").is_err());
+        assert!(validate_kimi_member_token("eyJhbGciOi.fake.jwt").is_ok());
+    }
+
+    /// Failure mode smoke: if keyring is mock / unavailable, set_secret must still
+    /// persist via local vault and survive get_secret — never Ok with empty read-back.
+    #[test]
+    fn set_secret_persists_via_vault_when_keyring_mock_or_unavailable() {
+        // Reproduce live-test failure mode: keyring v3 mock (no apple-native / etc.).
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        assert!(
+            keyring_is_in_process_mock(),
+            "test setup must force mock keyring"
+        );
+
+        let dir = std::env::temp_dir().join(format!(
+            "desktop-companion-secrets-test-{}",
+            unique_id("dir")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("DESKTOP_COMPANION_DATA_DIR", &dir);
+
+        let id = unique_id("smoke");
+        let value = "test-member-token-not-a-secret-prod-value";
+
+        set_secret(&id, value).expect("set_secret must succeed via vault fallback");
+        let got = get_secret(&id).expect("read-back must succeed");
+        assert_eq!(got, value);
+        assert_eq!(secret_source(&id), SecretSource::LocalVault);
+        assert!(
+            secrets_file_path().exists(),
+            "mock keyring must fall back to secrets.enc (live-test failure mode)"
+        );
+
+        let _ = delete_secret(&id);
+        std::env::remove_var("DESKTOP_COMPANION_DATA_DIR");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_secret_rejects_empty_and_reports_chinese() {
+        let err = set_secret("x", "   ").unwrap_err();
+        assert!(err.contains("空"));
+    }
 }

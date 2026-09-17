@@ -63,7 +63,14 @@ fn save_kimi_auth_token(state: State<'_, AppState>, token: String) -> Result<Set
     let mut cfg = state.config.lock().map_err(|_| "config lock".to_string())?;
     cfg.kimi_auth_token_ref = format!("keychain:{KIMI_AUTH}");
     config::save_app_config(&cfg)?;
-    Ok(settings_status(&cfg))
+    let status = settings_status(&cfg);
+    if !status.kimi_auth_configured || status.kimi_auth_source == secrets::SecretSource::None {
+        return Err(
+            "凭证未能持久化：保存后仍读不到会员会话。请重试；若反复失败，检查钥匙串权限或应用数据目录。"
+                .into(),
+        );
+    }
+    Ok(status)
 }
 
 #[tauri::command]
