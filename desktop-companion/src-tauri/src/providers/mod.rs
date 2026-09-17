@@ -1,0 +1,93 @@
+//! Quota provider adapters.
+
+mod cursor;
+mod generic_http;
+mod kimi_balance;
+mod kimi_membership;
+
+use async_trait::async_trait;
+use chrono::Utc;
+
+use crate::config::{resolve_secret, AppConfig};
+use crate::models::QuotaSnapshot;
+
+pub use cursor::CursorPersonalProvider;
+pub use generic_http::GenericHttpProvider;
+pub use kimi_balance::KimiBalanceProvider;
+pub use kimi_membership::KimiMembershipProvider;
+
+#[async_trait]
+pub trait QuotaProvider: Send + Sync {
+    fn id(&self) -> &str;
+    async fn fetch(&self) -> QuotaSnapshot;
+}
+
+pub async fn fetch_all_builtin(config: &AppConfig) -> Vec<QuotaSnapshot> {
+    let mut rows = Vec::new();
+
+    // Priority: Kimi membership (primary) → Cursor personal → Kimi balance
+    let membership = KimiMembershipProvider::from_config(config);
+    rows.push(membership.fetch().await);
+
+    let cursor = CursorPersonalProvider::from_config(config);
+    rows.push(cursor.fetch().await);
+
+    let balance = KimiBalanceProvider::from_config(config);
+    rows.push(balance.fetch().await);
+
+    for custom in &config.custom_providers {
+        if !custom.enabled {
+            continue;
+        }
+        let p = GenericHttpProvider::new(custom.clone());
+        rows.push(p.fetch().await);
+    }
+
+    rows
+}
+
+pub fn placeholder_failure(
+    id: &str,
+    display_name: &str,
+    message: &str,
+    fallback_url: Option<&str>,
+    experimental: bool,
+) -> QuotaSnapshot {
+    QuotaSnapshot {
+        id: id.into(),
+        display_name: display_name.into(),
+        primary_value: None,
+        secondary_value: None,
+        unit: None,
+        ok: false,
+        error_message: Some(message.into()),
+        fallback_url: fallback_url.map(|s| s.into()),
+        experimental,
+        updated_at: Utc::now(),
+    }
+}
+
+pub fn missing_secret_snapshot(
+    id: &str,
+    display_name: &str,
+    secret_ref: &str,
+    fallback_url: Option<&str>,
+    experimental: bool,
+) -> QuotaSnapshot {
+    placeholder_failure(
+        id,
+        display_name,
+        &format!("未配置密钥（{secret_ref}）。请设置环境变量或钥匙串，仓库不存放密钥。"),
+        fallback_url,
+        experimental,
+    )
+}
+
+/// Shared HTTP client helper.
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("desktop-companion/0.1")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .expect("http client")
+}

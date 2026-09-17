@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Desktop Companion</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div class="brand">
+          <span id="status-dot" class="dot status-unknown" title="状态"></span>
+          <div>
+            <h1>Desktop Companion</h1>
+            <p class="sub">额度 · Cloud Agent 状态</p>
+          </div>
+        </div>
+        <button id="btn-refresh" type="button">刷新</button>
+      </header>
+
+      <section class="card">
+        <h2>Agent 状态</h2>
+        <p id="agent-summary" class="muted">加载中…</p>
+        <ul id="agent-list" class="list"></ul>
+        <div class="demo-row">
+          <span class="muted">托盘色预览：</span>
+          <button type="button" data-demo="working">工作中</button>
+          <button type="button" data-demo="done">完成</button>
+          <button type="button" data-demo="needs-input">待跟进</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>额度</h2>
+        <p class="hint">顺序：Kimi 会员（主）→ Cursor 个人 → Kimi 余额 → 自定义</p>
+        <ul id="quota-list" class="list"></ul>
+        <p id="last-updated" class="muted">上次更新：—</p>
+      </section>
+
+      <section class="card">
+        <h2>自定义 HTTP 源（设置桩）</h2>
+        <p class="hint">配置形状见方案；密钥只用 secretRef（env:/keychain:），勿写入仓库。</p>
+        <pre id="custom-json" class="code"></pre>
+        <button id="btn-add-sample" type="button">添加示例源（禁用）</button>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
