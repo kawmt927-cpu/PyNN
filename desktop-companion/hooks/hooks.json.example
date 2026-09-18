@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "_comment": "Copy/merge into ~/.cursor/hooks.json. Replace ABSOLUTE_PATH with the real path to companion-status.sh (chmod +x).",
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "ABSOLUTE_PATH/desktop-companion/hooks/companion-status.sh beforeSubmitPrompt"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "ABSOLUTE_PATH/desktop-companion/hooks/companion-status.sh preToolUse"
+      }
+    ],
+    "stop": [
+      {
+        "command": "ABSOLUTE_PATH/desktop-companion/hooks/companion-status.sh stop"
+      }
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+[package]
+name = "desktop-companion"
+version = "0.1.0"
+description = "Cursor desktop companion — Spending quota + local IDE status tray"
+authors = ["vibecoding"]
+edition = "2021"
+
+[lib]
+name = "desktop_companion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+dotenvy = "0.15"
+# keyring v3 has NO default platform stores — without features it uses in-process
+# mock (set succeeds, nothing persists → fake "已保存"). Enable real OS stores:
+# macOS Keychain, Windows Credential Manager, Linux Secret Service.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+dirs = "6"
+# Auto-session: read Cursor state.vscdb + Chromium cookie DBs (copy-on-read).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Chromium cookie decrypt (AES-128-CBC + PBKDF2-SHA1). Best-effort / fragile.
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = "0.12"
+sha1 = "0.10"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
