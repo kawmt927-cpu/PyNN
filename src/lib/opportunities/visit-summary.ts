@@ -90,6 +90,7 @@ export async function getOpportunityVisitSummaries(
   const [followUps, opportunityFollowUps, intervalMap] = await Promise.all([
     prisma.followUp.findMany({
       where: {
+        confirmStatus: "CONFIRMED",
         OR: [
           { opportunityId: { in: opportunityIds } },
           { linkedOpportunities: { some: { opportunityId: { in: opportunityIds } } } },
@@ -183,6 +184,7 @@ export async function getOpportunityVisitSummaries(
 export async function listOpportunityRecentFollowUps(opportunityId: string, take = 8) {
   return prisma.followUp.findMany({
     where: {
+      confirmStatus: "CONFIRMED",
       OR: [
         { opportunityId },
         { linkedOpportunities: { some: { opportunityId } } },

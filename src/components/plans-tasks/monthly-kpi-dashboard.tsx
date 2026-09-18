@@ -181,7 +181,7 @@ function ComplianceKpiCard({
       label="过程规范与日报"
       detail={[
         "按时完成：当日有打卡，且日报在 22:00 前提交。",
-        "迟交、漏交分别统计次数。",
+        "迟交、漏交分别统计次数（仅需交日报日；周末与法定放假不考核，调休上班日考核）。",
         "记分制目标暂未启用，仅记录次数；后续将接入 KPI 积分计算。",
       ].join("\n")}
     >
@@ -220,7 +220,7 @@ export function MonthlyKpiDashboard({
           label="渠道开发"
           actual={actuals.channelDev}
           target={targets?.channelDev ?? null}
-          detail="新建关系类型为渠道的客户，且月内完成至少一次往来，计 1 次。"
+          detail="新建普通渠道且月内有往来计 1；全国性渠道本月首次挂上联系人负责省，每省计 1（同客户同省不重复）。"
         />
         <CountKpiCard
           label="项目开发"

@@ -170,7 +170,7 @@ export function mergePeerRecordsWithAllocation(
   return [...peerRecords.filter((p) => p.id !== allocation.id), allocation];
 }
 
-/** 按连续日历日、相同日份额分段，便于展示计算明细 */
+/** 按连续相同日份额分段，便于展示计算明细（周末份额 0 不另起段，并入相邻时段） */
 export function buildAllocationDailySegments(
   allocation: AllocationRecord,
   allUserAllocations: AllocationRecord[],
@@ -186,6 +186,12 @@ export function buildAllocationDailySegments(
   for (const day of eachCalendarDay(rangeStart, rangeEnd)) {
     const shares = getDailyShares(allocation.userId, day, allUserAllocations);
     const share = round4(shares.get(allocation.id) ?? 0);
+
+    // 周末/无投入：不拆成「0 人日」段，只延长当前时段的结束日
+    if (share <= 0) {
+      if (current) current.endDate = day;
+      continue;
+    }
 
     if (current && current.dailyShare === share) {
       current.endDate = day;

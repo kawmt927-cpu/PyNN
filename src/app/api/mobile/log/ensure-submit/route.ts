@@ -9,6 +9,8 @@ import {
 } from "@/lib/sales-log/daily-log";
 import { isDailyReportSubmitted } from "@/lib/sales-log/daily-report-submission";
 import { submitDailyLogFromAgent } from "@/lib/sales-log/write";
+import { parsePendingCheckInLocation } from "@/lib/sales-log/auto-daily-log-check-in-on-submit";
+import { getRequestClientIp } from "@/lib/request/client-ip";
 
 export const maxDuration = 30;
 
@@ -33,6 +35,7 @@ export async function POST(req: Request) {
     tomorrowPlan?: string;
     riskFlag?: boolean;
     riskNotes?: string;
+    location?: unknown;
   };
 
   const logDate = parseLogDateParam(body.date);
@@ -79,12 +82,14 @@ export async function POST(req: Request) {
         userId: session.user.id,
         role: session.user.role,
         dailyLogId: log.id,
+        clientIp: getRequestClientIp(req),
       },
       {
         dailyReport,
         tomorrowPlan: tomorrowPlan || undefined,
         riskFlag: body.riskFlag,
         riskNotes: body.riskNotes,
+        checkInLocation: parsePendingCheckInLocation(body.location),
       }
     );
     console.info("[sales-log] ensure-submit ok", {

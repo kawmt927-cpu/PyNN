@@ -4,6 +4,7 @@ import { SALES_MOBILE_ROLES } from "@/lib/mobile/sales-roles";
 import {
   listNotificationsForUser,
   ensureRejectedContractNotificationsForUser,
+  syncGeneralAssignmentConfirmNotificationsForUser,
   NOTIFICATION_TYPES,
   countUnreadNotifications,
 } from "@/lib/notifications/app-notifications";
@@ -27,6 +28,9 @@ function badgeForType(type: string) {
       return "日报";
     case NOTIFICATION_TYPES.CONTRACT_REJECTED:
       return "合同";
+    case NOTIFICATION_TYPES.PHASE_COLLECTION_READY:
+    case NOTIFICATION_TYPES.PHASE_COLLECTION_PREPARE:
+      return "催收";
     case NOTIFICATION_TYPES.WEEKLY_ASSIGNMENT_ASSIGNED:
     case NOTIFICATION_TYPES.GENERAL_ASSIGNMENT_PENDING_CONFIRM:
       return "任务";
@@ -59,6 +63,7 @@ function toMobileHref(linkHref: string | null | undefined): string {
 export default async function MobileInboxPage() {
   const session = await requireRole(SALES_MOBILE_ROLES);
   await ensureRejectedContractNotificationsForUser(session.user.id);
+  await syncGeneralAssignmentConfirmNotificationsForUser(session.user.id);
   const [receipts, unreadCount] = await Promise.all([
     listNotificationsForUser(session.user.id, 80),
     countUnreadNotifications(session.user.id),

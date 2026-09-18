@@ -9,6 +9,8 @@ import {
 import { isDailyReportSubmitted } from "@/lib/sales-log/daily-report-submission";
 import { isUnsubmittedDailyReportPlaceholder } from "@/lib/sales-log/unsubmitted-daily-report";
 import { submitDailyLogFromAgent } from "@/lib/sales-log/write";
+import { parsePendingCheckInLocation } from "@/lib/sales-log/auto-daily-log-check-in-on-submit";
+import { getRequestClientIp } from "@/lib/request/client-ip";
 import { prisma } from "@/lib/prisma";
 
 export const maxDuration = 30;
@@ -32,6 +34,7 @@ export async function POST(req: Request) {
     dailyLogId?: string;
     dailyReport?: string;
     tomorrowPlan?: string;
+    location?: unknown;
   };
 
   const logDate = parseActivityDateParam(body.date);
@@ -75,8 +78,9 @@ export async function POST(req: Request) {
         userId: session.user.id,
         role: session.user.role,
         dailyLogId: log.id,
+        clientIp: getRequestClientIp(req),
       },
-      { dailyReport, tomorrowPlan }
+      { dailyReport, tomorrowPlan, checkInLocation: parsePendingCheckInLocation(body.location) }
     );
 
     let conversationCleared = false;

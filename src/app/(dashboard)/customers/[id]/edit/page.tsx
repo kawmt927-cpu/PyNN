@@ -90,6 +90,10 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
         channelKindOptions={channelKindOptions}
         tagOptions={tagOptions}
         initialTagValues={initialTagValues}
+        canEditNationwideChannel={canManageCustomerOwner(session.user.role)}
+        contactResponsibleProvinceCount={
+          customer.contacts.filter((c) => (c.responsibleProvinces?.length ?? 0) > 0).length
+        }
         initial={{
           name: customer.name,
           category: customer.category,
@@ -104,7 +108,6 @@ export default async function CustomerEditPage({ params, searchParams }: Props) 
           customerGrade: customer.customerGrade,
           channelKind: customer.channelKind,
           nationwideChannel: customer.nationwideChannel,
-          coverageProvinces: customer.coverageProvinces?.map((r) => r.province) ?? [],
           notes: customer.notes,
           ownerId: customer.ownerId,
           assistantOwnerIds: customer.assistantOwners.map((row) => row.userId),

@@ -51,7 +51,8 @@ export async function getSalesLogPromptSettings(): Promise<SalesLogPromptSetting
 }
 
 const DEFAULT_API_BASE = "https://api.moonshot.cn/v1";
-const DEFAULT_MODEL = "kimi-k2.5";
+/** Moonshot：kimi-k2.5 / moonshot-v1 已于 2026-08-31 下线，默认迁至 kimi-k2.6 */
+const DEFAULT_MODEL = "kimi-k2.6";
 const DEFAULT_STT_API_BASE = "https://api.siliconflow.cn/v1";
 const DEFAULT_STT_MODEL = "FunAudioLLM/SenseVoiceSmall";
 

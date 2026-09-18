@@ -5,6 +5,10 @@ import type { UserRole } from "@prisma/client";
 import { isWeComConfigured } from "@/lib/wecom/config";
 import { getDefaultHomeForRole } from "@/lib/permissions";
 import { canAccessSalesMobile, getMobileHomeForRole } from "@/lib/mobile/sales-roles";
+import {
+  canAccessExpenseMobile,
+  isExpenseMobilePath,
+} from "@/lib/mobile/expense-access";
 import { isPhoneOrWeComUserAgent, mapDesktopPathToMobile } from "@/lib/mobile/device";
 import { UI_MODE_COOKIE } from "@/lib/mobile/ui-mode";
 
@@ -29,6 +33,11 @@ const PROTECTED_PREFIXES = [
   "/mobile",
   "/admin",
   "/hr",
+  "/account",
+  "/work",
+  "/insights",
+  "/people",
+  "/crm",
 ];
 
 const WECOM_OAUTH_SKIP_PREFIXES = [
@@ -180,13 +189,14 @@ export async function middleware(req: NextRequest) {
   const uiMode = req.cookies.get(UI_MODE_COOKIE)?.value;
   const onPhoneUa = isPhoneOrWeComUserAgent(ua);
 
-  // 手机端路径：非销售侧角色 → 提示使用 PC
+  // 手机端路径：非销售侧角色 → 提示使用 PC（报销路径对实施/人事放行）
   if (
     pathname.startsWith("/mobile") &&
     !pathname.startsWith("/mobile/wecom") &&
     !pathname.startsWith("/mobile/pc-only") &&
     role &&
-    !canAccessSalesMobile(role)
+    !canAccessSalesMobile(role) &&
+    !(isExpenseMobilePath(pathname) && canAccessExpenseMobile(role))
   ) {
     return NextResponse.redirect(new URL("/mobile/pc-only", req.url));
   }
@@ -205,14 +215,15 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL(mapped, req.url));
   }
 
-  // PC / PC 企微误入 /mobile：回到电脑端（显式切到手机端 cookie=mobile 可保留）
+  // PC / PC 企微误入 /mobile：回到电脑端（显式切到手机端 cookie=mobile 可保留；报销页允许项目/人事留在手机端）
   if (
     role &&
     !onPhoneUa &&
     uiMode !== "mobile" &&
     pathname.startsWith("/mobile") &&
     !pathname.startsWith("/mobile/wecom") &&
-    !pathname.startsWith("/mobile/pc-only")
+    !pathname.startsWith("/mobile/pc-only") &&
+    !(isExpenseMobilePath(pathname) && canAccessExpenseMobile(role) && !canAccessSalesMobile(role))
   ) {
     return NextResponse.redirect(new URL(getDefaultHomeForRole(role), req.url));
   }

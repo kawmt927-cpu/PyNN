@@ -37,7 +37,10 @@ async function fetchCustomers(
   const params = new URLSearchParams({ q, mode: "form" });
   if (excludeId) params.set("excludeId", excludeId);
   if (excludeIds?.length) params.set("excludeIds", excludeIds.join(","));
-  if (writableOnly) params.set("scope", "writable");
+  // true：全库搜索且仅可选可写客户；false：全库搜索且非负责人也可选（往来录入）
+  if (writableOnly === true || writableOnly === false) {
+    params.set("scope", "writable");
+  }
 
   const res = await fetch(`/api/customers/suggest?${params.toString()}`);
   if (!res.ok) return [];
@@ -47,9 +50,12 @@ async function fetchCustomers(
       id: string;
       name: string;
       category?: string;
+      customerType?: string | null;
       customerGrade?: string | null;
       writable?: boolean;
       ownerName?: string | null;
+      matchedContactName?: string | null;
+      matchedContactTitle?: string | null;
     }>;
   };
 
@@ -57,17 +63,37 @@ async function fetchCustomers(
     const categoryLabel = item.category
       ? CUSTOMER_CATEGORY_LABELS[item.category as CustomerCategory]
       : undefined;
-    const disabled = item.writable === false;
+    const writable = item.writable !== false;
+    const disabled = writableOnly === true && !writable;
+    const contactHint = item.matchedContactName
+      ? item.matchedContactTitle
+        ? `联系人：${item.matchedContactName}（${item.matchedContactTitle}）`
+        : `联系人：${item.matchedContactName}`
+      : null;
+
+    let description: string | undefined;
+    if (!writable) {
+      description = item.ownerName
+        ? disabled
+          ? `负责人：${item.ownerName} · 不可选`
+          : `负责人：${item.ownerName} · 提交后需确认`
+        : disabled
+          ? "公海客户 · 不可选"
+          : "公海客户 · 提交后需确认";
+      if (contactHint) description = `${contactHint} · ${description}`;
+    } else if (contactHint) {
+      description = categoryLabel ? `${contactHint} · ${categoryLabel}` : contactHint;
+    } else {
+      description = categoryLabel;
+    }
 
     return {
       id: item.id,
       label: item.name,
-      description: disabled
-        ? item.ownerName
-          ? `负责人：${item.ownerName} · 不可选`
-          : "公海客户 · 不可选"
-        : categoryLabel,
+      description,
+      customerType: item.customerType ?? null,
       customerGrade: item.customerGrade ?? null,
+      writable,
       disabled,
     };
   });
@@ -86,7 +112,11 @@ export const CustomerSearchSelect = forwardRef<EntitySearchSelectHandle, Props>(
         {...props}
         placeholder={
           props.placeholder ??
-          (writableOnly ? "搜索客户，灰色项不可选…" : "输入客户名称搜索…")
+          (writableOnly === true
+            ? "搜客户名或联系人，灰色项不可选…"
+            : writableOnly === false
+              ? "搜客户名或联系人（非负责客户提交后需确认）…"
+              : "输入客户名称或联系人搜索…")
         }
         onSearch={onSearch}
         onCreateNew={onCreateNew}

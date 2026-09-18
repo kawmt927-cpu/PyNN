@@ -19,11 +19,10 @@ export default async function MobileFollowUpsPage({ searchParams }: Props) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="shrink-0 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <Link href="/mobile/more" className="text-xs text-primary">
-          ← 更多
-        </Link>
-        <h1 className="mt-1 text-lg font-bold">待跟进</h1>
-        <p className="text-xs text-muted-foreground">点击可写跟进（本人负责客户）</p>
+        <h1 className="text-lg font-bold">待跟进</h1>
+        <p className="text-xs text-muted-foreground">
+          已到期与即将到期 · 点击可写跟进（本人负责客户）
+        </p>
       </header>
 
       <div className="flex shrink-0 gap-2 border-b px-4 py-2">

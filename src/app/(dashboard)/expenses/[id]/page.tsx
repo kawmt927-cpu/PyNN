@@ -6,14 +6,25 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ALL_AUTHED_ROLES,
   EXPENSE_CLAIM_STATUS_LABELS,
-  canFinanceExpense,
 } from "@/lib/expenses/labels";
 import { claimInclude, canViewClaim } from "@/lib/expenses/service";
+import {
+  editorModeForFlowStep,
+  expenseApprovalStepLabel,
+  getClaimCurrentStep,
+  getClaimCurrentStepIndex,
+  userCanActOnFlowStep,
+} from "@/lib/expenses/approval-flow";
 import {
   getEffectiveExpenseTravelPolicy,
   listCityHotelHints,
 } from "@/lib/expenses/travel-policy";
+import { listExpenseFeeCategories } from "@/lib/expenses/fee-categories";
 import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
+import {
+  expenseEditorClaimProps,
+  loadExpenseEditorOptions,
+} from "@/lib/expenses/editor-options";
 import { ExpenseClaimEditor } from "@/components/expenses/expense-claim-editor";
 import { format } from "date-fns";
 
@@ -29,47 +40,41 @@ export default async function ExpenseClaimDetailPage({ params }: Props) {
     where: { id },
     include: claimInclude,
   });
-  if (!claim || !canViewClaim(claim, session.user)) notFound();
+  if (!claim || !(await canViewClaim(claim, session.user))) notFound();
 
   const isApplicant = claim.applicantId === session.user.id;
-  const isManager =
-    claim.managerId === session.user.id || session.user.role === "ADMIN";
-  const isFinance = canFinanceExpense(session.user.role);
+  const currentStep = getClaimCurrentStep(claim);
+  const stepIndex = getClaimCurrentStepIndex(claim);
+  const canAct =
+    Boolean(currentStep) &&
+    userCanActOnFlowStep({
+      step: currentStep!,
+      user: session.user,
+      managerId: claim.managerId,
+      isFirstActiveStep: stepIndex === 0,
+    });
+  const flowMode = editorModeForFlowStep(currentStep, Math.max(0, stepIndex));
 
-  let mode: "edit" | "manager" | "finance" | "view" = "view";
-  if (
-    isApplicant &&
-    (claim.status === "DRAFT" || claim.status === "REJECTED")
-  ) {
+  let mode: "edit" | "manager" | "hr" | "finance" | "view" = "view";
+  if (isApplicant && (claim.status === "DRAFT" || claim.status === "REJECTED")) {
     mode = "edit";
-  } else if (isManager && claim.status === "PENDING_MANAGER") {
-    mode = "manager";
-  } else if (isFinance && claim.status === "PENDING_PAYOUT") {
-    mode = "finance";
+  } else if (canAct && flowMode) {
+    mode = flowMode;
   }
 
-  const [managers, projects, customers, hotelPolicy, cityHotelHints] = await Promise.all([
-    prisma.user.findMany({
-      where: {
-        id: { not: claim.applicantId },
-        OR: [{ personnelProfile: null }, { personnelProfile: { enabled: true } }],
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-      take: 300,
-    }),
-    prisma.project.findMany({
-      select: { id: true, name: true },
-      orderBy: { updatedAt: "desc" },
-      take: 200,
-    }),
-    prisma.customer.findMany({
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-      take: 300,
+  const [
+    { managers, beneficiaries, projects, customers, capability },
+    hotelPolicy,
+    cityHotelHints,
+    feeCategories,
+  ] = await Promise.all([
+    loadExpenseEditorOptions(session.user.role, session.user.id, {
+      id: claim.beneficiary.id,
+      role: claim.beneficiary.role,
     }),
     getEffectiveExpenseTravelPolicy(),
     listCityHotelHints(),
+    listExpenseFeeCategories(),
   ]);
 
   return (
@@ -85,10 +90,14 @@ export default async function ExpenseClaimDetailPage({ params }: Props) {
           </p>
           <h1 className="mt-1 text-2xl font-semibold">{claim.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {claim.applicant.name} ·{" "}
-            {EXPENSE_CLAIM_STATUS_LABELS[claim.status] ?? claim.status} · 合计 ¥
+            填报 {claim.applicant.name}
+            {claim.beneficiaryId !== claim.applicantId
+              ? ` · 报销人 ${claim.beneficiary.name}`
+              : ""}{" "}
+            · {EXPENSE_CLAIM_STATUS_LABELS[claim.status] ?? claim.status} · 合计 ¥
             {Number(claim.totalAmount).toFixed(2)}
             {claim.manager ? ` · 上级 ${claim.manager.name}` : ""}
+            {claim.project ? ` · 项目 ${claim.project.name}` : ""}
           </p>
           {claim.rejectReason ? (
             <p className="mt-2 text-sm text-destructive">驳回原因：{claim.rejectReason}</p>
@@ -102,26 +111,37 @@ export default async function ExpenseClaimDetailPage({ params }: Props) {
             {mode === "edit"
               ? "编辑报销单"
               : mode === "manager"
-                ? "上级审批（请确认每张发票归属）"
+                ? `${currentStep?.name ?? "上级审批"}（请填写每张发票成本归属）`
+                : mode === "hr"
+                  ? currentStep?.name ?? "审批确认"
                 : mode === "finance"
-                  ? "财务打款结案"
+                  ? currentStep?.name ?? "打款结案"
                   : "报销单详情"}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <ExpenseClaimEditor
-            claimId={claim.id}
             mode={mode}
-            initialTitle={claim.title}
-            initialDescription={claim.description}
-            invoices={claim.invoices}
-            trips={claim.trips}
+            {...expenseEditorClaimProps(claim)}
+            initialBeneficiaryId={
+              capability.canProxyBeneficiary
+                ? claim.beneficiaryId
+                : session.user.id
+            }
             managers={managers}
+            beneficiaries={
+              capability.canProxyBeneficiary
+                ? beneficiaries
+                : [{ id: session.user.id, name: session.user.name }]
+            }
             projects={projects}
             customers={customers}
-            currentManagerId={claim.managerId}
+            canProxyBeneficiary={capability.canProxyBeneficiary}
+            requiresSuperiorPick={capability.requiresSuperiorPick}
+            superiorStepName={capability.superiorStepName}
             hotelPolicy={hotelPolicy}
             cityHotelHints={cityHotelHints}
+            feeCategories={feeCategories}
           />
         </CardContent>
       </Card>
@@ -135,8 +155,9 @@ export default async function ExpenseClaimDetailPage({ params }: Props) {
             <ul className="space-y-2 text-sm">
               {claim.approvals.map((a) => (
                 <li key={a.id} className="rounded border p-2">
-                  {a.step === "MANAGER" ? "上级" : "财务"} · {a.action === "APPROVED" ? "通过" : "驳回"} ·{" "}
-                  {a.actor.name} · {format(a.createdAt, "yyyy-MM-dd HH:mm")}
+                  {expenseApprovalStepLabel(a.step)} ·{" "}
+                  {a.action === "APPROVED" ? "通过" : "驳回"} · {a.actor.name} ·{" "}
+                  {format(a.createdAt, "yyyy-MM-dd HH:mm")}
                   {a.comment ? ` · ${a.comment}` : ""}
                 </li>
               ))}

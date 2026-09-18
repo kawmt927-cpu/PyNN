@@ -89,6 +89,7 @@ export async function notifyWeComDailyLogSubmitted(input: {
   dailyReport: string;
   tomorrowPlan?: string | null;
   riskFlag?: boolean;
+  riskNotes?: string | null;
 }) {
   try {
     const managerIds = await listManagerCrmUserIds(input.actorRole, input.actorUserId);
@@ -109,7 +110,14 @@ export async function notifyWeComDailyLogSubmitted(input: {
         { keyname: "提交人", value: input.actorName },
         { keyname: "提交时间", value: formatDateTime(new Date()) },
         ...(plan ? [{ keyname: "明日计划", value: plan }] : []),
-        ...(input.riskFlag ? [{ keyname: "风险", value: "已标记风险" }] : []),
+        ...(input.riskFlag
+          ? [
+              {
+                keyname: "含风险原因",
+                value: previewText(input.riskNotes?.trim() || "已标记风险", 80),
+              },
+            ]
+          : []),
       ],
       url: linkHref,
     });

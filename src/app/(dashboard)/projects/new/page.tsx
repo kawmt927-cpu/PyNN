@@ -15,7 +15,7 @@ const LINKABLE_STATUSES = [
 ] as const;
 
 type Props = {
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; contractId?: string }>;
 };
 
 export default async function NewProjectPage({ searchParams }: Props) {
@@ -26,6 +26,7 @@ export default async function NewProjectPage({ searchParams }: Props) {
   }
 
   const { backHref, backLabel } = resolveBackNavigation(query, "/projects");
+  const preselectContractId = query.contractId?.trim() || undefined;
 
   const linkableContracts = await prisma.contract.findMany({
     where: {
@@ -43,6 +44,29 @@ export default async function NewProjectPage({ searchParams }: Props) {
     },
   });
 
+  // 预选合同若不在列表中（例如刚变为可关联），单独补一条
+  let contracts = linkableContracts;
+  if (
+    preselectContractId &&
+    !linkableContracts.some((c) => c.id === preselectContractId)
+  ) {
+    const extra = await prisma.contract.findFirst({
+      where: {
+        id: preselectContractId,
+        project: null,
+        status: { in: [...LINKABLE_STATUSES] },
+      },
+      select: {
+        id: true,
+        title: true,
+        contractNo: true,
+        endUserCustomerId: true,
+        endUserCustomer: { select: { name: true } },
+      },
+    });
+    if (extra) contracts = [extra, ...linkableContracts];
+  }
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -56,10 +80,11 @@ export default async function NewProjectPage({ searchParams }: Props) {
         </CardHeader>
         <CardContent>
           <p className="mb-4 text-sm text-muted-foreground">
-            合同与客户均可选填；都不填时作为内部/独立项目，后续计划与排班流程不变。
+            合同与客户均可选填；都不填时作为内部/独立项目。已结清的历史合同可不建项；在途合同建项后请配置阶段并绑定回款分期。
           </p>
           <ProjectCreateForm
-            linkableContracts={linkableContracts.map((c) => ({
+            initialContractId={preselectContractId}
+            linkableContracts={contracts.map((c) => ({
               id: c.id,
               title: c.title,
               contractNo: c.contractNo,

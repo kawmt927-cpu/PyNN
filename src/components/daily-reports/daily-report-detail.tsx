@@ -13,8 +13,10 @@ import {
   resolveDailyReportDisplayStatus,
 } from "@/lib/sales-log/daily-report-submission";
 import { DailyReportStatusBadge } from "@/components/daily-reports/daily-report-status-badge";
+import { DailyReportRiskReason } from "@/components/daily-reports/daily-report-risk-reason";
 import { DailyReportBody } from "@/components/daily-reports/daily-report-body";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollChainList } from "@/components/ui/scroll-chain";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -25,7 +27,10 @@ type Props = {
 
 export function DailyReportDetailView({ report, showUser, showDateTitle = true }: Props) {
   const tomorrowPlan = report.structuredOutput?.tomorrowPlan?.trim();
-  const display = resolveDailyReportDisplayStatus(report);
+  const display = resolveDailyReportDisplayStatus({
+    ...report,
+    reportRequired: report.reportRequired,
+  });
   const hasIssue = display.overdue || display.lateSubmission;
   const issueTone = display.overdue
     ? "text-red-700 dark:text-red-300"
@@ -56,7 +61,15 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
           </CardHeader>
         ) : null}
         <CardContent className={`space-y-4 text-sm${showDateTitle ? "" : " pt-6"}`}>
-          {display.overdue ? (
+          {display.exempt ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
+              <p className="font-medium">{display.label}</p>
+              <p className="mt-1 text-muted-foreground">
+                按公司出勤日历，当日无需提交日报，不纳入迟交/缺交统计。
+              </p>
+            </div>
+          ) : null}
+          {!display.exempt && display.overdue ? (
             <div className={cn("rounded-md border px-4 py-3", issuePanelClass)}>
               <p className="font-medium">
                 {display.lateMarked ? "未提交日报" : "日报未按时提交"}
@@ -75,7 +88,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
               ) : null}
             </div>
           ) : null}
-          {display.lateSubmission && display.submissionTime ? (
+          {!display.exempt && display.lateSubmission && display.submissionTime ? (
             <div className={cn("rounded-md border px-4 py-3", issuePanelClass)}>
               <p className="font-medium">日报迟交</p>
               <p className="mt-1">
@@ -102,6 +115,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
                   displayLabel={display.label}
                   overdue={display.overdue}
                   lateSubmission={display.lateSubmission}
+                  exempt={display.exempt}
                   riskFlag={report.riskFlag}
                 />
               </dd>
@@ -109,11 +123,13 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
             <div>
               <dt className={cn("text-muted-foreground", hasIssue && issueTone)}>提交时间</dt>
               <dd className={issueValueTone}>
-                {display.submissionTime
-                  ? format(display.submissionTime, "yyyy-MM-dd HH:mm")
-                  : display.overdue
-                    ? `尚未提交（已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00）`
-                    : "尚未提交"}
+                {display.exempt
+                  ? "—"
+                  : display.submissionTime
+                    ? format(display.submissionTime, "yyyy-MM-dd HH:mm")
+                    : display.overdue
+                      ? `尚未提交（已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00）`
+                      : "尚未提交"}
                 {display.lateSubmission ? (
                   <span className="mt-0.5 block text-xs">超过 {DAILY_REPORT_DEADLINE_HOUR}:00 截止时间</span>
                 ) : null}
@@ -125,12 +141,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
             </div>
           </dl>
 
-          {report.riskFlag && report.riskNotes ? (
-            <div className="rounded-md border border-orange-200 bg-orange-50 px-4 py-3 text-orange-900 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-100">
-              <p className="font-medium">风险说明</p>
-              <p className="mt-1 whitespace-pre-wrap">{report.riskNotes}</p>
-            </div>
-          ) : null}
+          <DailyReportRiskReason riskFlag={report.riskFlag} riskNotes={report.riskNotes} />
 
           <div>
             <p className={cn("mb-2 font-medium", hasIssue && issueTone)}>日报正文</p>
@@ -143,13 +154,17 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
                   hasIssue ? issueBodyClass : "text-muted-foreground"
                 )}
               >
-                {display.overdue
-                  ? `当日日报未提交（已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00 截止时间）。`
-                  : display.label === "当日无日报"
-                    ? "当日无日报。"
-                    : report.status === "IN_PROGRESS" || report.status === "PENDING_CONFIRM"
-                      ? "当日日报尚未提交。"
-                      : "暂无日报正文。"}
+                {display.exempt
+                  ? display.label === "非工作日，无需填报"
+                    ? "非工作日，无需填报。"
+                    : "当日无需填报。"
+                  : display.overdue
+                    ? `当日日报未提交（已超过 ${DAILY_REPORT_DEADLINE_HOUR}:00 截止时间）。`
+                    : display.label === "当日无日报"
+                      ? "当日无日报。"
+                      : report.status === "IN_PROGRESS" || report.status === "PENDING_CONFIRM"
+                        ? "当日日报尚未提交。"
+                        : "暂无日报正文。"}
               </div>
             )}
           </div>
@@ -174,7 +189,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
             <p className="text-xs text-muted-foreground">
               与手机端 / PC 端销售日志助理同步，保留最近 7 天对话便于核对是否真正写入。
             </p>
-            <ul className="max-h-[28rem] space-y-2 overflow-y-auto">
+            <ScrollChainList className="max-h-[28rem] space-y-2 overflow-y-auto">
               {report.conversation
                 .filter((m) => m.content?.trim())
                 .map((m, i) => (
@@ -192,7 +207,7 @@ export function DailyReportDetailView({ report, showUser, showDateTitle = true }
                     <p className="whitespace-pre-wrap">{m.content}</p>
                   </li>
                 ))}
-            </ul>
+            </ScrollChainList>
           </CardContent>
         </Card>
       ) : null}

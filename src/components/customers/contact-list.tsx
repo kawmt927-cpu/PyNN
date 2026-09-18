@@ -15,16 +15,17 @@ import { ContactForm } from "./contact-form";
 import { deleteContact } from "@/app/(dashboard)/customers/contact-actions";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import type { ConfigOptionItem } from "@/lib/config-options";
-import type { Contact } from "@prisma/client";
+import type { ContactFormContact } from "./contact-form";
 
 type Props = {
   customerId: string;
-  contacts: Contact[];
+  contacts: ContactFormContact[];
   readOnly?: boolean;
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
   showDepartment?: boolean;
+  showResponsibleProvinces?: boolean;
   addOpen?: boolean;
   onAddOpenChange?: (open: boolean) => void;
 };
@@ -37,6 +38,7 @@ export function ContactList({
   departmentOptions,
   roleOptions,
   showDepartment = true,
+  showResponsibleProvinces = false,
   addOpen: addOpenProp,
   onAddOpenChange,
 }: Props) {
@@ -49,8 +51,8 @@ export function ContactList({
   const [addOpenInternal, setAddOpenInternal] = useState(false);
   const addOpen = addOpenProp ?? addOpenInternal;
   const setAddOpen = onAddOpenChange ?? setAddOpenInternal;
-  const [editingContact, setEditingContact] = useState<Contact | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<Contact | null>(null);
+  const [editingContact, setEditingContact] = useState<ContactFormContact | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ContactFormContact | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletePending, startDeleteTransition] = useTransition();
@@ -60,7 +62,7 @@ export function ContactList({
     setEditingContact(null);
   }
 
-  function handleDeleteClick(contact: Contact) {
+  function handleDeleteClick(contact: ContactFormContact) {
     if (deletePending || deletingId) return;
     setDeleteError(null);
     setPendingDelete(contact);
@@ -109,6 +111,13 @@ export function ContactList({
                       ` · ${[c.title, c.department].filter(Boolean).join(" · ")}`}
                   </p>
                   <p>{[c.phone, c.wechat].filter(Boolean).join(" · ") || "—"}</p>
+                  {showResponsibleProvinces &&
+                  (c.responsibleProvinces?.length ?? 0) > 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      负责：
+                      {c.responsibleProvinces!.map((r) => r.province).join("、")}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {!readOnly ? (
@@ -157,7 +166,11 @@ export function ContactList({
       />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="max-w-lg" showCloseButton scrollable>
+        <DialogContent
+          className={showResponsibleProvinces ? "max-w-2xl" : "max-w-lg"}
+          showCloseButton
+          scrollable
+        >
           <DialogHeader>
             <DialogTitle>新增联系人</DialogTitle>
           </DialogHeader>
@@ -169,6 +182,7 @@ export function ContactList({
             departmentOptions={departmentOptions}
             roleOptions={roleOptions}
             showDepartment={showDepartment}
+            showResponsibleProvinces={showResponsibleProvinces}
             onCancel={() => setAddOpen(false)}
             onSuccess={closeDialogs}
           />
@@ -176,7 +190,11 @@ export function ContactList({
       </Dialog>
 
       <Dialog open={Boolean(editingContact)} onOpenChange={(open) => !open && setEditingContact(null)}>
-        <DialogContent className="max-w-lg" showCloseButton scrollable>
+        <DialogContent
+          className={showResponsibleProvinces ? "max-w-2xl" : "max-w-lg"}
+          showCloseButton
+          scrollable
+        >
           <DialogHeader>
             <DialogTitle>编辑联系人</DialogTitle>
           </DialogHeader>
@@ -190,6 +208,7 @@ export function ContactList({
               departmentOptions={departmentOptions}
               roleOptions={roleOptions}
               showDepartment={showDepartment}
+              showResponsibleProvinces={showResponsibleProvinces}
               onCancel={() => setEditingContact(null)}
               onSuccess={closeDialogs}
             />

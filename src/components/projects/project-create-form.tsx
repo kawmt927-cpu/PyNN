@@ -20,20 +20,26 @@ export type LinkableContractOption = {
 
 type Props = {
   linkableContracts: LinkableContractOption[];
+  /** 从合同详情「为此合同建项」带入 */
+  initialContractId?: string;
 };
 
-export function ProjectCreateForm({ linkableContracts }: Props) {
+export function ProjectCreateForm({ linkableContracts, initialContractId }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const [contractId, setContractId] = useState("");
-  const [name, setName] = useState("");
-  const [customerId, setCustomerId] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  const initial = initialContractId
+    ? linkableContracts.find((c) => c.id === initialContractId)
+    : undefined;
+
+  const [contractId, setContractId] = useState(initial?.id ?? "");
+  const [name, setName] = useState(initial?.title ?? "");
+  const [customerId, setCustomerId] = useState(initial?.endUserCustomerId ?? "");
+  const [customerName, setCustomerName] = useState(initial?.endUserCustomerName ?? "");
   const [notes, setNotes] = useState("");
-  const [nameTouched, setNameTouched] = useState(false);
-  const [customerTouched, setCustomerTouched] = useState(false);
+  const [nameTouched, setNameTouched] = useState(Boolean(initial));
+  const [customerTouched, setCustomerTouched] = useState(Boolean(initial));
 
   const contractOptions = useMemo(
     () => [

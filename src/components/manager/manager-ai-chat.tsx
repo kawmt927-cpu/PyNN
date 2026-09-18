@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ChatMarkdown } from "@/components/manager/chat-markdown";
 import { OctopusAvatar } from "@/components/manager/octopus-avatar";
 import { MANAGER_ASSISTANT_OPENING_MESSAGE } from "@/lib/agent/manager-prompt";
+import { usePropagateWheelAtEdgeRef } from "@/hooks/use-propagate-wheel-at-edge";
 import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
@@ -21,6 +22,7 @@ const SUGGESTIONS = [
 
 export function ManagerAiChat() {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesPaneRef = usePropagateWheelAtEdgeRef<HTMLDivElement>();
   const { messages, input, setInput, handleSubmit, isLoading, error, append, setMessages } =
     useChat({
       api: "/api/manager/assistant/chat",
@@ -56,7 +58,10 @@ export function ManagerAiChat() {
       </div>
 
       <Card className="flex-1">
-        <CardContent className="flex max-h-[58vh] flex-col gap-3 overflow-y-auto py-4">
+        <CardContent
+          ref={messagesPaneRef}
+          className="flex max-h-[58vh] flex-col gap-3 overflow-y-auto py-4"
+        >
           {messages.map((m) => {
             const isUser = m.role === "user";
             return (

@@ -8,7 +8,10 @@ import {
   formatLogDateParam,
   getTodayLogDate,
   parseLogDateParam,
+  persistPendingCheckInLocation,
 } from "@/lib/sales-log/daily-log";
+import { parsePendingCheckInLocation } from "@/lib/sales-log/auto-daily-log-check-in-on-submit";
+import { getRequestClientIp } from "@/lib/request/client-ip";
 
 export const maxDuration = 60;
 
@@ -42,6 +45,10 @@ export async function POST(req: Request) {
   const logDate = parseLogDateParam(
     typeof body.date === "string" ? body.date : undefined
   );
+  const pendingCheckInLocation = parsePendingCheckInLocation(body.location);
+  if (pendingCheckInLocation) {
+    await persistPendingCheckInLocation(session.user.id, logDate, pendingCheckInLocation);
+  }
   const todayKey = formatLogDateParam(getTodayLogDate());
   if (formatLogDateParam(logDate) !== todayKey) {
     return new Response(
@@ -61,6 +68,7 @@ export async function POST(req: Request) {
       {
         user: { id: session.user.id, role: session.user.role },
         dailyLogId: dailyLog.id,
+        clientIp: getRequestClientIp(req),
       },
       { todayWorkContext }
     );

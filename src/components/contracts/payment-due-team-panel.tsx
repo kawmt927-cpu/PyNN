@@ -31,7 +31,7 @@ export async function PaymentDueTeamPanel({
   if (!canManageContractApproval(role)) return null;
 
   const filter = parsePaymentDueFilter(filterParam);
-  const [{ items, byOwner }, salesUsers, assignedTitles] = await Promise.all([
+  const [{ items, byOwner, windowCounts }, salesUsers, assignedTitles] = await Promise.all([
     listTeamPaymentDueByFilter(filter),
     listSalesUsersForSelect({
       viewer: { id: userId, role },
@@ -46,18 +46,26 @@ export async function PaymentDueTeamPanel({
         <div>
           <CardTitle className="text-lg">团队回款催收</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            按到期窗口筛选未结清分期；可向负责销售指派催收回款任务（客户跟进）
+            按 1/3/6 个月窗口与逾期筛选；逾期同一合同多期合并展示。也可向销售指派催收任务。
           </p>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link href={withReturnTo("/contracts", returnPath)}>合同列表</Link>
-        </Button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={withReturnTo("/contracts?collect=ready&settlement=open", returnPath)}>
+              可催款合同
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href={withReturnTo("/contracts", returnPath)}>合同列表</Link>
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <PaymentDueTeamPanelClient
           filter={filter}
           items={items}
           byOwner={byOwner}
+          windowCounts={windowCounts}
           returnPath={returnPath}
           salesUsers={salesUsers}
           baseSearchParams={baseSearchParams}

@@ -13,6 +13,8 @@ export type ContactOption = {
   wechat: string | null;
   role: string;
   isPrimary: boolean;
+  responsibleProvinces?: string[];
+  confirmStatus?: "CONFIRMED" | "PENDING_MANAGER" | "REJECTED";
 };
 
 export function ContactSelect({
@@ -70,13 +72,20 @@ export function ContactSelect({
             请选择联系人
           </option>
         )}
-        {contacts.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-            {c.title ? ` · ${c.title}` : ""}
-            {c.isPrimary ? "（主联系人）" : ""}
-          </option>
-        ))}
+        {contacts.map((c) => {
+          const provinces =
+            c.responsibleProvinces && c.responsibleProvinces.length > 0
+              ? ` · ${c.responsibleProvinces.join("、")}`
+              : "";
+          return (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.title ? ` · ${c.title}` : ""}
+              {provinces}
+              {c.isPrimary ? "（主联系人）" : ""}
+            </option>
+          );
+        })}
       </select>
       {!required ? (
         <SelectClearButton

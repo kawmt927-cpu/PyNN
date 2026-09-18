@@ -26,6 +26,7 @@ export type UnifiedFollowUpHistoryItem = {
   /** 多商机关联；`opportunity` 为兼容字段，取首个 */
   opportunities?: { id: string; title: string }[];
   changeSummary: string | null;
+  confirmStatus?: "CONFIRMED" | "PENDING_MANAGER" | "REJECTED";
 };
 
 export type UnifiedPendingFollowUp = {
@@ -99,6 +100,7 @@ function buildCustomerPendingFollowUpWhere(
   withinDays?: number | null
 ): Prisma.FollowUpWhereInput {
   return {
+    confirmStatus: "CONFIRMED",
     nextFollowUpAt: nextFollowUpTimeFilter(mode, now, withinDays),
     customer: customerFilter,
     OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
@@ -124,9 +126,23 @@ function buildOpportunityPendingFollowUpWhere(
 
 export async function getCustomerFollowUpHistory(
   customerId: string,
-  take = 50
+  take = 50,
+  options?: { viewerUserId?: string; includePendingForViewer?: boolean }
 ): Promise<UnifiedFollowUpHistoryItem[]> {
   const db = getPrismaClient();
+
+  const confirmWhere =
+    options?.includePendingForViewer
+      ? {
+          OR: [
+            { confirmStatus: "CONFIRMED" as const },
+            { confirmStatus: "PENDING_MANAGER" as const },
+            ...(options.viewerUserId
+              ? [{ confirmStatus: "REJECTED" as const, userId: options.viewerUserId }]
+              : []),
+          ],
+        }
+      : { confirmStatus: "CONFIRMED" as const };
 
   const [customerFollowUps, opportunityFollowUps] = await Promise.all([
     db.followUp.findMany({
@@ -134,6 +150,7 @@ export async function getCustomerFollowUpHistory(
         customerId,
         // 指派任务锚点跟进不进入往来时间线，避免与「指派」重复
         weeklyAssignment: null,
+        ...confirmWhere,
       },
       include: {
         user: { select: { name: true } },
@@ -186,6 +203,7 @@ export async function getCustomerFollowUpHistory(
         opportunity: opportunities[0] ?? null,
         opportunities: opportunities.length > 0 ? opportunities : undefined,
         changeSummary: null,
+        confirmStatus: item.confirmStatus,
       };
     }),
     ...opportunityFollowUps.map((item) => ({
@@ -202,6 +220,7 @@ export async function getCustomerFollowUpHistory(
       contacts: [],
       opportunity: item.opportunity,
       changeSummary: item.changeSummary,
+      confirmStatus: "CONFIRMED" as const,
     })),
   ];
 
@@ -213,7 +232,9 @@ export async function getCustomerFollowUpHistory(
 export async function countCustomerFollowUps(customerId: string) {
   const db = getPrismaClient();
   const [customerCount, opportunityCount] = await Promise.all([
-    db.followUp.count({ where: { customerId } }),
+    db.followUp.count({
+      where: { customerId, confirmStatus: "CONFIRMED" },
+    }),
     db.opportunityFollowUp.count({
       where: { opportunity: { customerId } },
     }),
@@ -223,15 +244,22 @@ export async function countCustomerFollowUps(customerId: string) {
 
 export async function getCustomerPendingFollowPlans(
   customerId: string,
-  now: Date
+  now: Date,
+  options?: {
+    /** 仅返回该用户自己的下次跟进计划（录入往来时不要提示他人的计划） */
+    forUserId?: string;
+  }
 ): Promise<CustomerPendingFollowPlan[]> {
   const db = getPrismaClient();
+  const forUserId = options?.forUserId;
 
   const [customerItems, opportunityItems, gradeExpiry] = await Promise.all([
     db.followUp.findMany({
       where: {
         customerId,
+        confirmStatus: "CONFIRMED",
         nextFollowUpAt: { not: null },
+        ...(forUserId ? { userId: forUserId } : {}),
         OR: [{ opportunityId: null }, { opportunity: pendingFollowUpOpportunityWhere }],
       },
       include: {
@@ -243,6 +271,7 @@ export async function getCustomerPendingFollowPlans(
     db.opportunityFollowUp.findMany({
       where: {
         nextFollowUpAt: { not: null },
+        ...(forUserId ? { userId: forUserId } : {}),
         opportunity: {
           customerId,
           ...pendingFollowUpOpportunityWhere,
@@ -254,7 +283,23 @@ export async function getCustomerPendingFollowPlans(
       },
       orderBy: { nextFollowUpAt: "asc" },
     }),
-    getCustomerGradeExpiryPending(customerId, now),
+    // 等级到期仅提示负责人；代录他人客户时不弹
+    forUserId
+      ? db.customer
+          .findUnique({
+            where: { id: customerId },
+            select: {
+              ownerId: true,
+              assistantOwners: { select: { userId: true } },
+            },
+          })
+          .then(async (customer) => {
+            if (!customer) return null;
+            const { isCustomerResponsible } = await import("@/lib/customers/access");
+            if (!isCustomerResponsible(forUserId, customer)) return null;
+            return getCustomerGradeExpiryPending(customerId, now);
+          })
+      : getCustomerGradeExpiryPending(customerId, now),
   ]);
 
   const unified: CustomerPendingFollowPlan[] = [
@@ -332,7 +377,12 @@ export async function completeCustomerPendingFollowPlan(
 
   if (input.source === "customer") {
     const updated = await tx.followUp.updateMany({
-      where: { id: input.id, customerId, nextFollowUpAt: { not: null } },
+      where: {
+        id: input.id,
+        customerId,
+        confirmStatus: "CONFIRMED",
+        nextFollowUpAt: { not: null },
+      },
       data: { nextFollowUpAt: null, nextFollowUpMethod: null, nextFollowUpContent: null },
     });
     if (updated.count === 0) throw new Error("所选待跟进计划无效或已完成");

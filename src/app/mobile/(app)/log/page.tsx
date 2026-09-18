@@ -6,10 +6,24 @@ import {
   DAILY_REPORT_DEADLINE_HOUR,
   isDailyReportSubmitted,
 } from "@/lib/sales-log/daily-report-submission";
+import { markDailyReportRemindOpenedByClick } from "@/lib/sales-log/daily-report-reminders";
 import { SalesLogAiChat } from "@/components/sales-log/sales-log-ai-chat";
 
-export default async function MobileLogPage() {
+type Props = {
+  searchParams: Promise<{ remindNid?: string }>;
+};
+
+export default async function MobileLogPage({ searchParams }: Props) {
   const session = await requireRole(SALES_MOBILE_ROLES);
+  const query = await searchParams;
+  const remindNid = query.remindNid?.trim();
+  if (remindNid) {
+    await markDailyReportRemindOpenedByClick({
+      userId: session.user.id,
+      notificationId: remindNid,
+    });
+  }
+
   const logDate = getTodayLogDate();
   const log = await prisma.salesDailyLog.findUnique({
     where: { userId_logDate: { userId: session.user.id, logDate } },

@@ -2,7 +2,19 @@ import { z } from "zod";
 
 const money = z.coerce.number().finite();
 
+const optionalMoney = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) return null;
+  return value;
+}, z.coerce.number().finite().nullable());
+
 export const externalCostInstallmentLineSchema = z.object({
+  periodNumber: z.coerce.number().int().positive("期次须为正整数"),
+  amount: money.positive("计划金额须大于 0"),
+  condition: z.string().optional().nullable(),
+  dueAt: z.string().optional().nullable(),
+});
+
+export const contractInstallmentLineSchema = z.object({
   periodNumber: z.coerce.number().int().positive("期次须为正整数"),
   amount: money.positive("计划金额须大于 0"),
   condition: z.string().optional().nullable(),
@@ -11,6 +23,7 @@ export const externalCostInstallmentLineSchema = z.object({
 
 export const contractProductLineSchema = z
   .object({
+    id: z.string().optional().nullable(),
     productServiceId: z.string().optional().nullable(),
     productName: z.string().min(1, "请选择产品名称"),
     description: z.string().optional().nullable(),
@@ -46,13 +59,6 @@ export const contractProductLineSchema = z
     }
   });
 
-export const contractInstallmentLineSchema = z.object({
-  periodNumber: z.coerce.number().int().positive("期次须为正整数"),
-  amount: money.positive("计划金额须大于 0"),
-  condition: z.string().optional().nullable(),
-  dueAt: z.string().optional().nullable(),
-});
-
 export function validateInstallmentCoverage(
   totalAmount: number,
   installments: Array<{ amount: number }>
@@ -66,11 +72,27 @@ export function validateInstallmentCoverage(
   return `回款计划合计超出合同金额 ${Math.abs(gap).toFixed(2)} 元，请调整各期计划金额`;
 }
 
+export const contractDepositLineSchema = z.object({
+  id: z.string().optional().nullable(),
+  amount: money.positive("保证金金额须大于 0"),
+  paidOutAt: z.string().min(1, "请填写保证金支出日期"),
+  recoverCondition: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const contractDepositRecoverySchema = z.object({
+  depositId: z.string().min(1),
+  amount: money.positive("收回金额须大于 0"),
+  recoveredAt: z.string().min(1, "请选择收回日期"),
+  notes: z.string().optional().nullable(),
+});
+
 export const contractFormSchema = z
   .object({
     title: z.string().min(1, "请输入合同标题"),
     totalAmount: money.positive("合同金额须大于 0"),
     signingType: z.enum(["DIRECT", "INDIRECT"]),
+    businessType: z.enum(["NEW_PROJECT", "SECONDARY_PROJECT", "MAINTENANCE"]),
     signCustomerId: z.string().min(1, "请选择签约客户"),
     endUserCustomerId: z.string().min(1, "请选择最终用户"),
     signContactId: z.string().min(1, "请选择对方代表（客户联系人）"),
@@ -81,9 +103,14 @@ export const contractFormSchema = z
     signedAt: z.string().min(1, "请选择签约日期"),
     effectiveAt: z.string().optional().nullable(),
     expiresAt: z.string().optional().nullable(),
+    maintenanceStartAt: z.string().optional().nullable(),
+    maintenanceEndAt: z.string().optional().nullable(),
+    maintenanceTotalAmount: optionalMoney,
+    annualMaintenanceAmount: optionalMoney,
     notes: z.string().optional(),
     products: z.array(contractProductLineSchema).min(1, "请至少添加一行签约产品"),
     installments: z.array(contractInstallmentLineSchema).min(1, "请至少添加一期回款计划"),
+    deposits: z.array(contractDepositLineSchema).optional().default([]),
   })
   .superRefine((data, ctx) => {
     if (data.signingType === "DIRECT") {
@@ -100,6 +127,48 @@ export const contractFormSchema = z
         message: "非直签时签约客户与最终用户不能相同",
         path: ["endUserCustomerId"],
       });
+    }
+
+    if (data.businessType === "MAINTENANCE") {
+      if (!data.maintenanceStartAt?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "请填写维保开始日期",
+          path: ["maintenanceStartAt"],
+        });
+      }
+      if (!data.maintenanceEndAt?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "请填写维保结束日期",
+          path: ["maintenanceEndAt"],
+        });
+      }
+      if (
+        data.maintenanceStartAt?.trim() &&
+        data.maintenanceEndAt?.trim() &&
+        new Date(data.maintenanceEndAt) < new Date(data.maintenanceStartAt)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "维保结束日期不能早于开始日期",
+          path: ["maintenanceEndAt"],
+        });
+      }
+      if (data.maintenanceTotalAmount == null || data.maintenanceTotalAmount <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "请填写维保总额（大于 0）",
+          path: ["maintenanceTotalAmount"],
+        });
+      }
+      if (data.annualMaintenanceAmount == null || data.annualMaintenanceAmount <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "请填写或确认每年维保额度",
+          path: ["annualMaintenanceAmount"],
+        });
+      }
     }
 
     const coverageError = validateInstallmentCoverage(data.totalAmount, data.installments);

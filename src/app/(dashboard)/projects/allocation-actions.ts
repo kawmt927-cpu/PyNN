@@ -5,7 +5,7 @@ import { AllocationMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
-import { canManageProject, getProjectForUser } from "@/lib/projects/access";
+import { canManageProject, canBeScheduledOnProjects, getProjectForUser } from "@/lib/projects/access";
 import {
   assertSegmentsNoOverlap,
   findOverlappingSegment,
@@ -68,18 +68,24 @@ async function resolveStaffDailyRate(userId: string, referenceDate: Date): Promi
   const year = day.getFullYear();
   const month = day.getMonth() + 1;
 
-  const [profile, monthRows] = await Promise.all([
-    prisma.personnelProfile.findUnique({
-      where: { userId },
+  const [user, monthRows] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
       select: {
-        enabled: true,
-        staffCategory: true,
-        dailyRate: true,
+        role: true,
+        personnelProfile: {
+          select: {
+            enabled: true,
+            staffCategory: true,
+            dailyRate: true,
+          },
+        },
       },
     }),
     prisma.personnelMonthlyCostAdjustment.findMany({
       where: {
         userId,
+        confirmedAt: { not: null },
         OR: [{ year: { lt: year } }, { year, month: { lte: month } }],
       },
       select: {
@@ -96,7 +102,11 @@ async function resolveStaffDailyRate(userId: string, referenceDate: Date): Promi
     }),
   ]);
 
-  if (!profile?.enabled || profile.staffCategory !== "IMPLEMENTATION") {
+  const profile = user?.personnelProfile;
+  if (!user || !canBeScheduledOnProjects(user.role)) {
+    throw new Error("仅项目经理、项目人员可排入项目");
+  }
+  if (!profile?.enabled) {
     throw new Error("实施人员无效或未启用");
   }
 

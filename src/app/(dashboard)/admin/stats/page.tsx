@@ -12,7 +12,7 @@ export default async function StatsHubPage() {
       <div>
         <h1 className="text-2xl font-bold">统计管理</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          渠道覆盖统计与管理助手集中在此；地图分布请到「地图看板」。
+          渠道覆盖、销售工作回顾与管理助手集中在此；地图分布请到「地图看板」。
         </p>
       </div>
 
@@ -23,7 +23,7 @@ export default async function StatsHubPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
-              按「全国性渠道」的覆盖省份统计；普通渠道按档案所在省。地图不打渠道锚点。
+              普通渠道按公司所在省；全国性渠道按联系人负责省并集。地图不打渠道锚点。
             </p>
             <Button asChild>
               <Link href="/admin/stats/channels">打开渠道覆盖</Link>
@@ -33,17 +33,28 @@ export default async function StatsHubPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2.5 text-lg">
-              <OctopusAvatar mood="wink" size={36} />
-              <span>管理助手</span>
-            </CardTitle>
+            <CardTitle className="text-lg">销售工作回顾</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
-              章鱼顾问「触触」帮你查团队日报、跟进、商机与回款，给出运营建议。只读，不改数据。
+              按销售与任意起止日期，自动汇总打卡、往来、客户覆盖、商机与日报合规；自然月可对照月度 KPI。
             </p>
             <Button asChild>
-              <Link href="/admin/stats/assistant">打开管理助手</Link>
+              <Link href="/admin/stats/work-review">打开工作回顾</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">销售月报</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              按自然月自动汇总跟进、打卡、日报率、签约回款与成本；确认后归档快照。
+            </p>
+            <Button asChild>
+              <Link href="/admin/sales-monthly">打开销售月报</Link>
             </Button>
           </CardContent>
         </Card>

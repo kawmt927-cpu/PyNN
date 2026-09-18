@@ -15,6 +15,18 @@ export type CustomerListFilters = {
   district: string;
 };
 
+export type CustomerListSortColumn = "createdAt" | "updatedAt";
+
+export type CustomerListSort = {
+  column: CustomerListSortColumn;
+  dir: "asc" | "desc";
+};
+
+export const DEFAULT_CUSTOMER_LIST_SORT: CustomerListSort = {
+  column: "createdAt",
+  dir: "desc",
+};
+
 export function parseCustomerListFilters(
   params: Record<string, string | undefined>
 ): CustomerListFilters {
@@ -34,6 +46,26 @@ export function parseCustomerListFilters(
     city: params.city?.trim() ?? "",
     district: params.district?.trim() ?? "",
   };
+}
+
+export function parseCustomerListSort(
+  params: Record<string, string | undefined>
+): CustomerListSort {
+  const column: CustomerListSortColumn =
+    params.sort === "updatedAt" ? "updatedAt" : "createdAt";
+  const dir = params.dir === "asc" ? "asc" : "desc";
+  return { column, dir };
+}
+
+/** 点击列头：同列切换；换列时录入时间默认 desc，更新时间默认 desc */
+export function nextCustomerListSort(
+  current: CustomerListSort,
+  column: CustomerListSortColumn
+): CustomerListSort {
+  if (current.column === column) {
+    return { column, dir: current.dir === "asc" ? "desc" : "asc" };
+  }
+  return { column, dir: "desc" };
 }
 
 export function normalizeCustomerListTagFilters(
@@ -61,7 +93,8 @@ export function hasActiveCustomerListFilters(filters: CustomerListFilters) {
 export function buildCustomerListHref(
   view: CustomerListView,
   filters: CustomerListFilters,
-  page = 1
+  page = 1,
+  sort: CustomerListSort = DEFAULT_CUSTOMER_LIST_SORT
 ) {
   const params = new URLSearchParams();
   params.set("view", view);
@@ -75,6 +108,13 @@ export function buildCustomerListHref(
   if (filters.city) params.set("city", filters.city);
   if (filters.district) params.set("district", filters.district);
   if (filters.tags.length) params.set("tags", filters.tags.join(","));
+  if (
+    sort.column !== DEFAULT_CUSTOMER_LIST_SORT.column ||
+    sort.dir !== DEFAULT_CUSTOMER_LIST_SORT.dir
+  ) {
+    params.set("sort", sort.column);
+    params.set("dir", sort.dir);
+  }
   if (page > 1) params.set("page", String(page));
   return `/customers?${params.toString()}`;
 }

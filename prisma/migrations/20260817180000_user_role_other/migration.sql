@@ -1,0 +1,1 @@
+-- AlterEnum: UserRole 增加 OTHER（SQLite 以字符串存储，无需改表结构）

@@ -16,6 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ScrollChain } from "@/components/ui/scroll-chain";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import {
   DAY_COLUMN_WIDTH,
@@ -27,7 +28,7 @@ import {
   weekNavigationHref,
   type TimelineDay,
 } from "@/lib/projects/timeline";
-import { staffColorClass } from "@/lib/projects/timeline-colors";
+import { useStaffColor } from "@/lib/projects/timeline-colors";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
 import type {
@@ -37,10 +38,15 @@ import type {
 } from "@/lib/projects/schedule-serialize";
 import { buildDraftScheduleBar } from "@/lib/projects/schedule-serialize";
 import { getDailyShares, type AllocationRecord } from "@/lib/projects/allocation-split";
-import { AllocationEditDialog } from "@/components/projects/allocation-edit-dialog";
-import { findOverlappingSegment } from "@/lib/projects/allocation-overlap";
 import { parseDateOnlyInput } from "@/lib/validations/project";
 import { toDateOnly } from "@/lib/projects/workdays";
+import {
+  coalesceFillRuns,
+  dayFillCornerClass,
+  fillHeightPct,
+} from "@/lib/projects/schedule-bar-fills";
+import { AllocationEditDialog } from "@/components/projects/allocation-edit-dialog";
+import { findOverlappingSegment } from "@/lib/projects/allocation-overlap";
 
 export type SchedulerViewMode = "project" | "global";
 
@@ -105,28 +111,6 @@ function StaffCard({
 function clampShare(share: number): number {
   if (!Number.isFinite(share) || share <= 0) return 0;
   return Math.min(share, 1);
-}
-
-function fillHeightPct(share: number): number {
-  return Math.max(share * 100, share > 0 ? 6 : 0);
-}
-
-function dayFillCornerClass(
-  heightPct: number,
-  prevHeightPct: number | null,
-  nextHeightPct: number | null
-): string {
-  // 台阶拐角只圆「更高」一侧，避免矮块贴高块时出现内凹缺口
-  const roundTl = prevHeightPct == null || heightPct > prevHeightPct;
-  const roundTr = nextHeightPct == null || heightPct > nextHeightPct;
-  const roundBl = prevHeightPct == null;
-  const roundBr = nextHeightPct == null;
-  return cn(
-    roundTl && "rounded-tl",
-    roundTr && "rounded-tr",
-    roundBl && "rounded-bl",
-    roundBr && "rounded-br"
-  );
 }
 
 function asDateOnly(value: Date | string): Date {
@@ -218,11 +202,12 @@ function TimelineBar({
     () => dayFillsForBar(bar, days, weekStart, peerRecords),
     [bar, days, weekStart, peerRecords]
   );
+  const runs = useMemo(() => coalesceFillRuns(fills), [fills]);
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
-  if (!style.visible || fills.length === 0) return null;
+  const color = useStaffColor(bar.userId);
+  if (!style.visible || runs.length === 0) return null;
 
-  const colorClass = staffColorClass(bar.userId);
-  const summary = `${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · 本周期 ${formatPersonDays(bar.effectiveDays)} 人天 · ${ALLOCATION_MODE_LABELS[bar.allocationMode]}`;
+  const summary = `${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · 本周期 ${formatPersonDays(bar.effectiveDays)} 人天 · ${ALLOCATION_MODE_LABELS[bar.allocationMode]} · ${bar.startDate}~${bar.endDate}`;
 
   return (
     <button
@@ -234,43 +219,33 @@ function TimelineBar({
       className={cn(
         "absolute top-1 bottom-1 overflow-visible transition-shadow",
         "outline outline-1 outline-transparent",
-        hoveredDay ? "z-20 outline-2 outline-foreground/70" : null
+        hoveredDay ? "z-[2] outline-2 outline-foreground/70" : null
       )}
       style={{ left: style.left, width: style.width, minWidth: 0 }}
     >
       <div className="absolute inset-0 flex">
-        {fills.map((fill, index) => {
-          const heightPct = fillHeightPct(fill.share);
+        {runs.map((run, index) => {
+          const heightPct = fillHeightPct(run.share);
           const prevHeightPct =
-            index > 0 ? fillHeightPct(fills[index - 1].share) : null;
+            index > 0 ? fillHeightPct(runs[index - 1].share) : null;
           const nextHeightPct =
-            index < fills.length - 1 ? fillHeightPct(fills[index + 1].share) : null;
-          const active = hoveredDay === fill.dateKey;
+            index < runs.length - 1 ? fillHeightPct(runs[index + 1].share) : null;
+          const active = hoveredDay === run.dateKey;
           return (
             <div
-              key={fill.dateKey}
-              className="relative h-full min-w-0 flex-1"
-              onMouseEnter={() => setHoveredDay(fill.dateKey)}
+              key={`${run.dateKey}-${run.dayCount}`}
+              className="relative h-full min-w-0"
+              style={{ flex: run.dayCount }}
+              onMouseEnter={() => setHoveredDay(run.dateKey)}
             >
               <div
                 className={cn(
                   "absolute bottom-0 left-0 right-0",
-                  colorClass,
                   active && "brightness-110",
                   dayFillCornerClass(heightPct, prevHeightPct, nextHeightPct)
                 )}
-                style={{ height: `${heightPct}%` }}
+                style={{ height: `${heightPct}%`, backgroundColor: color }}
               />
-              {fill.share > 0 && active ? (
-                <span
-                  className={cn(
-                    "pointer-events-none absolute left-1/2 top-0.5 z-30 -translate-x-1/2 whitespace-nowrap",
-                    "rounded bg-foreground/90 px-1 py-0.5 text-[10px] font-medium leading-none text-background shadow"
-                  )}
-                >
-                  {formatPersonDays(fill.share)}人日
-                </span>
-              ) : null}
             </div>
           );
         })}
@@ -485,11 +460,11 @@ export function ResourceTimelineScheduler({
             <div className="border-b p-2 text-xs font-medium text-muted-foreground h-[41px] flex items-center">
               人员池
             </div>
-            <div className="max-h-[480px] overflow-y-auto p-2 space-y-2">
+            <ScrollChain className="max-h-[480px] space-y-2 overflow-y-auto p-2">
               {staff.map((member) => (
                 <StaffCard key={member.id} staff={member} disabled={!canEdit} />
               ))}
-            </div>
+            </ScrollChain>
           </div>
 
           <div className="flex-1 overflow-x-auto">

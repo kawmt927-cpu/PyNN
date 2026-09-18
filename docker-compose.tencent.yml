@@ -14,7 +14,7 @@ services:
     volumes:
       - crm-data:/app/data
       - crm-uploads:/app/uploads
-    command: sh -c "npx prisma migrate deploy && mkdir -p /app/uploads/contracts && chown -R 1001:1001 /app/data /app/uploads"
+    command: sh -c "npx prisma migrate deploy && mkdir -p /app/uploads/contracts /app/uploads/personnel && chown -R 1001:1001 /app/data /app/uploads"
     profiles:
       - migrate
 

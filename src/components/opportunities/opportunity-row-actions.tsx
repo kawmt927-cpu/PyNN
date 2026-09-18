@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
 import { OpportunityAbandonDialog } from "@/components/opportunities/opportunity-abandon-dialog";
+import { OpportunityQuoteDialog } from "@/components/opportunities/opportunity-quote-dialog";
 import { OpportunityRestoreStatusActions } from "@/components/opportunities/opportunity-restore-status-actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +47,7 @@ export function OpportunityRowActions({
   isAbandoned,
 }: Props) {
   const [abandonOpen, setAbandonOpen] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
 
   const link = (href: string) => (returnTo ? withReturnTo(href, returnTo) : href);
 
@@ -109,7 +111,18 @@ export function OpportunityRowActions({
             </DropdownMenuSub>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem disabled={!canAddQuote}>新增报价单</DropdownMenuItem>
+          {canAddQuote ? (
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                setQuoteOpen(true);
+              }}
+            >
+              新增报价单
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled>新增报价单</DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -117,6 +130,12 @@ export function OpportunityRowActions({
         opportunityId={opportunityId}
         open={abandonOpen}
         onOpenChange={setAbandonOpen}
+      />
+      <OpportunityQuoteDialog
+        opportunityId={opportunityId}
+        open={quoteOpen}
+        onOpenChange={setQuoteOpen}
+        detailHref={detailHref}
       />
     </>
   );

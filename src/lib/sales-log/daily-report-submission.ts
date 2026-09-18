@@ -1,4 +1,5 @@
 import { SalesDailyLogStatus } from "@prisma/client";
+import { isDailyReportRequiredDay } from "@/lib/calendar/cn-daily-report-days";
 import { DAILY_LOG_STATUS_LABELS } from "@/lib/sales-log/daily-reports";
 
 /** 日报须在当日该时刻前提交 */
@@ -41,6 +42,8 @@ export function isDailyReportCountedAsLate(report: {
   updatedAt: Date;
   lateMarkedAt?: Date | null;
 }) {
+  // 周末/法定假等非考核日：即使历史误写 lateMarkedAt 也不计入迟交
+  if (!isDailyReportRequiredDay(report.logDate)) return false;
   if (report.lateMarkedAt) return true;
   if (!isDailyReportSubmitted(report.status)) return false;
   const submissionTime = resolveDailyReportSubmissionTime(report);
@@ -81,6 +84,8 @@ export type DailyReportDisplayStatus = {
   lateMarked: boolean;
   submitted: boolean;
   submissionTime: Date | null;
+  /** 非考核日（周末/法定假/请假免报） */
+  exempt: boolean;
 };
 
 export function resolveDailyReportSubmissionTime(report: {
@@ -98,16 +103,21 @@ export function resolveDailyReportDisplayStatus(
     updatedAt: Date;
     lateMarkedAt?: Date | null;
     dailyReport?: string | null;
+    /** 显式传入时优先（含个人请假免报）；否则按公司出勤日历判断 */
+    reportRequired?: boolean;
   },
   now = new Date()
 ): DailyReportDisplayStatus {
   const submitted = isDailyReportSubmitted(report.status);
-  const lateMarked = Boolean(report.lateMarkedAt);
+  const required =
+    report.reportRequired ?? isDailyReportRequiredDay(report.logDate);
+  const lateMarked = required && Boolean(report.lateMarkedAt);
 
   if (submitted) {
     const submissionTime = resolveDailyReportSubmissionTime(report);
     const lateSubmission =
-      lateMarked || isLateDailyReportSubmission(submissionTime, report.logDate);
+      required &&
+      (lateMarked || isLateDailyReportSubmission(submissionTime, report.logDate));
     const baseLabel = DAILY_LOG_STATUS_LABELS[report.status];
     return {
       label: lateSubmission ? `${baseLabel}（迟交）` : baseLabel,
@@ -116,6 +126,20 @@ export function resolveDailyReportDisplayStatus(
       lateSubmission,
       lateMarked,
       submissionTime,
+      exempt: !required,
+    };
+  }
+
+  if (!required) {
+    const nonWorkday = !isDailyReportRequiredDay(report.logDate);
+    return {
+      label: nonWorkday ? "非工作日，无需填报" : "无需填报",
+      overdue: false,
+      submitted: false,
+      lateSubmission: false,
+      lateMarked: false,
+      submissionTime: null,
+      exempt: true,
     };
   }
 
@@ -131,6 +155,7 @@ export function resolveDailyReportDisplayStatus(
       lateSubmission: false,
       lateMarked: true,
       submissionTime: null,
+      exempt: false,
     };
   }
 
@@ -143,6 +168,7 @@ export function resolveDailyReportDisplayStatus(
       lateSubmission: false,
       lateMarked: false,
       submissionTime: null,
+      exempt: false,
     };
   }
 
@@ -154,6 +180,7 @@ export function resolveDailyReportDisplayStatus(
       lateSubmission: false,
       lateMarked,
       submissionTime: null,
+      exempt: false,
     };
   }
 
@@ -164,5 +191,6 @@ export function resolveDailyReportDisplayStatus(
     lateSubmission: false,
     lateMarked: false,
     submissionTime: null,
+    exempt: false,
   };
 }

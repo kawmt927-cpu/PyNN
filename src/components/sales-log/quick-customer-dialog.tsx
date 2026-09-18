@@ -33,6 +33,7 @@ import {
   isChannelCustomerType,
   resolveDirectCustomerTypeValue,
 } from "@/lib/customers/customer-type-grade";
+import { CustomerCreateGate } from "@/components/customers/customer-create-gate";
 
 type SalesOption = { id: string; name: string };
 
@@ -47,10 +48,17 @@ type Props = {
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
   channelGradeOptions?: ConfigOptionItem[];
+  channelKindOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   showOwnerSelect?: boolean;
   salesUsers?: SalesOption[];
-  onCreated: (customer: { id: string; name: string; customerGrade?: string | null }) => void;
+  canEditNationwideChannel?: boolean;
+  onCreated: (customer: {
+    id: string;
+    name: string;
+    customerType?: string | null;
+    customerGrade?: string | null;
+  }) => void;
 };
 
 const categoryOptions = [
@@ -86,9 +94,11 @@ export function QuickCustomerDialog({
   typeOptions,
   gradeOptions,
   channelGradeOptions = [],
+  channelKindOptions = [],
   tagOptions,
   showOwnerSelect,
   salesUsers = [],
+  canEditNationwideChannel = false,
   onCreated,
 }: Props) {
   const [name, setName] = useState(initialName);
@@ -102,18 +112,22 @@ export function QuickCustomerDialog({
   const [source, setSource] = useState("");
   const [customerType, setCustomerType] = useState("");
   const [customerGrade, setCustomerGrade] = useState("");
+  const [channelKind, setChannelKind] = useState("");
+  const [nationwideChannel, setNationwideChannel] = useState(false);
   const [tagValues, setTagValues] = useState<string[]>([]);
   const [ownerId, setOwnerId] = useState(POOL_OWNER_VALUE);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [enrichHint, setEnrichHint] = useState<string | null>(null);
   const [nameCorrected, setNameCorrected] = useState(false);
+  const [step, setStep] = useState<"search" | "create">("search");
   const [pending, startTransition] = useTransition();
   const [enriching, startEnrichTransition] = useTransition();
 
   const relationTypeLocked = categoryLocksToDirectCustomer(category);
   const directTypeValue = resolveDirectCustomerTypeValue(typeOptions);
   const showGrade = customerTypeRequiresGrade(customerType, typeOptions);
+  const showChannelKind = isChannelCustomerType(customerType, typeOptions);
   const activeGradeOptions = isChannelCustomerType(customerType, typeOptions)
     ? channelGradeOptions
     : gradeOptions;
@@ -124,6 +138,7 @@ export function QuickCustomerDialog({
 
   useEffect(() => {
     if (!open) return;
+    setStep("search");
     setName(initialName);
     setProvince(initialProvince);
     setCity(initialCity);
@@ -135,6 +150,8 @@ export function QuickCustomerDialog({
     setSource("");
     setCustomerType("");
     setCustomerGrade("");
+    setChannelKind("");
+    setNationwideChannel(false);
     setTagValues([]);
     setOwnerId(POOL_OWNER_VALUE);
     setNotes("");
@@ -199,6 +216,10 @@ export function QuickCustomerDialog({
       setError("请选择关系类型");
       return;
     }
+    if (isChannelCustomerType(customerType, typeOptions) && !channelKind.trim()) {
+      setError("请选择渠道类型");
+      return;
+    }
     if (!customerGrade.trim()) {
       setError("请选择客户等级");
       return;
@@ -217,10 +238,13 @@ export function QuickCustomerDialog({
             city: city || undefined,
             district: district || undefined,
             bedCount: category === "HOSPITAL" && bedCount ? Number(bedCount) : null,
-            existingSystem: existingSystem || undefined,
+            existingSystem: showChannelKind ? undefined : existingSystem || undefined,
             source: source || null,
             customerType: customerType || undefined,
             customerGrade: customerGrade || undefined,
+            channelKind: channelKind || null,
+            nationwideChannel:
+              canEditNationwideChannel && showChannelKind ? nationwideChannel : false,
             tagValues,
             ownerId: showOwnerSelect ? ownerId : null,
             notes: notes || undefined,
@@ -229,6 +253,7 @@ export function QuickCustomerDialog({
         const data = (await res.json()) as {
           id?: string;
           name?: string;
+          customerType?: string | null;
           customerGrade?: string | null;
           error?: string;
         };
@@ -239,6 +264,7 @@ export function QuickCustomerDialog({
         onCreated({
           id: data.id,
           name: data.name,
+          customerType: data.customerType ?? null,
           customerGrade: data.customerGrade ?? null,
         });
         onOpenChange(false);
@@ -258,13 +284,32 @@ export function QuickCustomerDialog({
         closeOnEscape={false}
       >
         <DialogHeader>
-          <DialogTitle>新增客户</DialogTitle>
+          <DialogTitle>{step === "search" ? "新建客户前先搜索" : "新增客户"}</DialogTitle>
           <DialogDescription>
-            医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。保存后回到往来打卡。
-            「Kimi 智能填充」仅根据当前客户名称检索，不使用打卡定位或上次已填地址。
+            {step === "search"
+              ? "全库搜索确认无匹配后再新建；已有客户请直接选择，他人负责的不可再建档。"
+              : "医院/公司须先核对官方准确全称后再保存；请先点「Kimi 智能填充」。保存时系统会再次核验，简称或不明确名称将被拒绝。保存后回到往来打卡。「Kimi 智能填充」仅根据当前客户名称检索，不使用打卡定位或上次已填地址。"}
           </DialogDescription>
         </DialogHeader>
+        {step === "search" ? (
+          <CustomerCreateGate
+            initialQuery={initialName}
+            onSelectExisting={(hit) => {
+              onCreated({ id: hit.id, name: hit.name });
+              onOpenChange(false);
+            }}
+            onContinueCreate={(lockedName) => {
+              setName(lockedName);
+              setStep("create");
+            }}
+          />
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" size="sm" onClick={() => setStep("search")}>
+              返回搜索
+            </Button>
+          </div>
           <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
             <div className="flex flex-wrap items-end gap-2 md:col-span-2">
               <div className="min-w-[240px] flex-1 space-y-2">
@@ -325,6 +370,12 @@ export function QuickCustomerDialog({
                 if (relationTypeLocked) return;
                 setCustomerType(value);
                 setCustomerGrade("");
+                if (isChannelCustomerType(value, typeOptions)) {
+                  setExistingSystem("");
+                } else {
+                  setChannelKind("");
+                  setNationwideChannel(false);
+                }
               }}
               required
               disabled={relationTypeLocked}
@@ -334,6 +385,37 @@ export function QuickCustomerDialog({
               className={FORM_GRID_CELL}
               labelClassName={FORM_GRID_LABEL}
             />
+
+            {showChannelKind ? (
+              <SelectField
+                id="channelKind"
+                label="渠道类型 *"
+                name="channelKind"
+                options={withEmptyOption(channelKindOptions)}
+                value={channelKind}
+                onValueChange={setChannelKind}
+                required
+                className={FORM_GRID_CELL}
+                labelClassName={FORM_GRID_LABEL}
+              />
+            ) : null}
+
+            {showChannelKind && canEditNationwideChannel ? (
+              <label className={cn(FORM_FULL_WIDTH, "flex items-start gap-3 rounded-md border p-3")}>
+                <input
+                  type="checkbox"
+                  checked={nationwideChannel}
+                  onChange={(e) => setNationwideChannel(e.target.checked)}
+                  className="mt-0.5 size-3.5 rounded border"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium leading-snug">全国性渠道</span>
+                  <span className="block text-xs text-muted-foreground">
+                    勾选后不按总部划省；请在客户详情为联系人标注负责省区，按省计入统计与 KPI。
+                  </span>
+                </span>
+              </label>
+            ) : null}
 
             {showGrade ? (
               <CustomerGradeSelect
@@ -421,14 +503,16 @@ export function QuickCustomerDialog({
               />
             </div>
 
-            <div className={FORM_FULL_WIDTH}>
-              <Label htmlFor="quickExistingSystem">现有系统</Label>
-              <Input
-                id="quickExistingSystem"
-                value={existingSystem}
-                onChange={(e) => setExistingSystem(e.target.value)}
-              />
-            </div>
+            {!showChannelKind ? (
+              <div className={FORM_FULL_WIDTH}>
+                <Label htmlFor="quickExistingSystem">现有系统</Label>
+                <Input
+                  id="quickExistingSystem"
+                  value={existingSystem}
+                  onChange={(e) => setExistingSystem(e.target.value)}
+                />
+              </div>
+            ) : null}
 
             {showOwnerSelect && (
               <SelectField
@@ -489,6 +573,7 @@ export function QuickCustomerDialog({
             </Button>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

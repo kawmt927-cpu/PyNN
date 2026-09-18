@@ -1,10 +1,12 @@
 import { prisma } from "@/lib/prisma";
+import { implementationStaffListWhere } from "@/lib/personnel/access";
 import {
+  compareYearMonth,
   computeMonthlyCost,
-  isCurrentYearMonth,
+  currentYearMonth,
   isFutureYearMonth,
-  yearMonthKey,
 } from "@/lib/personnel/daily-rate";
+import { serializeCopiedSnapshot } from "@/lib/personnel/cost-change-summary";
 import { resolveMonthCostFromHistory } from "@/lib/personnel/resolve-month-cost";
 
 function num(value: { toNumber?: () => number } | number | null | undefined): number | null {
@@ -12,9 +14,13 @@ function num(value: { toNumber?: () => number } | number | null | undefined): nu
   return typeof value === "number" ? value : Number(value);
 }
 
+function num0(value: { toNumber?: () => number } | number | null | undefined): number {
+  return num(value) ?? 0;
+}
+
 /**
- * 进入当月成本页时：若某人尚无当月记录，则从上月（或更早）有效成本复制入库。
- * 未来月份不生成。
+ * 进入成本页时：为所查看的已过月份生成待确认草稿（从上月/最近有效记录复制）。
+ * 当月与未来月不生成；奖金、扣罚、本月调整清零。
  */
 export async function ensureCurrentMonthCostsMaterialized(
   year: number,
@@ -22,23 +28,23 @@ export async function ensureCurrentMonthCostsMaterialized(
   now: Date = new Date()
 ): Promise<{ created: number }> {
   if (isFutureYearMonth(year, month, now)) return { created: 0 };
-  if (!isCurrentYearMonth(year, month, now)) return { created: 0 };
+  if (compareYearMonth({ year, month }, currentYearMonth(now)) >= 0) {
+    return { created: 0 };
+  }
+
+  const confirmedInMonth = await prisma.personnelMonthlyCostAdjustment.count({
+    where: { year, month, confirmedAt: { not: null } },
+  });
+  // 该月已有导入/已确认记录：视为历史已保存，不再补待确认草稿
+  if (confirmedInMonth > 0) return { created: 0 };
 
   const users = await prisma.user.findMany({
-    where: {
-      personnelProfile: {
-        staffCategory: "IMPLEMENTATION",
-        enabled: true,
-      },
-    },
+    where: implementationStaffListWhere(),
     select: {
       id: true,
       monthlyCostAdjustments: {
         where: {
-          OR: [
-            { year: { lt: year } },
-            { year, month: { lte: month } },
-          ],
+          OR: [{ year: { lt: year } }, { year, month: { lte: month } }],
         },
         select: {
           year: true,
@@ -48,6 +54,8 @@ export async function ensureCurrentMonthCostsMaterialized(
           socialSecurityCompany: true,
           housingFundCompany: true,
           adjustmentAmount: true,
+          bonus: true,
+          penaltyAmount: true,
           notes: true,
         },
         orderBy: [{ year: "desc" }, { month: "desc" }],
@@ -84,6 +92,10 @@ export async function ensureCurrentMonthCostsMaterialized(
     });
     if (monthly == null || monthly <= 0) continue;
 
+    const sourceRow = user.monthlyCostAdjustments.find(
+      (row) => row.year === resolved.sourceYear && row.month === resolved.sourceMonth
+    );
+
     await prisma.personnelMonthlyCostAdjustment.create({
       data: {
         userId: user.id,
@@ -94,7 +106,20 @@ export async function ensureCurrentMonthCostsMaterialized(
         socialSecurityCompany: resolved.socialSecurityCompany,
         housingFundCompany: resolved.housingFundCompany,
         adjustmentAmount: 0,
-        notes: `由 ${yearMonthKey(resolved.sourceYear, resolved.sourceMonth)} 自动生成`,
+        bonus: 0,
+        penaltyAmount: 0,
+        copiedFromYear: resolved.sourceYear,
+        copiedFromMonth: resolved.sourceMonth,
+        copiedSnapshot: serializeCopiedSnapshot({
+          contributionBase: resolved.contributionBase,
+          baseSalary: resolved.baseSalary,
+          socialSecurityCompany: resolved.socialSecurityCompany,
+          housingFundCompany: resolved.housingFundCompany,
+          bonus: num0(sourceRow?.bonus),
+          penaltyAmount: num0(sourceRow?.penaltyAmount),
+          monthAdjustment: Number(sourceRow?.adjustmentAmount ?? 0),
+        }),
+        confirmedAt: null,
       },
     });
     created += 1;

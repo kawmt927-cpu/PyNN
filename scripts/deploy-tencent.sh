@@ -27,6 +27,8 @@ EXCLUDES=(
   --exclude .env
   --exclude .env.local
   --exclude .env.production
+  --exclude tmp
+  --exclude backups
 )
 
 echo "→ 同步代码到 ${REMOTE}:${REMOTE_DIR}"
@@ -47,7 +49,7 @@ NEXTAUTH_URL="https://crm.pynntech.com"
 PUBLIC_APP_URL="https://crm.pynntech.com"
 LLM_API_KEY=""
 LLM_API_BASE="https://api.moonshot.cn/v1"
-LLM_MODEL="kimi-k2.5"
+LLM_MODEL="kimi-k2.6"
 WECOM_CORP_ID=""
 WECOM_AGENT_ID=""
 WECOM_SECRET=""
@@ -80,6 +82,48 @@ if [[ "$ready" -ne 1 ]]; then
   echo "构建完成，但健康检查未通过，请查看日志:"
   sudo docker compose -p hospital-crm logs --tail=80 app
   exit 1
+fi
+
+# 部署后自动回填语义索引（幂等；无 CRON_SECRET / Embedding Key 则跳过）
+echo "→ 后台回填语义索引（日报/往来 embedding）..."
+CRON_SECRET_VAL="$(grep -E '^CRON_SECRET=' .env.production 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'\'']//;s/["'\'']$//' || true)"
+if [[ -z "${CRON_SECRET_VAL}" ]]; then
+  echo "  跳过：.env.production 未配置 CRON_SECRET"
+else
+  nohup env CRON_SECRET="$CRON_SECRET_VAL" python3 - <<'PY' >>/tmp/hospital-crm-embed-backfill.log 2>&1 &
+import json, os, time, urllib.parse, urllib.request
+secret = os.environ.get("CRON_SECRET", "").strip()
+cursor = None
+total_indexed = 0
+for round_i in range(120):
+    q = {"secret": secret, "all": "1"}
+    if cursor:
+        q["cursor"] = cursor
+    url = "http://127.0.0.1:3001/api/cron/backfill-activity-embeddings?" + urllib.parse.urlencode(q)
+    try:
+        with urllib.request.urlopen(url, timeout=300) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"round={round_i} error={e}", flush=True)
+        time.sleep(5)
+        continue
+    total_indexed += int(data.get("indexed") or 0)
+    print(
+        f"round={round_i} done={data.get('done')} indexed=+{data.get('indexed')} "
+        f"skipped={data.get('skipped')} stats={data.get('stats')} cursor={data.get('nextCursor')}",
+        flush=True,
+    )
+    if data.get("done"):
+        print(f"backfill complete total_indexed≈{total_indexed}", flush=True)
+        break
+    cursor = data.get("nextCursor")
+    if not cursor:
+        break
+    time.sleep(1)
+else:
+    print("backfill stopped: max rounds", flush=True)
+PY
+  echo "  已后台启动（日志: /tmp/hospital-crm-embed-backfill.log）"
 fi
 
 # 仅清理本项目（hospital-crm）产生的旧镜像，不影响 beproj 等其它容器/镜像

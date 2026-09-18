@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { format } from "date-fns";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   canEditOpportunityContent,
   canFollowUpOpportunity,
   canManageOpportunityOwner,
-  canManageOpportunityStatus,
+  canRestoreOpportunity,
   canViewAllOpportunities,
 } from "@/lib/opportunities/access";
 import { getOpportunityFunnelSummary } from "@/lib/opportunities/funnel";
@@ -19,6 +18,12 @@ import {
 } from "@/lib/opportunities/list-filters";
 import { sortOpportunitiesWithVisits } from "@/lib/opportunities/list-sort";
 import { getOpportunityVisitSummaries } from "@/lib/opportunities/visit-summary";
+import { format } from "date-fns";
+import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
+import {
+  formatAbsoluteDate,
+  formatRelativeDayLabel,
+} from "@/lib/opportunities/relative-day";
 import {
   CONFIG_CATEGORY,
   getConfigOptionMaps,
@@ -72,9 +77,26 @@ function emptyMessage(filters: { statuses: string[] }) {
   return "暂无符合筛选条件的商机。";
 }
 
-function formatVisitDate(value: Date | null | undefined) {
-  if (!value) return "—";
-  return format(value, "yyyy-MM-dd");
+function VisitRelativeCell({
+  at,
+  detail,
+  fromGrade,
+}: {
+  at: Date | null | undefined;
+  detail?: string | null;
+  fromGrade?: boolean;
+}) {
+  if (!at) return "—";
+  const absolute = formatAbsoluteDate(at);
+  const parts = [
+    fromGrade ? `星级周期 ${absolute}` : absolute,
+    detail?.trim() || null,
+  ].filter(Boolean);
+  return (
+    <span className="cursor-default" title={parts.join("\n")}>
+      {formatRelativeDayLabel(at)}
+    </span>
+  );
 }
 
 export default async function OpportunitiesPage({ searchParams }: Props) {
@@ -104,7 +126,7 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
   ] = await Promise.all([
     prisma.opportunity.findMany({
       where: accessWhere,
-      orderBy: { updatedAt: "desc" },
+      orderBy: { createdAt: "desc" },
       include: {
         customer: { select: { id: true, name: true } },
         owner: { select: { id: true, name: true } },
@@ -114,6 +136,7 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
     showFunnel
       ? getOpportunityFunnelSummary(
           buildOpportunityListWhere(session.user.role, session.user.id, {
+            q: "",
             statuses: [],
             stages: [],
             ownerIds: filters.ownerIds,
@@ -140,7 +163,11 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
   ]);
 
   const visitSummaries = await getOpportunityVisitSummaries(
-    opportunityRows.map((opp) => opp.id)
+    opportunityRows.map((opp) => ({
+      id: opp.id,
+      grade: opp.grade,
+      createdAt: opp.createdAt,
+    }))
   );
 
   const stageOrder = Object.fromEntries(
@@ -201,14 +228,19 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">商机名称</th>
+                    <th className="pb-2 pr-4">销售对象</th>
+                    <OpportunitySortableTh
+                      label="录入时间"
+                      column="createdAt"
+                      filters={filters}
+                      sort={sort}
+                    />
                     <OpportunitySortableTh
                       label="等级"
                       column="grade"
                       filters={filters}
                       sort={sort}
                     />
-                    <th className="pb-2 pr-4">销售对象</th>
                     <OpportunitySortableTh
                       label="预计金额"
                       column="amount"
@@ -218,6 +250,12 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                     <OpportunitySortableTh
                       label="阶段"
                       column="stage"
+                      filters={filters}
+                      sort={sort}
+                    />
+                    <OpportunitySortableTh
+                      label="预计成交"
+                      column="expectedClose"
                       filters={filters}
                       sort={sort}
                     />
@@ -251,12 +289,14 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                       session.user.id,
                       opp
                     );
-                    const canManageStatus = canManageOpportunityStatus(session.user.role);
+                    const canRestore = canRestoreOpportunity(session.user.role);
                     const isAbandoned = opp.status === "ABANDONED";
                     const canSign =
                       canSignOpportunity(opp.status) && canEditContract(session.user.role);
                     const canAbandon = canAbandonOpportunity(opp.status);
-                    const canAddQuote = canAddOpportunityQuote(opp.status);
+                    const canAddQuote =
+                      canAddOpportunityQuote(opp.status) && canEdit;
+                    const customerLabel = opp.customer?.name ?? "未关联客户";
 
                     return (
                       <tr key={opp.id} className="border-b">
@@ -264,9 +304,13 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                           <Link
                             href={withReturnTo(`/opportunities/${opp.id}`, listPath)}
                             className="text-primary hover:underline"
+                            title={opp.title}
                           >
-                            {opp.title}
+                            {customerLabel}
                           </Link>
+                        </td>
+                        <td className="py-3 pr-4 tabular-nums text-muted-foreground">
+                          {format(opp.createdAt, "yyyy-MM-dd")}
                         </td>
                         <td className="py-3 pr-4">
                           <OpportunityGradeIcon
@@ -275,43 +319,23 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                             labelMap={gradeLabels}
                           />
                         </td>
-                        <td className="py-3 pr-4">
-                          {opp.customer ? (
-                            <Link
-                              href={withReturnTo(`/customers/${opp.customer.id}`, listPath)}
-                              className="text-primary hover:underline"
-                            >
-                              {opp.customer.name}
-                            </Link>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </td>
                         <td className="py-3 pr-4">{formatAmountInWan(opp.expectedAmount)}</td>
                         <td className="py-3 pr-4">{labelForConfig(stageLabels, opp.stage)}</td>
-                        <td className="py-3 pr-4">
-                          {visit?.lastVisitAt ? (
-                            <span
-                              className="cursor-default underline decoration-dotted underline-offset-2"
-                              title={visit.lastVisitContent ?? undefined}
-                            >
-                              {formatVisitDate(visit.lastVisitAt)}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
+                        <td className="py-3 pr-4 tabular-nums">
+                          {formatExpectedCloseMonth(opp.expectedCloseDate)}
                         </td>
                         <td className="py-3 pr-4">
-                          {visit?.nextVisitAt ? (
-                            <span
-                              className="cursor-default underline decoration-dotted underline-offset-2"
-                              title={visit.nextVisitContent ?? undefined}
-                            >
-                              {formatVisitDate(visit.nextVisitAt)}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
+                          <VisitRelativeCell
+                            at={visit?.lastVisitAt}
+                            detail={visit?.lastVisitContent}
+                          />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <VisitRelativeCell
+                            at={visit?.nextVisitAt}
+                            detail={visit?.nextVisitContent}
+                            fromGrade={visit?.nextVisitFromGrade}
+                          />
                         </td>
                         <td className="py-3 pr-4">{OPPORTUNITY_STATUS_LABELS[opp.status]}</td>
                         <td className="py-3 pr-4">{opp.owner.name}</td>
@@ -324,7 +348,7 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
                             canFollowUp={canFollowUp}
                             canSign={canSign}
                             canAbandon={canAbandon}
-                            canManageStatus={canManageStatus}
+                            canManageStatus={canRestore}
                             canAddQuote={canAddQuote}
                             canAssign={canAssign && Boolean(opp.customer?.id)}
                             isAbandoned={isAbandoned}

@@ -80,7 +80,7 @@ async function main() {
     existingSystem: "旧版 HIS",
     notes: "手册演示：重点跟进客户",
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const company = await createCustomerRecord("SALES", sales.id, {
     name: `${PREFIX}浙里健康科技有限公司`,
     category: "COMPANY",
@@ -91,7 +91,7 @@ async function main() {
     city: "杭州市",
     notes: "手册演示：渠道/合作对象",
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const pool = await createCustomerRecord("SALES_MANAGER", manager.id, {
     name: `${PREFIX}公海-某市中医院`,
     category: "HOSPITAL",
@@ -104,7 +104,7 @@ async function main() {
     ownerId: null,
     notes: "手册演示：公海可认领",
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const sales2Cust = await createCustomerRecord("SALES", sales2.id, {
     name: `${PREFIX}沈伟负责-西湖区社区卫生中心`,
     category: "HOSPITAL",
@@ -115,7 +115,7 @@ async function main() {
     province: "浙江省",
     city: "杭州市",
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
 
   const contactH = await prisma.contact.create({
     data: {

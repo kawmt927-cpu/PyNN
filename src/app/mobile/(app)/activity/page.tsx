@@ -1,4 +1,4 @@
-import { format, startOfDay } from "date-fns";
+import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { requireRole } from "@/lib/session";
 import { SALES_MOBILE_ROLES, isMobileManagerRole } from "@/lib/mobile/sales-roles";
@@ -8,15 +8,24 @@ import {
   parseActivityDateParam,
 } from "@/lib/sales-log/daily-log";
 import {
+  getTeamActivityDateRange,
+  parseTeamActivityView,
+} from "@/lib/today-work/activity-view-scope";
+import {
+  groupTeamWorkByDay,
   listTeamWorkActivity,
   summarizeTeamWorkActivity,
 } from "@/lib/today-work/team-work-activity";
 import { parseActivityOpenParam } from "@/lib/today-work/activity-open";
-import { MobileExpandableActivityFeed } from "@/components/today-work/team-work-activity-list";
+import {
+  MobileExpandableActivityFeed,
+  TeamWorkActivityGroupedList,
+} from "@/components/today-work/team-work-activity-list";
 import { MobileActivityDateNav } from "@/components/mobile/mobile-activity-date-nav";
+import { MobileActivityViewTabs } from "@/components/mobile/mobile-activity-view-tabs";
 
 type Props = {
-  searchParams: Promise<{ open?: string; date?: string }>;
+  searchParams: Promise<{ open?: string; date?: string; view?: string }>;
 };
 
 function serializeActivityItems(
@@ -36,35 +45,58 @@ export default async function MobileActivityPage({ searchParams }: Props) {
   const query = await searchParams;
   const open = parseActivityOpenParam(query.open);
   const manager = isMobileManagerRole(session.user.role);
+  const view = parseTeamActivityView(query.view);
+  const isWeek = view === "week";
 
   const selectedDay = parseActivityDateParam(query.date);
   const selectedDate = formatLogDateParam(selectedDay);
   const today = getTodayLogDate();
   const isToday = selectedDay.getTime() === today.getTime();
 
-  const start = startOfDay(selectedDay);
-  const end = new Date(
-    selectedDay.getFullYear(),
-    selectedDay.getMonth(),
-    selectedDay.getDate() + 1
-  );
+  const range = isWeek
+    ? getTeamActivityDateRange("week", selectedDay)
+    : {
+        start: selectedDay,
+        end: new Date(
+          selectedDay.getFullYear(),
+          selectedDay.getMonth(),
+          selectedDay.getDate() + 1
+        ),
+      };
 
   const items = await listTeamWorkActivity({
-    start,
-    end,
+    start: range.start,
+    end: range.end,
     filter: manager ? null : session.user.id,
   });
   const summary = summarizeTeamWorkActivity(items);
   const serialized = serializeActivityItems(items);
+  const groups = isWeek
+    ? groupTeamWorkByDay(items).map((group) => ({
+        ...group,
+        items: serializeActivityItems(group.items),
+      }))
+    : [];
 
-  const dayLabel = format(selectedDay, "M月d日 EEEE", { locale: zhCN });
+  const dayLabel = isWeek
+    ? `${format(range.start, "M月d日", { locale: zhCN })} – ${format(
+        new Date(range.end.getTime() - 1),
+        "M月d日",
+        { locale: zhCN }
+      )}（本周）`
+    : format(selectedDay, "M月d日 EEEE", { locale: zhCN });
+
   const title = manager
-    ? isToday
-      ? "今日团队日志"
-      : `${format(selectedDay, "M月d日")}团队日志`
-    : isToday
-      ? "今日工作日志"
-      : `${format(selectedDay, "M月d日")}工作日志`;
+    ? isWeek
+      ? "本周团队日志"
+      : isToday
+        ? "今日团队日志"
+        : `${format(selectedDay, "M月d日")}团队日志`
+    : isWeek
+      ? "本周工作"
+      : isToday
+        ? "今日工作日志"
+        : `${format(selectedDay, "M月d日")}工作日志`;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -75,20 +107,37 @@ export default async function MobileActivityPage({ searchParams }: Props) {
           打卡 {summary.checkIns} · 往来 {summary.followUps} · 日报 {summary.logsSubmitted}
           {open ? " · 已定位到推送记录" : ""}
         </p>
-        <MobileActivityDateNav
+        <MobileActivityViewTabs
+          view={isWeek ? "week" : "day"}
           selectedDate={selectedDate}
-          extraQuery={{ open: query.open }}
+          open={query.open}
           className="mt-3"
         />
+        {!isWeek ? (
+          <MobileActivityDateNav
+            selectedDate={selectedDate}
+            extraQuery={{ open: query.open, view: "day" }}
+            className="mt-3"
+          />
+        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-6">
-        <MobileExpandableActivityFeed
-          items={serialized}
-          openParam={query.open ?? null}
-          previewCount={manager ? 8 : 20}
-          currentUserId={session.user.id}
-        />
+        {isWeek ? (
+          <TeamWorkActivityGroupedList
+            groups={groups}
+            customerBasePath="/mobile/customers"
+            openParam={query.open ?? null}
+            currentUserId={session.user.id}
+          />
+        ) : (
+          <MobileExpandableActivityFeed
+            items={serialized}
+            openParam={query.open ?? null}
+            previewCount={manager ? 8 : 20}
+            currentUserId={session.user.id}
+          />
+        )}
       </div>
     </div>
   );

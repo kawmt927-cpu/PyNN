@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DailyReportBody } from "@/components/daily-reports/daily-report-body";
+import { DailyReportRiskReason } from "@/components/daily-reports/daily-report-risk-reason";
 
 type Props = {
   userName: string;
@@ -18,6 +19,8 @@ type Props = {
   meta?: string | null;
   content: string;
   preview: string;
+  riskFlag?: boolean;
+  riskNotes?: string | null;
   /** 深链打开时默认弹出详情 */
   defaultOpen?: boolean;
 };
@@ -29,6 +32,8 @@ export function DailyReportPreviewWithDialog({
   meta,
   content,
   preview,
+  riskFlag,
+  riskNotes,
   defaultOpen = false,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
@@ -36,6 +41,7 @@ export function DailyReportPreviewWithDialog({
 
   return (
     <div className="space-y-1.5">
+      <DailyReportRiskReason riskFlag={riskFlag} riskNotes={riskNotes} compact />
       <p className="line-clamp-3 text-sm text-muted-foreground">{preview}</p>
       <Button
         type="button"
@@ -63,6 +69,11 @@ export function DailyReportPreviewWithDialog({
               <DialogDescription className="sr-only">日报全文</DialogDescription>
             )}
           </DialogHeader>
+          <DailyReportRiskReason
+            riskFlag={riskFlag}
+            riskNotes={riskNotes}
+            className="mt-3"
+          />
           <DailyReportBody content={content} className="mt-4" />
         </DialogContent>
       </Dialog>

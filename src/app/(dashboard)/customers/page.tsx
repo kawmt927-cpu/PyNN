@@ -7,6 +7,7 @@ import {
   listCustomerAssignableUsers,
   resolveCustomerListView,
 } from "@/lib/customers/access";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 import {
   buildCustomerListHref,
   buildCustomerListWhere,
@@ -16,6 +17,7 @@ import {
   normalizeCustomerListTagFilters,
   parseCustomerListFilters,
   parseCustomerListPage,
+  parseCustomerListSort,
 } from "@/lib/customers/list-filters";
 import {
   CONFIG_CATEGORY,
@@ -34,12 +36,16 @@ import {
   CustomerListPageNumbers,
   CustomerListPagination,
 } from "@/components/customers/customer-list-pagination";
+import { CustomerSortableTh } from "@/components/customers/customer-sortable-th";
 import { TruncatedTextPopover } from "@/components/ui/truncated-text-popover";
 import { getCustomerTagDefinitions } from "@/lib/customers/tags";
 import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
+import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { rankByNameMatch } from "@/lib/search/fuzzy-text";
 import { withReturnTo } from "@/lib/navigation/return-to";
+import { resolveLeadStatusFilter } from "@/lib/customers/lead-status";
+import { redirect } from "next/navigation";
 
 type Props = {
   searchParams: Promise<{
@@ -55,12 +61,20 @@ type Props = {
     city?: string;
     district?: string;
     page?: string;
+    sort?: string;
+    dir?: string;
+    status?: string;
   }>;
 };
 
 export default async function CustomersPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const params = await searchParams;
+
+  // 线索池兼容入口：/customers?status=线索 → /crm/leads
+  if (resolveLeadStatusFilter(params.status)) {
+    redirect("/crm/leads");
+  }
 
   const view = resolveCustomerListView(params.view, session.user.role);
   const tagDefinitions = await getCustomerTagDefinitions();
@@ -70,6 +84,7 @@ export default async function CustomersPage({ searchParams }: Props) {
     ...parsedFilters,
     tags: normalizeCustomerListTagFilters(parsedFilters.tags, allowedTagValues),
   };
+  const sort = parseCustomerListSort(params);
   const tabs = customerListTabs(session.user.role);
   const where = buildCustomerListWhere(session.user.role, session.user.id, view, filters);
   const showOwnerFilter = canManageCustomerOwner(session.user.role) && view === "all";
@@ -89,7 +104,7 @@ export default async function CustomersPage({ searchParams }: Props) {
 
   const totalPages = customerListPageCount(total, pageSize);
   const page = Math.min(requestedPage, totalPages);
-  const listPath = buildCustomerListHref(view, filters, page);
+  const listPath = buildCustomerListHref(view, filters, page, sort);
 
   const customerInclude = {
     owner: { select: { name: true } },
@@ -117,7 +132,7 @@ export default async function CustomersPage({ searchParams }: Props) {
   } else {
     customers = await prisma.customer.findMany({
       where,
-      orderBy: { updatedAt: "desc" },
+      orderBy: { [sort.column]: sort.dir },
       include: customerInclude,
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -162,15 +177,18 @@ export default async function CustomersPage({ searchParams }: Props) {
       ? "公海池暂无客户。"
       : "暂无客户，点击「新增客户」开始录入。";
 
-  const hrefForPage = (p: number) => buildCustomerListHref(view, filters, p);
+  const hrefForPage = (p: number) => buildCustomerListHref(view, filters, p, sort);
+  const canCreateCustomer = hasPermissionSync(session.user.role, "customers.create");
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">客户管理</h1>
-        <Button asChild>
-          <Link href="/customers/new">新增客户</Link>
-        </Button>
+        {canCreateCustomer ? (
+          <Button asChild>
+            <Link href="/customers/new">新增客户</Link>
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex gap-2 border-b">
@@ -203,6 +221,7 @@ export default async function CustomersPage({ searchParams }: Props) {
           <CustomerListFilters
             view={view}
             filters={filters}
+            sort={sort}
             typeOptions={typeOptions}
             gradeOptions={gradeOptions}
             tagOptions={tagDefinitions}
@@ -219,6 +238,13 @@ export default async function CustomersPage({ searchParams }: Props) {
                   <thead>
                     <tr className="border-b text-left text-muted-foreground">
                       <th className="whitespace-nowrap pb-2 pr-4">客户名称</th>
+                      <CustomerSortableTh
+                        label="录入时间"
+                        column="createdAt"
+                        view={view}
+                        filters={filters}
+                        sort={sort}
+                      />
                       <th className="whitespace-nowrap pb-2 pr-4">类别</th>
                       <th className="whitespace-nowrap pb-2 pr-4">关系类型</th>
                       <th className="whitespace-nowrap pb-2 pr-4">等级</th>
@@ -250,6 +276,9 @@ export default async function CustomersPage({ searchParams }: Props) {
                             returnTo={listPath}
                             className="block truncate"
                           />
+                        </td>
+                        <td className="whitespace-nowrap py-3 pr-4 tabular-nums text-muted-foreground">
+                          {format(c.createdAt, "yyyy-MM-dd")}
                         </td>
                         <td className="whitespace-nowrap py-3 pr-4">{CUSTOMER_CATEGORY_LABELS[c.category]}</td>
                         <td className="whitespace-nowrap py-3 pr-4">{labelForConfig(typeLabels, c.customerType)}</td>

@@ -95,6 +95,8 @@ export async function approveWeComAccess(formData: FormData) {
           role,
           passwordHash,
           wecomUserId: request.wecomUserId,
+          includeInTeamPerformance: role !== "OTHER",
+          includeInMonthlyAssessment: role !== "OTHER",
           personnelProfile: {
             create: {
               staffCategory: staffCategoryForRole(role),

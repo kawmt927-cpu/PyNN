@@ -18,6 +18,11 @@ import {
   customerGradeSubmitValue,
 } from "@/lib/customers/grade";
 import {
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveGradeOptionsForCustomerType,
+} from "@/lib/customers/customer-type-grade";
+import {
   CheckInLocationPicker,
   type CheckInLocationValue,
 } from "@/components/sales-log/check-in-location-picker";
@@ -40,8 +45,10 @@ import {
 import { CustomerPendingFollowPlansPanel } from "@/components/customers/customer-pending-follow-plans-panel";
 import {
   CompletePendingFollowUpDialog,
+  type AssignmentCompletionMode,
 } from "@/components/customers/complete-pending-follow-up-dialog";
 import type { SerializedCustomerPendingFollowPlan } from "@/lib/follow-ups/unified";
+import type { PendingAssignmentForFollowUp } from "@/lib/today-work/assignment-follow-up-complete";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { cn } from "@/lib/utils";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
@@ -62,6 +69,7 @@ const alignedFieldLabelClass = "flex min-h-9 items-center";
 export type CheckInCustomerContext = {
   customerId: string;
   customerLabel: string;
+  customerType?: string | null;
   customerGrade?: string | null;
   initialContactIds?: string[];
   initialOpportunityId?: string;
@@ -74,6 +82,8 @@ export type CheckInCustomerFormOptions = {
   sourceOptions: ConfigOptionItem[];
   typeOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
+  channelKindOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   stageOptions: ConfigOptionItem[];
   showOwnerSelect?: boolean;
@@ -104,16 +114,25 @@ export function CheckInForm({
   const [pendingPlans, setPendingPlans] = useState<SerializedCustomerPendingFollowPlan[]>(
     customerContext?.pendingPlans ?? []
   );
+  const [pendingAssignments, setPendingAssignments] = useState<PendingAssignmentForFollowUp[]>([]);
   const [pendingPlansLoading, setPendingPlansLoading] = useState(false);
   const hasPendingPlans = pendingPlans.length > 0;
+  const hasPendingAssignments = pendingAssignments.length > 0;
+  const needsCompleteDialog = hasPendingPlans || hasPendingAssignments;
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [checkInMode, setCheckInMode] = useState<CheckInMode>("interaction");
   const [entryTiming, setEntryTiming] = useState<EntryTiming>("now");
   const [customerId, setCustomerId] = useState(customerContext?.customerId ?? "");
   const [customerLabel, setCustomerLabel] = useState(customerContext?.customerLabel ?? "");
+  const [customerWritable, setCustomerWritable] = useState<boolean | null>(
+    lockedCustomer ? true : null
+  );
   const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(
     customerContext?.customerGrade ?? null
+  );
+  const [currentCustomerType, setCurrentCustomerType] = useState<string | null>(
+    customerContext?.customerType ?? null
   );
   const [contactIds, setContactIds] = useState<string[]>(customerContext?.initialContactIds ?? []);
   const [location, setLocation] = useState<CheckInLocationValue | null>(null);
@@ -122,7 +141,8 @@ export function CheckInForm({
   const [opportunityIds, setOpportunityIds] = useState<string[]>(
     customerContext?.initialOpportunityId ? [customerContext.initialOpportunityId] : []
   );
-  const { options: opportunityOptions } = useCustomerNotSignedOpportunities(customerId);
+  const { options: opportunityOptions, upsertOption: upsertOpportunityOption } =
+    useCustomerNotSignedOpportunities(customerId);
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
   const [suggestedGrade, setSuggestedGrade] = useState(() =>
     customerGradeFormValue(customerContext?.customerGrade)
@@ -136,6 +156,8 @@ export function CheckInForm({
   const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
+  const [assignmentMode, setAssignmentMode] = useState<AssignmentCompletionMode>(null);
+  const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<string[]>([]);
   const [queuedPayload, setQueuedPayload] = useState<Record<string, unknown> | null>(null);
   const [guideDismissed, setGuideDismissed] = useState(false);
   const [modeAcknowledged, setModeAcknowledged] = useState(lockedCustomer);
@@ -149,6 +171,22 @@ export function CheckInForm({
   const customerReady = Boolean(customerId);
   /** 客户 + 至少一位联系人就绪后，才可操作下方字段 */
   const partyReady = customerReady && contactIds.length > 0;
+  const activeGradeOptions = resolveGradeOptionsForCustomerType(
+    currentCustomerType,
+    customerFormOptions.gradeOptions,
+    customerFormOptions.channelGradeOptions ?? [],
+    customerFormOptions.typeOptions
+  );
+  const gradeTone = gradeToneForCustomerType(
+    currentCustomerType,
+    customerFormOptions.typeOptions
+  );
+  const gradeFieldLabel = isChannelCustomerType(
+    currentCustomerType,
+    customerFormOptions.typeOptions
+  )
+    ? "渠道等级（如需调整）"
+    : "客户等级（如需调整）";
   const belowLocked = isInteraction && !partyReady;
   const contentReady = !completeNow || Boolean(content.trim());
   const nextPlanError = completeNow
@@ -268,7 +306,10 @@ export function CheckInForm({
   useEffect(() => {
     if (!isInteraction || !customerId) {
       setPendingPlans([]);
+      setPendingAssignments([]);
       setSelectedPendingKeys([]);
+      setAssignmentMode(null);
+      setSelectedAssignmentIds([]);
       setPendingPlansLoading(false);
       return;
     }
@@ -278,14 +319,25 @@ export function CheckInForm({
     void fetch(`/api/customers/${encodeURIComponent(customerId)}/pending-follow-plans`, {
       credentials: "include",
     })
-      .then((res) => (res.ok ? res.json() : { items: [] }))
-      .then((data: { items?: SerializedCustomerPendingFollowPlan[] }) => {
-        if (cancelled) return;
-        setPendingPlans(data.items ?? []);
-        setSelectedPendingKeys([]);
-      })
+      .then((res) => (res.ok ? res.json() : { items: [], assignments: [] }))
+      .then(
+        (data: {
+          items?: SerializedCustomerPendingFollowPlan[];
+          assignments?: PendingAssignmentForFollowUp[];
+        }) => {
+          if (cancelled) return;
+          setPendingPlans(data.items ?? []);
+          setPendingAssignments(data.assignments ?? []);
+          setSelectedPendingKeys([]);
+          setAssignmentMode(null);
+          setSelectedAssignmentIds([]);
+        }
+      )
       .catch(() => {
-        if (!cancelled) setPendingPlans([]);
+        if (!cancelled) {
+          setPendingPlans([]);
+          setPendingAssignments([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setPendingPlansLoading(false);
@@ -298,7 +350,10 @@ export function CheckInForm({
 
   useEffect(() => {
     if (!customerId || customerContext?.initialOpportunityId) return;
-    setOpportunityIds(defaultOpportunitySelection(opportunityOptions));
+    // 已有勾选（含刚新建）时不要被异步列表刷新覆盖
+    setOpportunityIds((prev) =>
+      prev.length > 0 ? prev : defaultOpportunitySelection(opportunityOptions)
+    );
   }, [customerId, customerContext?.initialOpportunityId, opportunityOptions]);
 
   useEffect(() => {
@@ -335,6 +390,7 @@ export function CheckInForm({
       setCustomerId(customerContext.customerId);
       setCustomerLabel(customerContext.customerLabel);
       setCurrentCustomerGrade(customerContext.customerGrade ?? null);
+      setCurrentCustomerType(customerContext.customerType ?? null);
       setContactIds(customerContext.initialContactIds ?? []);
       setOpportunityIds(
         customerContext.initialOpportunityId ? [customerContext.initialOpportunityId] : []
@@ -346,6 +402,7 @@ export function CheckInForm({
       setCustomerId("");
       setCustomerLabel("");
       setCurrentCustomerGrade(null);
+      setCurrentCustomerType(null);
       setContactIds([]);
       setOpportunityIds([]);
       setSuggestedGrade("");
@@ -357,7 +414,12 @@ export function CheckInForm({
     setNextFollowUpMethod("");
     setNextFollowUpContent("");
     setSelectedPendingKeys([]);
+    setAssignmentMode(null);
+    setSelectedAssignmentIds([]);
     setQueuedPayload(null);
+    if (!(lockedCustomer && customerContext)) {
+      setCustomerWritable(null);
+    }
   }
 
   function buildPayload(notes: string | null, completedKeys: string[] = []) {
@@ -407,13 +469,25 @@ export function CheckInForm({
   function runSubmit(
     payload: Record<string, unknown>,
     updateCheckInId?: string,
-    completedKeys: string[] = []
+    extras?: {
+      completedPendingKeys?: string[];
+      skipAssignmentCompletion?: boolean;
+      completedAssignmentIds?: string[];
+    }
   ) {
     if (submittingRef.current) return;
     submittingRef.current = true;
     startTransition(async () => {
       try {
-        await submitCheckIn({ ...payload, completedPendingKeys: completedKeys }, updateCheckInId);
+        await submitCheckIn(
+          {
+            ...payload,
+            completedPendingKeys: extras?.completedPendingKeys ?? [],
+            skipAssignmentCompletion: extras?.skipAssignmentCompletion ?? false,
+            completedAssignmentIds: extras?.completedAssignmentIds ?? [],
+          },
+          updateCheckInId
+        );
       } catch (err) {
         submittingRef.current = false;
         setError(err instanceof Error ? err.message : "打卡失败，请稍后重试");
@@ -423,21 +497,32 @@ export function CheckInForm({
     });
   }
 
-  function proceedSubmit(payload: Record<string, unknown>, completedKeys: string[] = []) {
+  function proceedSubmit(
+    payload: Record<string, unknown>,
+    confirmed?: {
+      completedPendingKeys: string[];
+      skipAssignmentCompletion: boolean;
+      completedAssignmentIds: string[];
+    }
+  ) {
     if (submittingRef.current) return;
     if (pendingPlansLoading) return;
-    if (hasPendingPlans && completeNow && completedKeys.length === 0) {
+    if (needsCompleteDialog && completeNow && !confirmed) {
       setQueuedPayload(payload);
       setCompleteDialogOpen(true);
       return;
     }
-    runSubmit(payload, undefined, completedKeys);
+    runSubmit(payload, undefined, confirmed);
   }
 
   function handleConfirmCompletePending() {
     if (submittingRef.current) return;
-    if (!queuedPayload || selectedPendingKeys.length === 0) return;
-    runSubmit(queuedPayload, undefined, selectedPendingKeys);
+    if (!queuedPayload) return;
+    proceedSubmit(queuedPayload, {
+      completedPendingKeys: selectedPendingKeys,
+      skipAssignmentCompletion: assignmentMode === "skip",
+      completedAssignmentIds: assignmentMode === "complete" ? selectedAssignmentIds : [],
+    });
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -569,6 +654,9 @@ export function CheckInForm({
                     setModeAcknowledged(true);
                     setCustomerId("");
                     setCustomerLabel("");
+                    setCustomerWritable(null);
+                    setCurrentCustomerType(null);
+                    setCurrentCustomerGrade(null);
                     setContactIds([]);
                     setError(null);
                   }}
@@ -607,14 +695,16 @@ export function CheckInForm({
                           name="customerId"
                           label=""
                           required
-                          writableOnly
+                          writableOnly={false}
                           value={customerId}
                           selectedLabel={customerLabel}
                           onValueChange={(id, option) => {
                             setCustomerId(id);
                             setCustomerLabel(option?.label ?? "");
+                            setCustomerWritable(option?.writable !== false);
                             const grade = option?.customerGrade ?? null;
                             setCurrentCustomerGrade(grade);
+                            setCurrentCustomerType(option?.customerType ?? null);
                             setSuggestedGrade(customerGradeFormValue(grade));
                             setContactIds([]);
                             setOpportunityIds([]);
@@ -631,6 +721,11 @@ export function CheckInForm({
                         新增客户
                       </Button>
                     </div>
+                    {customerId && customerWritable === false ? (
+                      <p className="text-xs text-amber-700">
+                        该客户非你负责，提交后需销售管理确认入库
+                      </p>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -774,6 +869,7 @@ export function CheckInForm({
                         value={opportunityIds}
                         onChange={setOpportunityIds}
                         disabled={belowLocked}
+                        pendingConfirmHint={customerWritable === false}
                       />
                     ) : (
                       <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm text-muted-foreground">
@@ -783,10 +879,11 @@ export function CheckInForm({
                   </div>
                   <CustomerGradeSelect
                     id="checkInGrade"
-                    label="客户等级（如需调整）"
+                    label={gradeFieldLabel}
                     value={suggestedGrade}
                     onValueChange={setSuggestedGrade}
-                    options={customerFormOptions.gradeOptions}
+                    options={activeGradeOptions}
+                    tone={gradeTone}
                     labelClassName={alignedFieldLabelClass}
                     disabled={belowLocked}
                   />
@@ -818,7 +915,7 @@ export function CheckInForm({
                   onContentChange={setNextFollowUpContent}
                   suggestedGrade={suggestedGrade}
                   currentCustomerGrade={currentCustomerGrade}
-                  gradeOptions={customerFormOptions.gradeOptions}
+                  gradeOptions={activeGradeOptions}
                   disabled={belowLocked || !contentReady}
                   methodSelectClassName={cn(
                     (belowLocked || !contentReady) && disabledFieldClass
@@ -964,12 +1061,17 @@ export function CheckInForm({
         sourceOptions={customerFormOptions.sourceOptions}
         typeOptions={customerFormOptions.typeOptions}
         gradeOptions={customerFormOptions.gradeOptions}
+        channelGradeOptions={customerFormOptions.channelGradeOptions}
+        channelKindOptions={customerFormOptions.channelKindOptions}
         tagOptions={customerFormOptions.tagOptions}
         showOwnerSelect={customerFormOptions.showOwnerSelect}
         salesUsers={customerFormOptions.salesUsers}
+        canEditNationwideChannel={Boolean(customerFormOptions.showOwnerSelect)}
         onCreated={(customer) => {
           setCustomerId(customer.id);
           setCustomerLabel(customer.name);
+          setCustomerWritable(true);
+          setCurrentCustomerType(customer.customerType ?? null);
           setCurrentCustomerGrade(customer.customerGrade ?? null);
           setSuggestedGrade(customerGradeFormValue(customer.customerGrade));
           setContactIds([]);
@@ -984,7 +1086,14 @@ export function CheckInForm({
         customerId={customerId}
         customerName={customerLabel}
         stageOptions={customerFormOptions.stageOptions}
+        pendingConfirmHint={customerWritable === false}
         onCreated={(opp) => {
+          upsertOpportunityOption({
+            ...opp,
+            confirmStatus:
+              opp.confirmStatus ??
+              (customerWritable === false ? "PENDING_MANAGER" : "CONFIRMED"),
+          });
           setOpportunityIds((prev) => [...new Set([...prev, opp.id])]);
         }}
       />
@@ -992,9 +1101,14 @@ export function CheckInForm({
       <CompletePendingFollowUpDialog
         open={completeDialogOpen}
         onOpenChange={setCompleteDialogOpen}
-        items={pendingPlans}
-        selectedKeys={selectedPendingKeys}
-        onSelectedKeysChange={setSelectedPendingKeys}
+        assignments={pendingAssignments}
+        assignmentMode={assignmentMode}
+        onAssignmentModeChange={setAssignmentMode}
+        selectedAssignmentIds={selectedAssignmentIds}
+        onSelectedAssignmentIdsChange={setSelectedAssignmentIds}
+        planItems={pendingPlans}
+        selectedPlanKeys={selectedPendingKeys}
+        onSelectedPlanKeysChange={setSelectedPendingKeys}
         onConfirm={handleConfirmCompletePending}
         pending={pending}
       />

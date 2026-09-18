@@ -4,6 +4,7 @@ import { normalizeCustomerGrade } from "@/lib/customers/grade";
 import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 
 const DEFAULT_GRADE_INTERVALS: Record<string, number> = {
+  LEAD: 7,
   STAR_3: 14,
   STAR_2: 30,
   STAR_1: 45,

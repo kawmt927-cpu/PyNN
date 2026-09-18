@@ -5,12 +5,24 @@ import { PersonnelType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
+import { IMPLEMENTATION_LIST_ROLES } from "@/lib/personnel/access";
 import {
   computeMonthlyCost,
   isFutureYearMonth,
   resolveDailyRateForMonth,
   resolveEffectiveMonthlyCost,
 } from "@/lib/personnel/daily-rate";
+import { computeLeaveDeductionPreview } from "@/lib/personnel/leave-pay";
+import { ensureDefaultLeaveTypes } from "@/lib/personnel/leave-types";
+import {
+  buildChangeSummary,
+  parseCopiedSnapshot,
+  type CostComposition,
+} from "@/lib/personnel/cost-change-summary";
+
+function isImplementationListUser(role: string): boolean {
+  return (IMPLEMENTATION_LIST_ROLES as string[]).includes(role);
+}
 
 function formatError(error: unknown): ActionResult {
   if (error instanceof Error) return { error: error.message };
@@ -37,6 +49,17 @@ function parseAdjustment(raw: unknown): number {
   return value;
 }
 
+function parseNonNegMoney(raw: unknown, label: string): number {
+  if (raw == null) return 0;
+  const text = String(raw).trim();
+  if (!text) return 0;
+  const value = Number(text);
+  if (Number.isNaN(value) || value < 0) {
+    throw new Error(`${label}无效`);
+  }
+  return value;
+}
+
 function parsePersonnelType(raw: string | undefined): PersonnelType | null {
   if (!raw || raw === "NONE") return null;
   return raw as PersonnelType;
@@ -48,8 +71,10 @@ export type PersonnelCostRowInput = {
   baseSalary: string;
   socialSecurityCompany: string;
   housingFundCompany: string;
+  bonus: string;
+  penaltyAmount: string;
   monthAdjustment: string;
-  monthAdjustmentNotes: string;
+  monthAdjustmentNotes?: string;
 };
 
 /** 批量更新实施人员类型（人员信息标签） */
@@ -64,10 +89,11 @@ export async function updatePersonnelTypesBatch(
 
     for (const row of rows) {
       if (!row.userId) throw new Error("缺少用户 ID");
-      const profile = await prisma.personnelProfile.findUnique({
-        where: { userId: row.userId },
+      const user = await prisma.user.findUnique({
+        where: { id: row.userId },
+        select: { role: true, personnelProfile: { select: { userId: true } } },
       });
-      if (!profile || profile.staffCategory !== "IMPLEMENTATION") {
+      if (!user?.personnelProfile || !isImplementationListUser(user.role)) {
         throw new Error("存在非实施人员记录，已中止保存");
       }
       await prisma.personnelProfile.update({
@@ -84,14 +110,14 @@ export async function updatePersonnelTypesBatch(
   }
 }
 
-/** 批量保存指定月份的人员成本；保存后项目成本按新月成本重新核算 */
+/** 批量确认保存指定月份的人员成本；确认后才参与项目人力成本核算 */
 export async function updatePersonnelCostsBatch(input: {
   year: number;
   month: number;
   rows: PersonnelCostRowInput[];
 }): Promise<ActionResult> {
   try {
-    await requireRole(["PROJECT_ADMIN", "ADMIN"]);
+    await requireRole(["HR", "ADMIN"]);
     if (!input.year || input.month < 1 || input.month > 12) {
       return { error: "月份无效" };
     }
@@ -103,8 +129,6 @@ export async function updatePersonnelCostsBatch(input: {
     }
 
     const now = new Date();
-    const isCurrentMonth =
-      input.year === now.getFullYear() && input.month === now.getMonth() + 1;
 
     for (const row of input.rows) {
       if (!row.userId) throw new Error("缺少用户 ID");
@@ -119,15 +143,57 @@ export async function updatePersonnelCostsBatch(input: {
         row.housingFundCompany,
         "公积金公司承担"
       );
+      const bonus = parseNonNegMoney(row.bonus, "奖金");
+      const penaltyAmount = parseNonNegMoney(row.penaltyAmount, "扣罚");
       const monthAdjustment = parseAdjustment(row.monthAdjustment);
-      const notes = row.monthAdjustmentNotes?.trim() || null;
 
-      const profile = await prisma.personnelProfile.findUnique({
-        where: { userId: row.userId },
+      const user = await prisma.user.findUnique({
+        where: { id: row.userId },
+        select: { role: true, personnelProfile: { select: { userId: true } } },
       });
-      if (!profile || profile.staffCategory !== "IMPLEMENTATION") {
+      if (!user?.personnelProfile || !isImplementationListUser(user.role)) {
         throw new Error("存在非实施人员记录，已中止保存");
       }
+
+      await ensureDefaultLeaveTypes();
+      const leavePreview = await computeLeaveDeductionPreview({
+        userId: row.userId,
+        year: input.year,
+        month: input.month,
+        baseSalary,
+        socialSecurityCompany,
+        housingFundCompany,
+      });
+      if (leavePreview.attendanceDays <= 0) {
+        throw new Error(
+          `${row.userId} 在 ${input.year}-${input.month} 实际出勤为 0，无法关账（请检查请假与公司日历）`
+        );
+      }
+
+      const existing = await prisma.personnelMonthlyCostAdjustment.findUnique({
+        where: {
+          userId_year_month: {
+            userId: row.userId,
+            year: input.year,
+            month: input.month,
+          },
+        },
+        select: { copiedSnapshot: true },
+      });
+
+      const composition: CostComposition = {
+        contributionBase,
+        baseSalary,
+        socialSecurityCompany,
+        housingFundCompany,
+        bonus,
+        penaltyAmount,
+        monthAdjustment,
+      };
+      const changeSummary = buildChangeSummary(
+        composition,
+        parseCopiedSnapshot(existing?.copiedSnapshot)
+      );
 
       await prisma.personnelMonthlyCostAdjustment.upsert({
         where: {
@@ -145,21 +211,33 @@ export async function updatePersonnelCostsBatch(input: {
           baseSalary,
           socialSecurityCompany,
           housingFundCompany,
+          bonus,
+          penaltyAmount,
           adjustmentAmount: monthAdjustment,
-          notes,
+          leaveDeductionAmount: leavePreview.leaveDeductionTotal,
+          attendanceDays: leavePreview.attendanceDays,
+          notes: null,
+          changeSummary,
+          confirmedAt: now,
         },
         update: {
           contributionBase,
           baseSalary,
           socialSecurityCompany,
           housingFundCompany,
+          bonus,
+          penaltyAmount,
           adjustmentAmount: monthAdjustment,
-          notes,
+          leaveDeductionAmount: leavePreview.leaveDeductionTotal,
+          attendanceDays: leavePreview.attendanceDays,
+          notes: null,
+          changeSummary,
+          confirmedAt: now,
         },
       });
 
-      // 售前等旧入口仍可能读 dailyRate，当前月保存时刷新缓存
-      if (isCurrentMonth) {
+      // 关账后刷新档案日单价缓存（供旧入口）
+      {
         const fixedMonthly = computeMonthlyCost({
           baseSalary,
           socialSecurityCompany,
@@ -167,12 +245,15 @@ export async function updatePersonnelCostsBatch(input: {
         });
         const effectiveMonthly = resolveEffectiveMonthlyCost(
           fixedMonthly,
-          monthAdjustment
+          monthAdjustment,
+          leavePreview.leaveDeductionTotal,
+          { bonus, penaltyAmount }
         );
         const dailyRateCache = resolveDailyRateForMonth(
           effectiveMonthly,
           input.year,
-          input.month
+          input.month,
+          leavePreview.attendanceDays
         );
         await prisma.personnelProfile.update({
           where: { userId: row.userId },

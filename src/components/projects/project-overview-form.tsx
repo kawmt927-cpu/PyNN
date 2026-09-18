@@ -8,12 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SelectField } from "@/components/ui/select-field";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
+import { FormSuccessMessage } from "@/components/ui/form-success-message";
 import { PROJECT_STATUS_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
-import { openEndDatePickerAfterStartChange } from "@/lib/dates/open-date-picker";
+import { EntityDeleteButton } from "@/components/navigation/entity-delete-button";
 import {
   updateProjectOverview,
   updateProjectStatus,
+  deleteProject,
 } from "@/app/(dashboard)/projects/actions";
 import {
   evaluateProjectSetup,
@@ -23,7 +25,9 @@ import {
 
 type Props = {
   projectId: string;
+  projectName: string;
   canEdit: boolean;
+  canDelete?: boolean;
   phaseCount: number;
   defaultValues: {
     status: ProjectStatus;
@@ -42,7 +46,9 @@ function formatDateOrDash(value: Date | null) {
 
 export function ProjectOverviewForm({
   projectId,
+  projectName,
   canEdit,
+  canDelete = false,
   phaseCount,
   defaultValues,
 }: Props) {
@@ -51,6 +57,7 @@ export function ProjectOverviewForm({
   const [statusPending, startStatusTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [status, setStatus] = useState(defaultValues.status);
   const [confirmStatus, setConfirmStatus] = useState<ProjectStatus | null>(null);
 
@@ -81,43 +88,55 @@ export function ProjectOverviewForm({
 
   if (!canEdit) {
     return (
-      <dl className="grid gap-3 text-sm md:grid-cols-2">
-        <div>
-          <dt className="text-muted-foreground">状态</dt>
-          <dd>{PROJECT_STATUS_LABELS[defaultValues.status]}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">进度</dt>
-          <dd>{defaultValues.progressPercent}%</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">计划开始</dt>
-          <dd>{formatDateOrDash(defaultValues.plannedStartAt)}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">计划结束</dt>
-          <dd>{formatDateOrDash(defaultValues.plannedEndAt)}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">实际开始</dt>
-          <dd>{formatDateOrDash(defaultValues.actualStartAt)}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">实际结束</dt>
-          <dd>{formatDateOrDash(defaultValues.actualEndAt)}</dd>
-        </div>
-        {defaultValues.notes ? (
-          <div className="md:col-span-2">
-            <dt className="text-muted-foreground">备注</dt>
-            <dd className="whitespace-pre-wrap">{defaultValues.notes}</dd>
+      <div className="space-y-4">
+        <dl className="grid gap-3 text-sm md:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground">状态</dt>
+            <dd>{PROJECT_STATUS_LABELS[defaultValues.status]}</dd>
           </div>
+          <div>
+            <dt className="text-muted-foreground">进度</dt>
+            <dd>{defaultValues.progressPercent}%</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">计划开始</dt>
+            <dd>{formatDateOrDash(defaultValues.plannedStartAt)}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">计划结束</dt>
+            <dd>{formatDateOrDash(defaultValues.plannedEndAt)}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">实际开始</dt>
+            <dd>{formatDateOrDash(defaultValues.actualStartAt)}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">实际结束</dt>
+            <dd>{formatDateOrDash(defaultValues.actualEndAt)}</dd>
+          </div>
+          {defaultValues.notes ? (
+            <div className="md:col-span-2">
+              <dt className="text-muted-foreground">备注</dt>
+              <dd className="whitespace-pre-wrap">{defaultValues.notes}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {canDelete ? (
+          <EntityDeleteButton
+            label="删除项目"
+            variant="destructive"
+            confirmTitle="删除项目"
+            confirmMessage={`确定删除项目「${projectName}」？将同时删除阶段、计划任务、排班与项目成本等关联数据，且不可恢复。关联合同不会被删除。`}
+            onDelete={deleteProject.bind(null, projectId)}
+          />
         ) : null}
-      </dl>
+      </div>
     );
   }
 
   function handleSubmit(formData: FormData) {
     setError(null);
+    setSuccess(null);
     formData.set("projectId", projectId);
     startTransition(async () => {
       const result = await updateProjectOverview(formData);
@@ -125,6 +144,7 @@ export function ProjectOverviewForm({
         setError(result.error);
         return;
       }
+      setSuccess("概览已保存");
       router.refresh();
     });
   }
@@ -132,6 +152,7 @@ export function ProjectOverviewForm({
   function handleStatusSelect(next: string) {
     const nextStatus = next as ProjectStatus;
     setStatusError(null);
+    setSuccess(null);
     if (nextStatus === status) return;
     setConfirmStatus(nextStatus);
   }
@@ -139,6 +160,7 @@ export function ProjectOverviewForm({
   function handleConfirmStatus() {
     if (!confirmStatus) return;
     setStatusError(null);
+    setSuccess(null);
     const fd = new FormData();
     fd.set("projectId", projectId);
     fd.set("status", confirmStatus);
@@ -151,6 +173,7 @@ export function ProjectOverviewForm({
       }
       setStatus(confirmStatus);
       setConfirmStatus(null);
+      setSuccess("项目状态已更新");
       router.refresh();
     });
   }
@@ -225,7 +248,6 @@ export function ProjectOverviewForm({
                   ? formatLocalDateInput(defaultValues.plannedStartAt)
                   : ""
               }
-              onChange={() => openEndDatePickerAfterStartChange("plannedEndAt")}
             />
           </div>
           <div className="space-y-2">
@@ -279,9 +301,21 @@ export function ProjectOverviewForm({
           <Input id="notes" name="notes" defaultValue={defaultValues.notes ?? ""} />
         </div>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        <Button type="submit" disabled={pending}>
-          {pending ? "保存中…" : "保存概览"}
-        </Button>
+        <FormSuccessMessage message={success} onClear={() => setSuccess(null)} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit" disabled={pending}>
+            {pending ? "保存中…" : "保存概览"}
+          </Button>
+          {canDelete ? (
+            <EntityDeleteButton
+              label="删除项目"
+              variant="destructive"
+              confirmTitle="删除项目"
+              confirmMessage={`确定删除项目「${projectName}」？将同时删除阶段、计划任务、排班与项目成本等关联数据，且不可恢复。关联合同不会被删除。`}
+              onDelete={deleteProject.bind(null, projectId)}
+            />
+          ) : null}
+        </div>
       </form>
 
       <ConfirmDestructiveDialog

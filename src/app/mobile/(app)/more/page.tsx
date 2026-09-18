@@ -8,6 +8,9 @@ import {
   ClipboardCheck,
   CalendarDays,
   Bell,
+  BarChart3,
+  NotebookPen,
+  Wallet,
 } from "lucide-react";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -24,7 +27,10 @@ import {
 import { ClientModeSwitch } from "@/components/layout/client-mode-switch";
 import { AdminImpersonationPanel } from "@/components/admin/admin-impersonation-panel";
 import { countPendingApprovals } from "@/lib/approvals/pending-count";
+import { countUnreadNotifications } from "@/lib/notifications/app-notifications";
+import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
 import { cn } from "@/lib/utils";
+import { hasPermission } from "@/lib/rbac/has-permission";
 
 type MoreLink = {
   href: string;
@@ -32,47 +38,73 @@ type MoreLink = {
   desc: string;
   icon: typeof Building2;
   badge?: boolean;
+  badgeCount?: number;
 };
-
-const BASE_LINKS: MoreLink[] = [
-  {
-    href: "/mobile/inbox",
-    label: "消息",
-    desc: "往来、日报与系统通知列表",
-    icon: Bell,
-  },
-  {
-    href: "/mobile/customers",
-    label: "客户",
-    desc: "搜索、新增与查阅；可写本人负责客户的跟进",
-    icon: Building2,
-  },
-  {
-    href: "/mobile/opportunities",
-    label: "商机",
-    desc: "未签约商机：新增与查阅",
-    icon: Briefcase,
-  },
-  {
-    href: "/mobile/contracts",
-    label: "合同",
-    desc: "合同状态与金额查阅",
-    icon: FileText,
-  },
-  {
-    href: "/mobile/follow-ups",
-    label: "待跟进",
-    desc: "到期与即将到期的跟进计划",
-    icon: ClipboardList,
-  },
-];
 
 export default async function MobileMorePage() {
   const session = await requireRole(SALES_MOBILE_ROLES);
   const manager = isMobileManagerRole(session.user.role);
-  const pendingApprovals = manager
-    ? await countPendingApprovals({ id: session.user.id, role: session.user.role })
-    : 0;
+  const [pendingApprovals, unread, canExpense] = await Promise.all([
+    manager
+      ? countPendingApprovals({ id: session.user.id, role: session.user.role })
+      : Promise.resolve(0),
+    countUnreadNotifications(session.user.id),
+    hasPermission(session.user.role, "expense.access"),
+  ]);
+
+  const baseLinks: MoreLink[] = [
+    {
+      href: "/mobile/inbox",
+      label: "消息",
+      desc:
+        unread > 0
+          ? `往来、日报与系统通知 · ${unread} 条未读`
+          : "往来、日报与系统通知列表",
+      icon: Bell,
+      badge: unread > 0,
+      badgeCount: unread,
+    },
+    ...(isExpenseFeatureEnabled() && canExpense
+      ? [
+          {
+            href: "/mobile/expenses",
+            label: "报销",
+            desc: "申请、审批与打款结案",
+            icon: Wallet,
+          } satisfies MoreLink,
+        ]
+      : []),
+    {
+      href: "/mobile/activity?view=week",
+      label: "本周工作",
+      desc: "按日汇总本周打卡、往来与日报",
+      icon: NotebookPen,
+    },
+    {
+      href: "/mobile/metrics",
+      label: "指标",
+      desc: "月度 KPI 与目标完成情况",
+      icon: BarChart3,
+    },
+    {
+      href: "/mobile/opportunities",
+      label: "商机",
+      desc: "未签约商机：新增与查阅",
+      icon: Briefcase,
+    },
+    {
+      href: "/mobile/contracts",
+      label: "合同",
+      desc: "合同状态与金额查阅",
+      icon: FileText,
+    },
+    {
+      href: "/mobile/follow-ups",
+      label: "待跟进",
+      desc: "已到期与即将到期的跟进计划",
+      icon: ClipboardList,
+    },
+  ];
 
   const links: MoreLink[] = manager
     ? [
@@ -85,6 +117,7 @@ export default async function MobileMorePage() {
               : "客户认领与合同审核",
           icon: ClipboardCheck,
           badge: pendingApprovals > 0,
+          badgeCount: pendingApprovals,
         },
         {
           href: "/mobile/plans",
@@ -92,16 +125,28 @@ export default async function MobileMorePage() {
           desc: "本周团队待办；年度目标请在电脑端维护",
           icon: CalendarDays,
         },
-        ...BASE_LINKS,
+        {
+          href: "/mobile/customers",
+          label: "客户",
+          desc: "也可从底栏「客户」进入",
+          icon: Building2,
+        },
+        ...baseLinks,
       ]
     : [
         {
           href: "/mobile/tasks",
-          label: "待办",
-          desc: "我的待跟进与指派任务",
+          label: "待办任务",
+          desc: "指派任务与催收回款",
           icon: ClipboardList,
         },
-        ...BASE_LINKS,
+        {
+          href: "/mobile/customers",
+          label: "客户",
+          desc: "也可从底栏「客户」进入",
+          icon: Building2,
+        },
+        ...baseLinks,
       ];
 
   const impersonatorName = session.impersonator?.name ?? null;
@@ -127,8 +172,8 @@ export default async function MobileMorePage() {
         <h1 className="text-lg font-bold">更多</h1>
         <p className="text-xs text-muted-foreground">
           {manager
-            ? "审批 · 计划 · 客户 / 商机 / 合同 / 待跟进"
-            : "待办 · 客户 / 商机 / 合同 / 待跟进"}
+            ? "审批 · 本周工作 · 商机 / 合同 / 待跟进 · 指标"
+            : "本周工作 · 待办 · 商机 / 合同 / 待跟进 · 指标"}
         </p>
       </header>
 
@@ -153,9 +198,9 @@ export default async function MobileMorePage() {
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="font-medium">{item.label}</span>
-                  {item.badge ? (
+                  {item.badge && item.badgeCount ? (
                     <span className="rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-destructive-foreground">
-                      {pendingApprovals}
+                      {item.badgeCount}
                     </span>
                   ) : null}
                 </span>

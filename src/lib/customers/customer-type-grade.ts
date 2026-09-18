@@ -185,6 +185,23 @@ export function defaultGradeOptionsForType(
   }));
 }
 
+/** 跟进/打卡等：按关系类型选用直接客户或渠道等级配置 */
+export function resolveGradeOptionsForCustomerType(
+  customerType: string | null | undefined,
+  gradeOptions: ConfigOptionItem[],
+  channelGradeOptions: ConfigOptionItem[] = [],
+  typeOptionsOrLabelMap?: TypeOptionLike[] | Record<string, string> | null
+): ConfigOptionItem[] {
+  if (isChannelCustomerType(customerType, typeOptionsOrLabelMap)) {
+    return channelGradeOptions.length > 0
+      ? channelGradeOptions
+      : defaultGradeOptionsForType(customerType, typeOptionsOrLabelMap);
+  }
+  return gradeOptions.length > 0
+    ? gradeOptions
+    : defaultGradeOptionsForType(customerType, typeOptionsOrLabelMap);
+}
+
 /** 将「渠道/直接客户/合作伙伴」配置 value 归一到 canonical，并同步客户表 */
 export async function normalizeCanonicalCustomerTypeValues() {
   const { prisma } = await import("@/lib/prisma");

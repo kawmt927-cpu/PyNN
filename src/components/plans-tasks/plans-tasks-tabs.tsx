@@ -2,11 +2,22 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { PLANS_TASKS_TABS, type PlansTasksTab } from "@/lib/plans-tasks/tabs";
+import {
+  type PlansTasksCapabilities,
+  type PlansTasksTab,
+  visiblePlansTasksTabs,
+} from "@/lib/plans-tasks/tabs";
 
-export function PlansTasksTabs({ active }: { active: PlansTasksTab }) {
+export function PlansTasksTabs({
+  active,
+  capabilities,
+}: {
+  active: PlansTasksTab;
+  capabilities: PlansTasksCapabilities;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const tabs = visiblePlansTasksTabs(capabilities);
 
   function setTab(tab: PlansTasksTab) {
     const params = new URLSearchParams(searchParams.toString());
@@ -14,9 +25,11 @@ export function PlansTasksTabs({ active }: { active: PlansTasksTab }) {
     router.replace(`/plans-tasks?${params.toString()}`);
   }
 
+  if (tabs.length <= 1) return null;
+
   return (
     <div className="flex flex-wrap gap-2 border-b pb-2">
-      {PLANS_TASKS_TABS.map((tab) => (
+      {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"

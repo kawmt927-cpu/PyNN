@@ -18,8 +18,8 @@ export const DAY_COLUMN_WIDTH = 36;
 export const SCHEDULE_MODULE_DAY_WIDTH = 48;
 /** 资源排班大屏 — 月视图列宽（更窄以容纳整月） */
 export const SCHEDULE_MODULE_MONTH_DAY_WIDTH = 28;
-/** 自定义周期最长天数（约 3 年） */
-export const SCHEDULE_CUSTOM_MAX_DAYS = 1096;
+/** 自定义周期最长天数（约 5 年） */
+export const SCHEDULE_CUSTOM_MAX_DAYS = 1826;
 /** 长周期下单日列最小宽度（px） */
 export const SCHEDULE_DAY_WIDTH_MIN = 4;
 
@@ -62,7 +62,8 @@ export function getCustomPeriod(fromInput: Date, toInput: Date): SchedulePeriod 
   }
   const span = countCalendarDays(from, to);
   if (span > SCHEDULE_CUSTOM_MAX_DAYS) {
-    to = addDays(from, SCHEDULE_CUSTOM_MAX_DAYS - 1);
+    // 超长时保留结束日，向前截取最新完整窗口
+    from = addDays(to, -(SCHEDULE_CUSTOM_MAX_DAYS - 1));
   }
   return { mode: "custom", from, to };
 }
@@ -83,10 +84,13 @@ export type ProjectScheduleDates = {
   plannedEndAt?: Date | string | null;
   actualStartAt?: Date | string | null;
   actualEndAt?: Date | string | null;
+  /** 排班最早/最晚（可选，与计划一并参与自定义跨度） */
+  allocationSpanStart?: Date | string | null;
+  allocationSpanEnd?: Date | string | null;
 };
 
 /**
- * 从项目预计/实际起止中取最早与最晚，得到自定义周期最长跨度。
+ * 从项目计划/实际/排班起止中取最早与最晚，得到自定义周期跨度。
  * 无任何有效日期时返回 null。
  */
 export function customRangeFromProjectDates(
@@ -97,6 +101,8 @@ export function customRangeFromProjectDates(
     asDateOnlyFromUnknown(dates.plannedEndAt),
     asDateOnlyFromUnknown(dates.actualStartAt),
     asDateOnlyFromUnknown(dates.actualEndAt),
+    asDateOnlyFromUnknown(dates.allocationSpanStart),
+    asDateOnlyFromUnknown(dates.allocationSpanEnd),
   ].filter((d): d is Date => d != null);
 
   if (points.length === 0) return null;
@@ -335,20 +341,203 @@ export function periodSelectedMonthKey(period: SchedulePeriod): string {
   return `${ref.getFullYear()}-${month}`;
 }
 
-/** 按月 / 按周 / 自定义切换时的 start（及自定义默认 end） */
+/**
+ * 有资源投入时取排班最晚日；否则取项目结束（实际/计划），再否则开始日，再否则今天。
+ * 用于「按月 / 按周」切换时落到「有内容」的最后时段。
+ */
+export function projectScheduleContentAnchor(dates: ProjectScheduleDates): Date {
+  const allocationEnd = asDateOnlyFromUnknown(dates.allocationSpanEnd);
+  if (allocationEnd) return allocationEnd;
+
+  const ends = [
+    asDateOnlyFromUnknown(dates.actualEndAt),
+    asDateOnlyFromUnknown(dates.plannedEndAt),
+  ].filter((d): d is Date => d != null);
+  if (ends.length > 0) {
+    return ends.reduce((a, b) => (a.getTime() >= b.getTime() ? a : b));
+  }
+
+  const starts = [
+    asDateOnlyFromUnknown(dates.actualStartAt),
+    asDateOnlyFromUnknown(dates.plannedStartAt),
+    asDateOnlyFromUnknown(dates.allocationSpanStart),
+  ].filter((d): d is Date => d != null);
+  if (starts.length > 0) {
+    return starts.reduce((a, b) => (a.getTime() >= b.getTime() ? a : b));
+  }
+
+  return toDateOnly(new Date());
+}
+
+function minDateOnly(dates: Array<Date | null | undefined>): Date | null {
+  let best: Date | null = null;
+  for (const d of dates) {
+    if (!d) continue;
+    if (!best || d.getTime() < best.getTime()) best = d;
+  }
+  return best;
+}
+
+function maxDateOnly(dates: Array<Date | null | undefined>): Date | null {
+  let best: Date | null = null;
+  for (const d of dates) {
+    if (!d) continue;
+    if (!best || d.getTime() > best.getTime()) best = d;
+  }
+  return best;
+}
+
+/** 合并多个项目的计划/实际/投入跨度，供筛选后的按月/按周/自定义定位 */
+export function mergeProjectScheduleDates(
+  items: ProjectScheduleDates[]
+): ProjectScheduleDates | null {
+  if (items.length === 0) return null;
+  const plannedStarts = items.map((i) => asDateOnlyFromUnknown(i.plannedStartAt));
+  const plannedEnds = items.map((i) => asDateOnlyFromUnknown(i.plannedEndAt));
+  const actualStarts = items.map((i) => asDateOnlyFromUnknown(i.actualStartAt));
+  const actualEnds = items.map((i) => asDateOnlyFromUnknown(i.actualEndAt));
+  const allocStarts = items.map((i) => asDateOnlyFromUnknown(i.allocationSpanStart));
+  const allocEnds = items.map((i) => asDateOnlyFromUnknown(i.allocationSpanEnd));
+
+  const plannedStartAt = minDateOnly(plannedStarts);
+  const plannedEndAt = maxDateOnly(plannedEnds);
+  const actualStartAt = minDateOnly(actualStarts);
+  const actualEndAt = maxDateOnly(actualEnds);
+  const allocationSpanStart = minDateOnly(allocStarts);
+  const allocationSpanEnd = maxDateOnly(allocEnds);
+
+  if (
+    !plannedStartAt &&
+    !plannedEndAt &&
+    !actualStartAt &&
+    !actualEndAt &&
+    !allocationSpanStart &&
+    !allocationSpanEnd
+  ) {
+    return null;
+  }
+
+  return {
+    plannedStartAt: plannedStartAt ? formatLocalDateInput(plannedStartAt) : null,
+    plannedEndAt: plannedEndAt ? formatLocalDateInput(plannedEndAt) : null,
+    actualStartAt: actualStartAt ? formatLocalDateInput(actualStartAt) : null,
+    actualEndAt: actualEndAt ? formatLocalDateInput(actualEndAt) : null,
+    allocationSpanStart: allocationSpanStart
+      ? formatLocalDateInput(allocationSpanStart)
+      : null,
+    allocationSpanEnd: allocationSpanEnd
+      ? formatLocalDateInput(allocationSpanEnd)
+      : null,
+  };
+}
+
+/**
+ * 按当前筛选的项目（及可选锁定人员）合成定位用日期。
+ * - 无人员锁定：合并所选/全部项目的计划+投入跨度
+ * - 有人员锁定：项目计划仍取并集，投入跨度仅统计这些人员的排班
+ */
+export function scheduleFocusDatesFromFilter(input: {
+  projects: Array<
+    ProjectScheduleDates & {
+      id: string;
+      allocationSpanStart?: string | null;
+      allocationSpanEnd?: string | null;
+    }
+  >;
+  selectedProjectIds: string[];
+  lockedUserIds?: string[];
+  allocationSegments?: Array<{
+    projectId: string;
+    userId: string;
+    startDate: string;
+    endDate: string;
+  }>;
+}): ProjectScheduleDates | null {
+  const selected = new Set(input.selectedProjectIds);
+  const projects =
+    selected.size === 0
+      ? input.projects
+      : input.projects.filter((p) => selected.has(p.id));
+  if (projects.length === 0) return null;
+
+  const locked = input.lockedUserIds?.filter(Boolean) ?? [];
+  const base = mergeProjectScheduleDates(projects);
+  if (!base) return null;
+
+  if (locked.length === 0) return base;
+
+  const lockedSet = new Set(locked);
+  const projectSet = new Set(projects.map((p) => p.id));
+  const segments = (input.allocationSegments ?? []).filter(
+    (s) => projectSet.has(s.projectId) && lockedSet.has(s.userId)
+  );
+
+  if (segments.length === 0) {
+    return {
+      ...base,
+      allocationSpanStart: null,
+      allocationSpanEnd: null,
+    };
+  }
+
+  let allocStart: Date | null = null;
+  let allocEnd: Date | null = null;
+  for (const seg of segments) {
+    const start = asDateOnlyFromUnknown(seg.startDate);
+    const end = asDateOnlyFromUnknown(seg.endDate);
+    if (start && (!allocStart || start.getTime() < allocStart.getTime())) {
+      allocStart = start;
+    }
+    if (end && (!allocEnd || end.getTime() > allocEnd.getTime())) {
+      allocEnd = end;
+    }
+  }
+
+  return {
+    ...base,
+    allocationSpanStart: allocStart ? formatLocalDateInput(allocStart) : null,
+    allocationSpanEnd: allocEnd ? formatLocalDateInput(allocEnd) : null,
+  };
+}
+
+function monthKeyFromDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${date.getFullYear()}-${month}`;
+}
+
+/**
+ * 按月 / 按周 / 自定义切换时的 start。
+ * 未提供筛选日期时：沿用当前视图中点所在月（旧逻辑）。
+ * 提供筛选日期时：按月/按周落到「有投入的最后时段」；自定义用项目+投入最大跨度的起点。
+ */
 export function periodRangeSwitchStart(
   period: SchedulePeriod,
-  targetMode: ScheduleRangeMode
+  targetMode: ScheduleRangeMode,
+  projectDates?: ProjectScheduleDates | null
 ): string {
   if (targetMode === "custom") {
-    return formatLocalDateInput(period.from);
+    const span = projectDates ? customRangeFromProjectDates(projectDates) : null;
+    return span?.start ?? formatLocalDateInput(period.from);
   }
+
+  if (projectDates) {
+    const anchor = projectScheduleContentAnchor(projectDates);
+    return targetMode === "month"
+      ? monthKeyFromDate(anchor)
+      : formatLocalDateInput(anchor);
+  }
+
   const monthKey = periodSelectedMonthKey(period);
   return targetMode === "month" ? monthKey : `${monthKey}-01`;
 }
 
-export function periodRangeSwitchEnd(period: SchedulePeriod): string {
-  return formatLocalDateInput(period.to);
+/** 自定义切换时的 end：优先项目+投入最大跨度，否则当前视图结束日 */
+export function periodRangeSwitchEnd(
+  period: SchedulePeriod,
+  projectDates?: ProjectScheduleDates | null
+): string {
+  const span = projectDates ? customRangeFromProjectDates(projectDates) : null;
+  return span?.end ?? formatLocalDateInput(period.to);
 }
 
 export function scheduleDayWidth(period: SchedulePeriod): number {
@@ -357,7 +546,7 @@ export function scheduleDayWidth(period: SchedulePeriod): number {
   const days = countCalendarDays(period.from, period.to);
   if (period.mode === "month") return SCHEDULE_MODULE_MONTH_DAY_WIDTH;
 
-  // 自定义：区间越长，单日列越窄，保证最长约 3 年仍可横向浏览
+  // 自定义：区间越长，单日列越窄，保证最长约 5 年仍可横向浏览
   if (days <= 14) return SCHEDULE_MODULE_DAY_WIDTH;
   if (days <= 45) return SCHEDULE_MODULE_MONTH_DAY_WIDTH;
   if (days <= 90) return 16;
@@ -600,4 +789,30 @@ export function buildScheduleModuleHref(params: {
     sp.set("returnTask", params.returnTask);
   }
   return `/projects/schedule?${sp.toString()}`;
+}
+
+/** 项目详情「资源排班」标签内嵌排班：保留 tab=schedule，周期等参数写在同一 URL */
+export function buildProjectScheduleHref(
+  projectId: string,
+  params: {
+    range?: ScheduleRangeMode;
+    start?: string;
+    end?: string;
+    axis?: ScheduleDetailAxis;
+    lock?: string[] | null;
+    week?: string;
+  }
+): string {
+  const sp = new URLSearchParams();
+  sp.set("tab", "schedule");
+  const range = params.range ?? (params.week ? "week" : "month");
+  sp.set("range", range);
+  if (params.start) sp.set("start", params.start);
+  else if (params.week) sp.set("start", params.week);
+  if (range === "custom" && params.end) sp.set("end", params.end);
+  if (params.axis && params.axis !== "project") sp.set("axis", params.axis);
+  if (params.lock !== undefined && params.lock !== null && params.lock.length > 0) {
+    sp.set("lock", params.lock.join(","));
+  }
+  return `/projects/${projectId}?${sp.toString()}`;
 }

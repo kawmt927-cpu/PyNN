@@ -13,7 +13,6 @@ import { getTodayLogDate } from "@/lib/sales-log/daily-log";
 import {
   getDailyReportDeadline,
   isDailyReportCountedAsLate,
-  isDailyReportDayPastDeadline,
   isDailyReportSubmitted,
 } from "@/lib/sales-log/daily-report-submission";
 import { dailyReportMakeupDesktopPath } from "@/lib/sales-log/daily-report-reminders";
@@ -81,9 +80,8 @@ export async function listTodayWorkRecords(
 ): Promise<TodayWorkRecord[]> {
   const logDate = getTodayLogDate(now);
 
-  if (isDailyReportDayPastDeadline(logDate, now)) {
-    await ensureUnsubmittedDailyReportPlaceholder({ userId, logDate, now });
-  }
+  // 非考核日（周末/法定假）内部会跳过并清理误生成占位
+  await ensureUnsubmittedDailyReportPlaceholder({ userId, logDate, now });
 
   const [checkIns, followUps, dailyLog] = await Promise.all([
     listMyTodayCheckIns(userId),

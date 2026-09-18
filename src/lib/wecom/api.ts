@@ -35,6 +35,14 @@ async function qyPost<T extends Record<string, unknown>>(
   });
 }
 
+/** 供 OA 等模块复用的企微 POST（自动带 access_token） */
+export async function wecomQyPost<T extends Record<string, unknown>>(
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  return qyPost<T>(path, body);
+}
+
 export async function getAccessToken() {
   const now = Date.now();
   if (accessTokenCache && accessTokenCache.expiresAt > now) {

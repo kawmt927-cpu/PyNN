@@ -15,16 +15,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ExternalCostPayoutPanel } from "@/components/contracts/external-cost-payout-panel";
 import { ExternalCostPlanEditDialog } from "@/components/contracts/external-cost-plan-edit-dialog";
+import { ExternalCostVoidButton } from "@/components/contracts/external-cost-void-button";
 import {
   addExternalCostPayoutRecord,
   deleteExternalCostPayoutRecord,
+  restoreExternalCostProduct,
+  voidExternalCostProduct,
 } from "@/app/(dashboard)/contracts/actions";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   searchParams: Promise<{
     contractId?: string;
     unpaid?: string;
     paid?: string;
+    voided?: string;
   }>;
 };
 
@@ -32,10 +37,13 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"]);
   const contractWhere = contractListWhere(session.user.role, session.user.id);
+  const returnTo = "/contracts/external-costs";
+  const showVoidedOnly = query.voided === "1";
 
   const products = await prisma.contractProduct.findMany({
     where: {
       costType: "EXTERNAL",
+      voidedAt: showVoidedOnly ? { not: null } : null,
       contract: {
         AND: [contractWhere, query.contractId ? { id: query.contractId } : {}],
       },
@@ -79,6 +87,7 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
     const currentPeriod = waterfall.find((item) => item.statusLabel !== "已完成") ?? null;
     const currentDueAt = currentPeriod?.dueAt ? new Date(currentPeriod.dueAt) : null;
     const overdue =
+      !row.voidedAt &&
       remaining > 0.01 &&
       currentDueAt != null &&
       currentDueAt.getTime() < now;
@@ -105,6 +114,10 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
   const canRecord = canRecordContractPayment(session.user.role);
   const canDelete = canManageContractApproval(session.user.role);
   const canEditPlan = canEditContract(session.user.role) || session.user.role === "SALES";
+  const canVoidRole =
+    session.user.role === "SALES" ||
+    session.user.role === "SALES_MANAGER" ||
+    session.user.role === "ADMIN";
 
   function hrefWith(patch: Record<string, string | undefined>) {
     const params = new URLSearchParams();
@@ -112,6 +125,7 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
       contractId: query.contractId,
       unpaid: query.unpaid,
       paid: query.paid,
+      voided: query.voided,
       ...patch,
     };
     for (const [key, value] of Object.entries(next)) {
@@ -140,6 +154,7 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
             href={hrefWith({
               unpaid: showUnpaidOnly ? undefined : "1",
               paid: undefined,
+              voided: undefined,
             })}
           >
             未付清
@@ -150,9 +165,21 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
             href={hrefWith({
               paid: showPaidOnly ? undefined : "1",
               unpaid: undefined,
+              voided: undefined,
             })}
           >
             付清
+          </Link>
+        </Button>
+        <Button asChild variant={showVoidedOnly ? "default" : "outline"} size="sm">
+          <Link
+            href={hrefWith({
+              voided: showVoidedOnly ? undefined : "1",
+              unpaid: undefined,
+              paid: undefined,
+            })}
+          >
+            已作废
           </Link>
         </Button>
         {query.contractId ? (
@@ -165,15 +192,20 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
       {filtered.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-sm text-muted-foreground">
-            暂无外部成本产品。
+            {showVoidedOnly ? "暂无已作废的外部成本产品。" : "暂无外部成本产品。"}
           </CardContent>
         </Card>
       ) : (
         <div className="flex flex-col gap-2">
           {filtered.map(({ row, costAmount, paid, remaining, periodCount, currentPeriod, currentDueAt, overdue }) => {
             const signed = isSignedContractStatus(row.contract.status);
+            const isVoided = Boolean(row.voidedAt);
             const ownerCanEdit =
+              !isVoided &&
               canEditPlan &&
+              (canEditContract(session.user.role) || row.contract.ownerId === session.user.id);
+            const canVoid =
+              canVoidRole &&
               (canEditContract(session.user.role) || row.contract.ownerId === session.user.id);
             const periodSummary =
               periodCount === 0
@@ -189,13 +221,18 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
                   <div className="min-w-0 flex-1 space-y-1">
                     <p className="text-sm font-medium leading-snug">
                       <Link
-                        href={`/contracts/${row.contract.id}`}
+                        href={withReturnTo(`/contracts/${row.contract.id}`, returnTo)}
                         className="hover:underline"
                       >
                         {row.contract.title}
                       </Link>
                       <span className="mx-1.5 text-muted-foreground">·</span>
                       {row.productName}
+                      {isVoided ? (
+                        <span className="ml-2 text-xs font-medium text-muted-foreground">
+                          已作废
+                        </span>
+                      ) : null}
                       {overdue ? (
                         <span className="ml-2 text-xs font-medium text-destructive">逾期</span>
                       ) : null}
@@ -206,11 +243,19 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
                       {" / "}
                       {formatAmount(costAmount)}
                       {remaining > 0.01 ? ` · 待付 ${formatAmount(remaining)}` : ""}
-                      {currentDueAt && remaining > 0.01
+                      {currentDueAt && remaining > 0.01 && !isVoided
                         ? ` · 到期 ${currentDueAt.toLocaleDateString("zh-CN")}`
                         : ""}
+                      {row.description?.trim() ? (
+                        <>
+                          {" · "}
+                          <span className="font-medium text-sky-700">
+                            备注 {row.description.trim()}
+                          </span>
+                        </>
+                      ) : null}
                     </p>
-                    {!signed ? (
+                    {!signed && !isVoided ? (
                       <p className="text-xs text-muted-foreground">合同签署后可登记实付</p>
                     ) : null}
                   </div>
@@ -233,8 +278,10 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
                         compact
                         productId={row.id}
                         productName={row.productName}
+                        productNotes={row.description}
                         costAmount={costAmount}
                         totalPaid={paid}
+                        voided={isVoided}
                         canDelete={canDelete}
                         onAdd={addExternalCostPayoutRecord}
                         onDelete={deleteExternalCostPayoutRecord}
@@ -251,6 +298,16 @@ export default async function ExternalCostsPage({ searchParams }: Props) {
                           notes: item.notes,
                           recordedBy: item.recordedBy,
                         }))}
+                      />
+                    ) : null}
+                    {canVoid ? (
+                      <ExternalCostVoidButton
+                        productId={row.id}
+                        productName={row.productName}
+                        voided={isVoided}
+                        hasPayouts={row.externalPayoutRecords.length > 0}
+                        onVoid={voidExternalCostProduct}
+                        onRestore={restoreExternalCostProduct}
                       />
                     ) : null}
                   </div>

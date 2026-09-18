@@ -1,6 +1,6 @@
 import { format, startOfDay } from "date-fns";
 import { zhCN } from "date-fns/locale";
-import { SalesDailyLogStatus, UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkInStatusLabel } from "@/lib/sales-log/check-in";
 import { formatCheckInLocation } from "@/lib/sales-log/format-location";
@@ -9,16 +9,17 @@ import { isAutoDailyLogCheckIn } from "@/lib/sales-log/auto-log-check-in";
 import {
   getDailyReportDeadline,
   isDailyReportCountedAsLate,
-  isDailyReportDayPastDeadline,
   isDailyReportSubmitted,
 } from "@/lib/sales-log/daily-report-submission";
 import {
   dailyReportMakeupDesktopPath,
   dailyReportMakeupPath,
 } from "@/lib/sales-log/daily-report-reminders";
+import { ensureCompanyCalendarCache, isDailyReportRequiredDay } from "@/lib/calendar/cn-daily-report-days";
 import {
   ensureUnsubmittedDailyReportsForUsers,
   isUnsubmittedDailyReportPlaceholder,
+  purgeInvalidUnsubmittedDailyReportPlaceholders,
   UNSUBMITTED_DAILY_REPORT_BODY,
 } from "@/lib/sales-log/unsubmitted-daily-report";
 import {
@@ -27,47 +28,17 @@ import {
   type TeamActivityUserFilter,
 } from "@/lib/today-work/activity-view-scope";
 import { teamPerformanceMemberWhere } from "@/lib/sales/team-performance";
+import { ENTITY_TYPES } from "@/lib/audit/entity-operation-log";
+import {
+  dailyLogStatusLabel,
+  type TeamWorkActivityItem,
+  type TeamWorkActivityKind,
+} from "@/lib/today-work/team-work-activity-shared";
+import { hasPermissionSync, preloadRolePermissions } from "@/lib/rbac/has-permission";
+import { ALL_ROLES } from "@/lib/rbac/permission-keys";
 
-export type TeamWorkActivityKind = "check_in" | "follow_up" | "daily_log";
-
-export type TeamWorkActivityItem = {
-  id: string;
-  kind: TeamWorkActivityKind;
-  at: Date;
-  dayKey: string;
-  userId: string;
-  userName: string;
-  title: string;
-  subtitle: string;
-  detail: string | null;
-  customerId: string | null;
-  customerName: string | null;
-  meta: string | null;
-  logSubmitted?: boolean;
-  /** 已提交或未提交但已逾期/锁定 → 迟交 */
-  logLate?: boolean;
-  /** 未提交可补录 */
-  logPendingMakeup?: boolean;
-  /** 补录跳转（PC） */
-  makeupHref?: string | null;
-  /** 补录跳转（手机） */
-  makeupMobileHref?: string | null;
-  /** 日报合并的自动定位文案 */
-  locationLabel?: string | null;
-  /** 往来方式文案 */
-  methodLabel?: string | null;
-  /** 联系人姓名 */
-  contactNames?: string[];
-  /** 下次跟进 */
-  nextFollowUpAt?: Date | null;
-  nextFollowUpMethodLabel?: string | null;
-  nextFollowUpContent?: string | null;
-  result?: string | null;
-  /** 与往来同时生成的打卡（合并展示） */
-  checkInId?: string | null;
-  checkInLocation?: string | null;
-  checkInStatusLabel?: string | null;
-};
+export type { TeamWorkActivityItem, TeamWorkActivityKind };
+export { dailyLogStatusLabel, kindLabel } from "@/lib/today-work/team-work-activity-shared";
 
 export type TeamWorkDayGroup = {
   dayKey: string;
@@ -80,13 +51,6 @@ export type TeamWorkDayGroup = {
   };
 };
 
-const dailyLogStatusLabel: Record<SalesDailyLogStatus, string> = {
-  IN_PROGRESS: "进行中",
-  PENDING_CONFIRM: "待确认",
-  SUBMITTED: "已提交",
-  RISK_SUBMITTED: "已提交（有风险）",
-};
-
 function dayKeyOf(date: Date) {
   return format(date, "yyyy-MM-dd");
 }
@@ -94,12 +58,6 @@ function dayKeyOf(date: Date) {
 function dayLabelOf(dayKey: string) {
   const date = new Date(`${dayKey}T12:00:00`);
   return format(date, "M月d日 EEEE", { locale: zhCN });
-}
-
-function kindLabel(kind: TeamWorkActivityKind) {
-  if (kind === "check_in") return "打卡";
-  if (kind === "follow_up") return "往来";
-  return "日报";
 }
 
 function parseDayKeyLocal(dayKey: string) {
@@ -137,9 +95,12 @@ export async function listTeamActivityMembers(): Promise<TeamActivityMember[]> {
 }
 
 export async function listTeamSalesMembers() {
+  for (const role of ALL_ROLES) {
+    await preloadRolePermissions(role);
+  }
   const members = await listTeamActivityMembers();
   return members
-    .filter((u) => u.role === "SALES")
+    .filter((u) => hasPermissionSync(u.role, "daily_reports.required"))
     .map(({ id, name }) => ({ id, name }));
 }
 
@@ -167,22 +128,25 @@ export async function listTeamWorkActivity(options: {
   if (userIds.length === 0) return [];
 
   const dayKeys = eachDayKeysInRange(options.start, options.end);
-  const pastDeadlineDates = dayKeys
-    .map(parseDayKeyLocal)
-    .filter((d) => isDailyReportDayPastDeadline(d, now));
-  // 超时未交：落库真实「未提交日报」（可补录）
+  const rangeDates = dayKeys.map(parseDayKeyLocal);
+  // 超时未交：仅纳入日报考核的角色；区间内非考核日顺带清理误生成占位
+  for (const role of ALL_ROLES) {
+    await preloadRolePermissions(role);
+  }
   const ensureUserIds = scopedMembers
-    .filter((m) => m.role === "SALES" || filter === m.id)
+    .filter((m) => hasPermissionSync(m.role, "daily_reports.required"))
     .map((m) => m.id);
-  if (ensureUserIds.length > 0 && pastDeadlineDates.length > 0) {
+  if (ensureUserIds.length > 0 && rangeDates.length > 0) {
+    await ensureCompanyCalendarCache();
+    await purgeInvalidUnsubmittedDailyReportPlaceholders();
     await ensureUnsubmittedDailyReportsForUsers({
       userIds: ensureUserIds,
-      logDates: pastDeadlineDates,
+      logDates: rangeDates,
       now,
     });
   }
 
-  const [checkIns, followUps, dailyLogs] = await Promise.all([
+  const [checkIns, followUps, dailyLogs, createLogs] = await Promise.all([
     prisma.salesCheckIn.findMany({
       where: {
         userId: { in: userIds },
@@ -220,11 +184,63 @@ export async function listTeamWorkActivity(options: {
         user: { select: { id: true, name: true } },
       },
     }),
+    prisma.entityOperationLog.findMany({
+      where: {
+        userId: { in: userIds },
+        action: "创建",
+        entityType: { in: [ENTITY_TYPES.CUSTOMER, ENTITY_TYPES.OPPORTUNITY] },
+        createdAt: { gte: options.start, lt: options.end },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: { select: { id: true, name: true } },
+      },
+    }),
   ]);
+
+  const customerCreateIds = createLogs
+    .filter((row) => row.entityType === ENTITY_TYPES.CUSTOMER)
+    .map((row) => row.entityId);
+  const opportunityCreateIds = createLogs
+    .filter((row) => row.entityType === ENTITY_TYPES.OPPORTUNITY)
+    .map((row) => row.entityId);
+
+  const [createdCustomers, createdOpportunities] = await Promise.all([
+    customerCreateIds.length > 0
+      ? prisma.customer.findMany({
+          where: { id: { in: customerCreateIds } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([] as { id: string; name: string }[]),
+    opportunityCreateIds.length > 0
+      ? prisma.opportunity.findMany({
+          where: { id: { in: opportunityCreateIds } },
+          select: {
+            id: true,
+            title: true,
+            customerId: true,
+            customer: { select: { id: true, name: true } },
+          },
+        })
+      : Promise.resolve(
+          [] as {
+            id: string;
+            title: string;
+            customerId: string | null;
+            customer: { id: string; name: string } | null;
+          }[]
+        ),
+  ]);
+
+  const customerNameById = new Map(createdCustomers.map((c) => [c.id, c.name]));
+  const opportunityById = new Map(createdOpportunities.map((o) => [o.id, o]));
 
   const meaningfulDailyLogs = dailyLogs.filter((row) => {
     if (isDailyReportSubmitted(row.status)) return true;
-    if (isUnsubmittedDailyReportPlaceholder(row)) return true;
+    if (isUnsubmittedDailyReportPlaceholder(row)) {
+      // 非考核日占位不进入团队动态（清理前的兜底）
+      return isDailyReportRequiredDay(row.logDate);
+    }
     return Boolean(row.dailyReport?.trim());
   });
 
@@ -373,6 +389,48 @@ export async function listTeamWorkActivity(options: {
         makeupHref: placeholder ? dailyReportMakeupDesktopPath() : null,
         makeupMobileHref: placeholder ? dailyReportMakeupPath() : null,
         locationLabel,
+        riskFlag: placeholder ? false : Boolean(row.riskFlag),
+        riskNotes: placeholder ? null : row.riskNotes,
+      };
+    }),
+    ...createLogs.map((row) => {
+      const at = row.createdAt;
+      if (row.entityType === ENTITY_TYPES.CUSTOMER) {
+        const name = customerNameById.get(row.entityId) ?? row.summary;
+        return {
+          id: row.id,
+          kind: "customer_create" as const,
+          at,
+          dayKey: dayKeyOf(at),
+          userId: row.user.id,
+          userName: row.user.name,
+          title: name,
+          subtitle: row.user.name,
+          detail: row.summary,
+          customerId: row.entityId,
+          customerName: name,
+          meta: null,
+        };
+      }
+      const opp = opportunityById.get(row.entityId);
+      const title = opp?.title ?? row.summary;
+      const customerName = opp?.customer?.name ?? null;
+      return {
+        id: row.id,
+        kind: "opportunity_create" as const,
+        at,
+        dayKey: dayKeyOf(at),
+        userId: row.user.id,
+        userName: row.user.name,
+        title,
+        subtitle: customerName
+          ? `${row.user.name} · ${customerName}`
+          : row.user.name,
+        detail: row.summary,
+        customerId: opp?.customerId ?? opp?.customer?.id ?? null,
+        customerName,
+        opportunityId: row.entityId,
+        meta: customerName ? `客户：${customerName}` : null,
       };
     }),
   ];
@@ -417,5 +475,3 @@ export function summarizeTeamWorkActivity(items: TeamWorkActivityItem[]) {
     logsSubmitted: items.filter((i) => i.kind === "daily_log" && i.logSubmitted).length,
   };
 }
-
-export { kindLabel, dailyLogStatusLabel };

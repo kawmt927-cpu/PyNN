@@ -1,0 +1,34 @@
+---
+description: 行政人事相关功能的后期规划（公司日历、请假、真实人力），实现前先对照本规则。
+alwaysApply: true
+---
+
+# 行政人事 · 人事能力（后期规划）
+
+**当前阶段：先不做 UI / 业务模块**，但后续做相关需求时必须对齐下列方向。
+
+## 已落地（前期）
+
+- 日报是否考核：`isDailyReportRequiredDay`（周末基线 + 法定假/调休）。
+- 公司日历表：`CompanyCalendarDay` / `CompanyCalendarYearSync`。
+- 每年 **12 月 10–31** cron：`/api/cron/sync-company-calendar`（脚本 `cron:sync-company-calendar`）从 [holiday-cn](https://github.com/NateScarlet/holiday-cn) 拉取**明年**国办安排；未发布则标记 pending 并通知 ADMIN/HR，窗口内重试。
+- `source=manual` 预留给行政手工改日，同步不会覆盖。
+
+## 后期要规划进「行政人事」的能力
+
+1. **公司放假日历管理**（HR/ADMIN）
+   - 查看/编辑法定假、调休、公司额外放假。
+   - 驱动：日报考核、当月工作日天数、项目日成本分母等。
+
+2. **与请假 / 出勤关联（真实人力资源）**
+   - 个人请假、出差等 ≠ 公司放假日历；分层：公司日历（全员）+ 个人出勤（人天/成本）。
+   - 企业微信侧：无「国办法定假列表」官方接口；可用审批拉取请假明细（`oa/getapprovalinfo` + `record_type=1` + 详情），假期余额接口只做余额不做出勤真相；打卡规则含 `sync_holidays` 仅作参考。
+   - 同步结果应落 CRM 本地表，业务读库。
+
+3. **人事成本 / 排班**
+   - 现有人员成本、「本月调整」等与工作日分母应对齐公司日历；请假扣减应对齐个人出勤层。
+
+## 实现时注意
+
+- 不要再把法定假写死在多处业务里；统一读公司日历缓存/表。
+- 新做行政模块时优先复用 `CompanyCalendarDay`，而不是另起一套日期表。

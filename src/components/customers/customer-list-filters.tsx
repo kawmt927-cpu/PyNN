@@ -8,6 +8,8 @@ import {
   buildCustomerListHref,
   hasActiveCustomerListFilters,
   type CustomerListFilters,
+  type CustomerListSort,
+  DEFAULT_CUSTOMER_LIST_SORT,
 } from "@/lib/customers/list-filters";
 import type { CustomerListView } from "@/lib/customers/access";
 import type { ConfigOptionItem } from "@/lib/config-options";
@@ -27,6 +29,7 @@ type SuggestItem = { id: string; name: string };
 type Props = {
   view: CustomerListView;
   filters: CustomerListFilters;
+  sort?: CustomerListSort;
   typeOptions: ConfigOptionItem[];
   gradeOptions?: ConfigOptionItem[];
   tagOptions?: CustomerTagDefinition[];
@@ -100,6 +103,7 @@ function buildSuggestQuery(view: CustomerListView, filters: CustomerListFilters)
 export function CustomerListFilters({
   view,
   filters,
+  sort = DEFAULT_CUSTOMER_LIST_SORT,
   typeOptions,
   gradeOptions = [],
   tagOptions = [],
@@ -109,6 +113,7 @@ export function CustomerListFilters({
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const filtersRef = useRef(filters);
+  const sortRef = useRef(sort);
   const [q, setQ] = useState(filters.q);
   const [suggestions, setSuggestions] = useState<SuggestItem[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -120,14 +125,18 @@ export function CustomerListFilters({
   }, [filters]);
 
   useEffect(() => {
+    sortRef.current = sort;
+  }, [sort]);
+
+  useEffect(() => {
     setQ(filters.q);
   }, [filters.q]);
 
-  const listPath = buildCustomerListHref(view, { ...filters, q });
+  const listPath = buildCustomerListHref(view, { ...filters, q }, 1, sort);
 
   const applyFilters = useCallback(
     (next: CustomerListFilters) => {
-      router.replace(buildCustomerListHref(view, next));
+      router.replace(buildCustomerListHref(view, next, 1, sortRef.current));
     },
     [router, view]
   );
@@ -327,7 +336,9 @@ export function CustomerListFilters({
         )}
         {hasActiveCustomerListFilters({ ...filters, q }) && (
           <Button asChild variant="outline" size="sm">
-            <Link href={buildCustomerListHref(view, EMPTY_FILTERS)}>重置</Link>
+            <Link href={buildCustomerListHref(view, EMPTY_FILTERS, 1, DEFAULT_CUSTOMER_LIST_SORT)}>
+              重置
+            </Link>
           </Button>
         )}
       </div>

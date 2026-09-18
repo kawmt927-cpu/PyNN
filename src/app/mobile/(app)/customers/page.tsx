@@ -20,6 +20,7 @@ import {
   labelForConfig,
 } from "@/lib/config-options";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
+import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 import { rankByNameMatch } from "@/lib/search/fuzzy-text";
 import { MobileSearchForm } from "@/components/mobile/mobile-search-form";
 import { MobileCreateCustomerButton } from "@/components/mobile/mobile-create-customer-button";
@@ -47,7 +48,7 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
   const [rawCustomers, labelMaps, formOptions, salesUsers] = await Promise.all([
     prisma.customer.findMany({
       where,
-      orderBy: q ? { name: "asc" } : { updatedAt: "desc" },
+      orderBy: q ? { name: "asc" } : { createdAt: "desc" },
       include: {
         owner: { select: { name: true } },
       },
@@ -59,7 +60,8 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
   ]);
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+  const directGradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+  const channelGradeLabels = labelMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE] ?? {};
 
   const customers = q ? rankByNameMatch(q, rawCustomers).slice(0, 40) : rawCustomers;
 
@@ -67,12 +69,6 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
     <div className="flex h-full flex-col overflow-hidden">
       <header className="shrink-0 space-y-3 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex items-center gap-3">
-          <Link
-            href="/mobile/more"
-            className="shrink-0 text-sm text-muted-foreground active:text-foreground"
-          >
-            返回
-          </Link>
           <h1 className="min-w-0 flex-1 text-lg font-bold">客户</h1>
         </div>
         <MobileSearchForm
@@ -84,9 +80,11 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
               sourceOptions={formOptions.sourceOptions}
               typeOptions={formOptions.typeOptions}
               gradeOptions={formOptions.gradeOptions}
+              channelKindOptions={formOptions.channelKindOptions}
               tagOptions={formOptions.tagOptions}
               showOwnerSelect={canManageCustomerOwner(role)}
               salesUsers={salesUsers}
+              canEditNationwideChannel={canManageCustomerOwner(role)}
             />
           }
         />
@@ -99,7 +97,9 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
           </p>
         ) : (
           <ul className="space-y-2">
-            {customers.map((c) => (
+            {customers.map((c) => {
+              const channel = isChannelCustomerType(c.customerType, typeLabels);
+              return (
               <li key={c.id}>
                 <Link
                   href={`/mobile/customers/${c.id}`}
@@ -107,7 +107,12 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
                 >
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{c.name}</span>
-                    <CustomerGradeIcon grade={c.customerGrade} size="sm" labelMap={gradeLabels} />
+                    <CustomerGradeIcon
+                      grade={c.customerGrade}
+                      size="sm"
+                      labelMap={channel ? channelGradeLabels : directGradeLabels}
+                      tone={channel ? "blue" : "amber"}
+                    />
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {labelForConfig(typeLabels, c.customerType) || "未分类"}
@@ -115,7 +120,8 @@ export default async function MobileCustomersPage({ searchParams }: Props) {
                   </p>
                 </Link>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>

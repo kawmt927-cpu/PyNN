@@ -22,6 +22,8 @@ export const customerFormSchema = z.object({
   customerType: z.string().min(1, "请选择关系类型"),
   customerGrade: z.string().optional().nullable(),
   channelKind: z.string().optional().nullable(),
+  /** 仅销管/管理员创建渠道时可设；普通销售忽略 */
+  nationwideChannel: z.boolean().optional(),
   tagValues: z.array(z.string()).optional(),
   notes: z.string().optional(),
   ownerId: z.string().optional().nullable(),

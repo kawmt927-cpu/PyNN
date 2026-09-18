@@ -5,13 +5,35 @@ import type {
   UserRole,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { canFinanceExpense, getExpenseCategoryRule } from "@/lib/expenses/labels";
+import { getExpenseCategoryRule } from "@/lib/expenses/labels";
 import { createAppNotification } from "@/lib/notifications/app-notifications";
 import { deleteExpenseInvoiceFile } from "@/lib/expenses/attachments";
 
 export const claimInclude = {
   applicant: { select: { id: true, name: true, role: true } },
+  beneficiary: { select: { id: true, name: true, role: true } },
   manager: { select: { id: true, name: true } },
+  project: { select: { id: true, name: true } },
+  items: {
+    include: {
+      customer: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true } },
+      trips: {
+        include: { customer: { select: { id: true, name: true } } },
+        orderBy: [{ sortOrder: "asc" as const }, { startDate: "asc" as const }],
+      },
+      invoices: {
+        include: {
+          customer: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
+          postedSalesCost: { select: { id: true } },
+          postedProjectCost: { select: { id: true } },
+        },
+        orderBy: { sortOrder: "asc" as const },
+      },
+    },
+    orderBy: { sortOrder: "asc" as const },
+  },
   trips: {
     include: { customer: { select: { id: true, name: true } } },
     orderBy: [{ sortOrder: "asc" as const }, { startDate: "asc" as const }],
@@ -96,7 +118,8 @@ export function assertInvoicesReadyForManagerApproval(
 
 export async function postInvoiceCosts(input: {
   claimId: string;
-  applicantId: string;
+  /** 实际报销人：销售成本挂此人 */
+  beneficiaryId: string;
   recordedById: string;
   tx: Prisma.TransactionClient;
 }) {
@@ -123,7 +146,7 @@ export async function postInvoiceCosts(input: {
       const salesCostType = inv.salesCostType ?? "PERSONAL_TRAVEL";
       const created = await input.tx.salesCost.create({
         data: {
-          salesUserId: input.applicantId,
+          salesUserId: input.beneficiaryId,
           recordedById: input.recordedById,
           costType: salesCostType,
           totalAmount: amount,
@@ -160,16 +183,18 @@ export async function postInvoiceCosts(input: {
 
 export async function notifyExpensePaid(input: {
   applicantId: string;
+  beneficiaryId: string;
   claimId: string;
   title: string;
   amount: number;
 }) {
+  const recipients = [...new Set([input.applicantId, input.beneficiaryId])];
   await createAppNotification({
     type: "EXPENSE_CLAIM_PAID",
     title: "报销已打款结案",
-    body: `你的报销单「${input.title}」已打款结案，金额 ¥${input.amount.toFixed(2)}。`,
+    body: `报销单「${input.title}」已打款结案，金额 ¥${input.amount.toFixed(2)}。`,
     linkHref: `/expenses/${input.claimId}`,
-    recipientUserIds: [input.applicantId],
+    recipientUserIds: recipients,
     pushWeCom: true,
     meta: { claimId: input.claimId, action: "expense_paid" },
   });
@@ -185,15 +210,70 @@ export async function deleteClaimCascadeFiles(claimId: string) {
   }
 }
 
-export function canViewClaim(
-  claim: { applicantId: string; managerId: string | null; status: string },
+export async function canViewClaim(
+  claim: {
+    applicantId: string;
+    beneficiaryId: string;
+    managerId: string | null;
+    status: string;
+    flowSnapshot?: unknown;
+    currentStepIndex?: number | null;
+  },
   user: { id: string; role: UserRole }
 ) {
   if (user.role === "ADMIN") return true;
   if (claim.applicantId === user.id) return true;
+  if (claim.beneficiaryId === user.id) return true;
   if (claim.managerId === user.id) return true;
-  if (canFinanceExpense(user.role) && ["PENDING_PAYOUT", "PAID"].includes(claim.status)) {
-    return true;
+
+  if (["PENDING_MANAGER", "PENDING_HR", "PENDING_PAYOUT", "PAID"].includes(claim.status)) {
+    if (claim.status === "PAID") {
+      const { partyMatches, resolveClaimFlowSnapshot } = await import(
+        "@/lib/expenses/approval-flow"
+      );
+      const snap = resolveClaimFlowSnapshot(claim);
+      for (const step of snap.steps) {
+        for (const m of step.mappings) {
+          if (m.approvers.skip) continue;
+          if (
+            partyMatches(
+              { roles: m.approvers.roles, userIds: m.approvers.userIds },
+              user
+            )
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    const {
+      getClaimCurrentStep,
+      getClaimCurrentStepIndex,
+      userCanActOnFlowStep,
+    } = await import("@/lib/expenses/approval-flow");
+    const step = getClaimCurrentStep(claim);
+    const stepIndex = getClaimCurrentStepIndex(claim);
+    if (
+      step &&
+      userCanActOnFlowStep({
+        step,
+        user,
+        managerId: claim.managerId,
+        allowAdminBypass: false,
+        isFirstActiveStep: stepIndex === 0,
+      })
+    ) {
+      return true;
+    }
   }
   return false;
+}
+
+export function canEditClaimDraft(
+  claim: { applicantId: string; status: string },
+  user: { id: string; role: UserRole }
+) {
+  if (claim.status !== "DRAFT" && claim.status !== "REJECTED") return false;
+  return claim.applicantId === user.id || user.role === "ADMIN";
 }

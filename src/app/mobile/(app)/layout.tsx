@@ -6,6 +6,7 @@ import {
 } from "@/lib/mobile/sales-roles";
 import { MobileShell } from "@/components/mobile/mobile-shell";
 import { countPendingApprovals } from "@/lib/approvals/pending-count";
+import { countUnreadNotifications } from "@/lib/notifications/app-notifications";
 
 export default async function MobileSalesAppLayout({
   children,
@@ -18,13 +19,19 @@ export default async function MobileSalesAppLayout({
   }
 
   const manager = isMobileManagerRole(session.user.role);
-  const pendingApprovals = await countPendingApprovals({
-    id: session.user.id,
-    role: session.user.role,
-  });
+  const [pendingApprovals, unread] = await Promise.all([
+    countPendingApprovals({
+      id: session.user.id,
+      role: session.user.role,
+    }),
+    countUnreadNotifications(session.user.id),
+  ]);
 
   return (
-    <MobileShell navVariant={manager ? "manager" : "sales"} moreBadge={pendingApprovals > 0}>
+    <MobileShell
+      navVariant={manager ? "manager" : "sales"}
+      moreBadge={pendingApprovals > 0 || unread > 0}
+    >
       {children}
     </MobileShell>
   );

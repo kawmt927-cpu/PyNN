@@ -1,5 +1,8 @@
 import { UserRole } from "@prisma/client";
-import { canEditCustomerFollowUp, getCustomerForUser } from "@/lib/customers/access";
+import {
+  canEditCustomerFollowUp,
+  customerDetailInclude,
+} from "@/lib/customers/access";
 import { getCustomerGradeLabel } from "@/lib/customers/grade";
 import { getCustomerPendingFollowPlans } from "@/lib/follow-ups/unified";
 import { formatPendingFollowUpRelativeLabel } from "@/lib/follow-ups/remaining-days";
@@ -21,6 +24,8 @@ export type CustomerBriefForAgent = {
   customerId: string;
   name: string;
   writable: boolean;
+  /** 日报流程中是否可 createFollowUp（恒为 true，只要客户存在） */
+  canLogFollowUp: boolean;
   customerGrade: string | null;
   customerGradeLabel: string;
   ownerName: string | null;
@@ -47,7 +52,10 @@ export async function fetchCustomerBriefForAgent(
   role: UserRole,
   userId: string
 ): Promise<CustomerBriefForAgent | null> {
-  const customer = await getCustomerForUser(customerId, role, userId);
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    include: customerDetailInclude,
+  });
   if (!customer) return null;
 
   const now = new Date();
@@ -73,6 +81,7 @@ export async function fetchCustomerBriefForAgent(
     customerId: customer.id,
     name: customer.name,
     writable: canEditCustomerFollowUp(role, userId, customer),
+    canLogFollowUp: true,
     customerGrade: customer.customerGrade,
     customerGradeLabel: getCustomerGradeLabel(customer.customerGrade) ?? "长期无意向客户",
     ownerName: customer.owner?.name ?? null,
@@ -106,7 +115,9 @@ export async function fetchCustomerBriefForAgent(
 export function formatCustomerBriefForPrompt(brief: CustomerBriefForAgent): string {
   const lines = [
     `#### ${brief.name}（customerId: ${brief.customerId}）`,
-    `- 当前等级：${brief.customerGradeLabel}${brief.writable ? "" : " · ⚠️ 非本人负责，不可代录"}`,
+    `- 当前等级：${brief.customerGradeLabel}${
+      brief.writable ? "" : " · 非本人负责（仍须 createFollowUp 记往来；勿改等级）"
+    }`,
     `- 负责人：${brief.ownerName ?? "公海（无负责人）"}${brief.assistants.length ? ` · 协助：${brief.assistants.join("、")}` : ""}`,
   ];
 
@@ -141,6 +152,7 @@ export function customerBriefToToolPayload(brief: CustomerBriefForAgent) {
     customerId: brief.customerId,
     name: brief.name,
     writable: brief.writable,
+    canLogFollowUp: brief.canLogFollowUp,
     customerGrade: brief.customerGrade,
     customerGradeLabel: brief.customerGradeLabel,
     ownerName: brief.ownerName,
@@ -148,7 +160,8 @@ export function customerBriefToToolPayload(brief: CustomerBriefForAgent) {
     lastFollowUp: brief.lastFollowUp,
     nextFollowUp: brief.nextFollowUp,
     pendingPlanCount: brief.pendingPlanCount,
-    displayHint: "销售自述后对照理解；写入或追问前可参考等级与跟进计划",
+    displayHint:
+      "销售自述后对照理解；确认后无论 writable 均须 createFollowUp；writable=false 时勿改等级",
   };
 }
 

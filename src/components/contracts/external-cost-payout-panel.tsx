@@ -40,6 +40,8 @@ type Installment = {
 type Props = {
   productId: string;
   productName: string;
+  /** 外部成本产品备注（合同录入时的备注） */
+  productNotes?: string | null;
   costAmount: number;
   totalPaid: number;
   installments: Installment[];
@@ -47,6 +49,8 @@ type Props = {
   canDelete: boolean;
   /** 列表页紧凑模式：仅保留登记实付按钮与弹窗 */
   compact?: boolean;
+  /** 已作废：仅展示历史，不可再登记实付 */
+  voided?: boolean;
   onAdd: (formData: FormData) => Promise<ActionResult>;
   onDelete: (recordId: string) => Promise<ActionResult>;
 };
@@ -60,15 +64,18 @@ function todayDateInput() {
 export function ExternalCostPayoutPanel({
   productId,
   productName,
+  productNotes,
   costAmount,
   totalPaid,
   installments,
   records,
   canDelete,
   compact = false,
+  voided = false,
   onAdd,
   onDelete,
 }: Props) {
+  const notesText = productNotes?.trim() || "";
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -90,7 +97,7 @@ export function ExternalCostPayoutPanel({
   const canSubmitAmount = amountInput !== "" && !amountError;
 
   function openDialog() {
-    if (remaining <= 0) return;
+    if (voided || remaining <= 0) return;
     setError(null);
     setAmountInput("");
     setFormKey((k) => k + 1);
@@ -143,6 +150,12 @@ export function ExternalCostPayoutPanel({
             <DialogTitle>登记外部成本实付</DialogTitle>
             <DialogDescription>
               {productName} · 待付 {formatAmount(remaining)}
+              {notesText ? (
+                <>
+                  {" · "}
+                  <span className="text-sky-700">备注 {notesText}</span>
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <form key={formKey} action={handleAdd} className="space-y-4">
@@ -213,9 +226,13 @@ export function ExternalCostPayoutPanel({
     return (
       <div className="flex items-center gap-2">
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        <Button type="button" size="sm" disabled={remaining <= 0} onClick={openDialog}>
-          登记实付
-        </Button>
+        {voided ? (
+          <span className="text-xs text-muted-foreground">已作废</span>
+        ) : (
+          <Button type="button" size="sm" disabled={remaining <= 0} onClick={openDialog}>
+            登记实付
+          </Button>
+        )}
         {dialogs}
       </div>
     );
@@ -225,15 +242,28 @@ export function ExternalCostPayoutPanel({
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
         <div>
-          <CardTitle className="text-lg">外部成本实付 · {productName}</CardTitle>
+          <CardTitle className="text-lg">
+            外部成本实付 · {productName}
+            {voided ? (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">（已作废）</span>
+            ) : null}
+          </CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
             应付 {formatAmount(costAmount)} · 已付 {formatAmount(totalPaid)} · 待付{" "}
             {formatAmount(remaining)}
+            {notesText ? (
+              <>
+                {" · "}
+                <span className="font-medium text-sky-700">备注 {notesText}</span>
+              </>
+            ) : null}
           </p>
         </div>
-        <Button type="button" size="sm" disabled={remaining <= 0} onClick={openDialog}>
-          登记实付
-        </Button>
+        {voided ? null : (
+          <Button type="button" size="sm" disabled={remaining <= 0} onClick={openDialog}>
+            登记实付
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -267,7 +297,12 @@ export function ExternalCostPayoutPanel({
                 <span>
                   {formatAmount(row.amount)} ·{" "}
                   {new Date(row.paidAt).toLocaleDateString("zh-CN")} · {row.recordedBy.name}
-                  {row.notes ? ` · ${row.notes}` : ""}
+                  {row.notes?.trim() ? (
+                    <>
+                      {" · "}
+                      <span className="text-sky-700">备注 {row.notes.trim()}</span>
+                    </>
+                  ) : null}
                 </span>
                 {canDelete ? (
                   <Button

@@ -133,6 +133,7 @@ export type ChannelDashboardBundle = {
     coveredProvinces: number;
     gapProvinces: number;
     unclassified: number;
+    /** 普通渠道未填档案省 + 全国性渠道尚无联系人负责省 */
     unassignedProvince: number;
     active: number;
     inactive: number;
@@ -167,8 +168,13 @@ export async function getChannelDashboardBundle(
           customerType: true,
           customerGrade: true,
           channelKind: true,
+          nationwideChannel: true,
           owner: { select: { name: true } },
-          coverageProvinces: { select: { province: true } },
+          contacts: {
+            select: {
+              responsibleProvinces: { select: { province: true } },
+            },
+          },
           followUps: {
             orderBy: { followUpAt: "desc" },
             take: 1,
@@ -229,16 +235,26 @@ export async function getChannelDashboardBundle(
     if (isActive) active += 1;
     else inactive += 1;
 
-    const covered = c.coverageProvinces
-      .map((r) => normalizeProvinceName(r.province))
-      .filter((p) => p !== UNASSIGNED_PROVINCE);
-    const provinces =
-      covered.length > 0
-        ? [...new Set(covered)]
-        : [normalizeProvinceName(c.province)];
-
-    if (provinces.length === 1 && provinces[0] === UNASSIGNED_PROVINCE) {
-      unassignedProvince += 1;
+    // 普通渠道：按公司档案所在省。全国性：公司本身不划省，只按联系人负责省并集。
+    let provinces: string[];
+    if (c.nationwideChannel) {
+      provinces = [
+        ...new Set(
+          c.contacts
+            .flatMap((contact) => contact.responsibleProvinces.map((r) => r.province))
+            .map((p) => normalizeProvinceName(p))
+            .filter((p) => p !== UNASSIGNED_PROVINCE)
+        ),
+      ];
+      if (provinces.length === 0) {
+        unassignedProvince += 1;
+        continue;
+      }
+    } else {
+      provinces = [normalizeProvinceName(c.province)];
+      if (provinces[0] === UNASSIGNED_PROVINCE) {
+        unassignedProvince += 1;
+      }
     }
 
     const grade = c.customerGrade?.trim() || CUSTOMER_GRADE.NONE;

@@ -166,4 +166,69 @@ export async function enrichCustomerWithKimi(input: {
   return assertEnrichMatchesInput(name, parsed);
 }
 
+/**
+ * 新建医院/公司客户前的强制核验：必须拿到可信官方全称。
+ * 返回应用于建档的字段（以 officialName 为准）。
+ */
+export async function requireVerifiedOrgProfile(input: {
+  name: string;
+  category: CustomerCategory;
+  province?: string | null;
+  city?: string | null;
+  district?: string | null;
+  hospitalLevel?: string | null;
+  bedCount?: number | null;
+}): Promise<{
+  officialName: string;
+  province: string | null;
+  city: string | null;
+  district: string | null;
+  hospitalLevel: HospitalLevel | null;
+  bedCount: number | null;
+  nameCorrected: boolean;
+}> {
+  if (input.category !== "HOSPITAL" && input.category !== "COMPANY") {
+    throw new Error("仅医院或公司客户需要机构名称核验");
+  }
+
+  const inputName = input.name.trim();
+  let enriched: CustomerEnrichResult;
+  try {
+    enriched = await enrichCustomerWithKimi({
+      name: inputName,
+      category: input.category,
+      province: input.province?.trim() || undefined,
+      city: input.city?.trim() || undefined,
+      district: input.district?.trim() || undefined,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "机构名称核验失败";
+    throw new Error(
+      `${msg}。医院/公司须先核对到准确官方全称后再录入，请向销售确认更完整的名称后重试`
+    );
+  }
+
+  const officialName = enriched.officialName!.trim();
+  const hospitalLevel =
+    input.category === "HOSPITAL"
+      ? ((input.hospitalLevel?.trim() ||
+          enriched.hospitalLevel ||
+          null) as HospitalLevel | null)
+      : null;
+  const bedCount =
+    input.category === "HOSPITAL"
+      ? (input.bedCount ?? enriched.bedCount ?? null)
+      : null;
+
+  return {
+    officialName,
+    province: (input.province?.trim() || enriched.province || null) as string | null,
+    city: (input.city?.trim() || enriched.city || null) as string | null,
+    district: (input.district?.trim() || enriched.district || null) as string | null,
+    hospitalLevel,
+    bedCount,
+    nameCorrected: officialName !== inputName,
+  };
+}
+
 export type { HospitalLevel };

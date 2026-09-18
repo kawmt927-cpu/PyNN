@@ -1,22 +1,29 @@
 import { OpportunityStatus, UserRole } from "@prisma/client";
 import { hasPendingWeeklyAssignmentForOpportunity } from "@/lib/today-work/weekly-assignments";
 import { prisma } from "@/lib/prisma";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 
 export type OpportunityAccessOptions = {
   /** 销售被指派该商机的待完成周任务时，允许访问与录入跟进 */
   allowAssignedWeeklyTask?: boolean;
+  /** 销售可打开非本人商机以提交往来（待确认入库） */
+  allowFollowUpOnAnyOpportunity?: boolean;
 };
 
 export function canViewAllOpportunities(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "opportunities.manage");
 }
 
 export function canManageOpportunityOwner(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "opportunities.manage");
 }
 
 export function canManageOpportunityStatus(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "opportunities.manage");
+}
+
+export function canRestoreOpportunity(role: UserRole) {
+  return hasPermissionSync(role, "opportunities.restore");
 }
 
 /** 编辑商机内容（已放弃不可；已签约仅销售管理/管理员） */
@@ -54,8 +61,9 @@ export function canEditOpportunity(
 }
 
 export function opportunityListWhere(role: UserRole, userId: string) {
-  if (canViewAllOpportunities(role)) return {};
-  return { ownerId: userId };
+  const notRejected = { confirmStatus: { not: "REJECTED" as const } };
+  if (canViewAllOpportunities(role)) return notRejected;
+  return { ownerId: userId, ...notRejected };
 }
 
 export type OpportunityListView = "not_signed" | "signed" | "abandoned" | "all";
@@ -116,6 +124,9 @@ export async function getOpportunityForUser(
   });
   if (!opportunity) return null;
   if (!canViewAllOpportunities(role) && opportunity.ownerId !== userId) {
+    if (options?.allowFollowUpOnAnyOpportunity && role === "SALES") {
+      return opportunity;
+    }
     if (
       options?.allowAssignedWeeklyTask &&
       (await hasPendingWeeklyAssignmentForOpportunity(userId, id))
@@ -133,12 +144,17 @@ export async function canFollowUpOpportunityForUser(
   opportunity: { id: string; ownerId: string; status: OpportunityStatus }
 ) {
   if (canFollowUpOpportunity(role, userId, opportunity)) return true;
-  if (role !== "SALES" || opportunity.status !== "NOT_SIGNED") return false;
+  if (opportunity.status !== "NOT_SIGNED") return false;
+  // 销售可对非本人商机提交往来（待管理确认）；有指派则正式入库
+  if (role === "SALES" || role === "SALES_MANAGER" || role === "ADMIN") return true;
   return hasPendingWeeklyAssignmentForOpportunity(userId, opportunity.id);
 }
 
 export function canViewAllContracts(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN" || role === "PROJECT_MANAGER";
+  return (
+    hasPermissionSync(role, "contracts.approve") ||
+    (role === "PROJECT_MANAGER" && hasPermissionSync(role, "nav.contracts"))
+  );
 }
 
 export function contractListWhere(role: UserRole, userId: string) {

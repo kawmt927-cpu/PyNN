@@ -21,7 +21,7 @@ export async function AssignmentsTaskList({ role, userId, returnPath }: Props) {
 
   if (canManage) {
     const [assignments, salesUsers] = await Promise.all([
-      listAllAssignmentsForManager(),
+      listAllAssignmentsForManager(userId),
       listSalesUsersForSelect(),
     ]);
 

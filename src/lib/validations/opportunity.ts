@@ -54,4 +54,18 @@ export const restoreOpportunityStatusSchema = z.object({
   opportunityId: z.string().min(1),
 });
 
+export const opportunityQuoteSchema = z.object({
+  opportunityId: z.string().min(1),
+  amount: z.coerce.number().positive("报价金额须大于 0"),
+  quotedAt: z.string().min(1, "请选择报价日期"),
+  notes: z.string().optional().nullable(),
+});
+
+export const opportunityQuoteUpdateSchema = z.object({
+  quoteId: z.string().min(1),
+  amount: z.coerce.number().positive("报价金额须大于 0"),
+  quotedAt: z.string().min(1, "请选择报价日期"),
+  notes: z.string().optional().nullable(),
+});
+
 export { contractFormSchema } from "@/lib/validations/contract";

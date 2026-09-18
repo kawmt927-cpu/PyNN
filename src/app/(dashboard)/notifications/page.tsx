@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import {
   listNotificationsForUser,
   ensureRejectedContractNotificationsForUser,
+  syncGeneralAssignmentConfirmNotificationsForUser,
   NOTIFICATION_ACCESS_ROLES,
   NOTIFICATION_TYPES,
 } from "@/lib/notifications/app-notifications";
+import { prisma } from "@/lib/prisma";
 import { markAllAsRead, markNotificationAsRead } from "@/app/(dashboard)/notifications/actions";
 import { MarkNotificationReadButton } from "@/components/notifications/mark-notification-read-button";
 import { MarkAllNotificationsReadButton } from "@/components/notifications/mark-all-notifications-read-button";
@@ -37,8 +39,33 @@ function parseMeta(metaJson: string | null): Record<string, unknown> | null {
 export default async function NotificationsPage() {
   const session = await requireRole(NOTIFICATION_ACCESS_ROLES);
   await ensureRejectedContractNotificationsForUser(session.user.id);
+  await syncGeneralAssignmentConfirmNotificationsForUser(session.user.id);
   const receipts = await listNotificationsForUser(session.user.id, 100);
   const unreadCount = receipts.filter((row) => !row.readAt).length;
+
+  const pendingConfirmAssignmentIds = [
+    ...new Set(
+      receipts
+        .map((row) => {
+          if (row.notification.type !== NOTIFICATION_TYPES.GENERAL_ASSIGNMENT_PENDING_CONFIRM) {
+            return null;
+          }
+          const meta = parseMeta(row.notification.metaJson);
+          return typeof meta?.assignmentId === "string" ? meta.assignmentId : null;
+        })
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const pendingConfirmAssignments =
+    pendingConfirmAssignmentIds.length > 0
+      ? await prisma.salesWeeklyAssignment.findMany({
+          where: { id: { in: pendingConfirmAssignmentIds } },
+          select: { id: true, status: true },
+        })
+      : [];
+  const assignmentStatusById = new Map(
+    pendingConfirmAssignments.map((row) => [row.id, row.status])
+  );
 
   return (
     <div className="space-y-6">
@@ -46,7 +73,7 @@ export default async function NotificationsPage() {
         <div>
           <h1 className="text-2xl font-semibold">通知</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            打卡异常、任务指派、日报催交/迟交、合同驳回、普通任务待确认等提醒
+            打卡异常、任务指派、日报催交/迟交、合同驳回、证件到期等提醒
             {unreadCount > 0 ? ` · ${unreadCount} 条未读` : ""}
           </p>
         </div>
@@ -71,12 +98,18 @@ export default async function NotificationsPage() {
                   typeof meta?.assignmentId === "string"
                     ? meta.assignmentId
                     : null;
+                const assignmentStatus = assignmentId
+                  ? assignmentStatusById.get(assignmentId)
+                  : undefined;
+                const assignmentNeedsConfirm = assignmentStatus === "PENDING_CONFIRM";
                 const rejectedContractId =
                   row.notification.type === NOTIFICATION_TYPES.CONTRACT_REJECTED &&
                   typeof meta?.contractId === "string"
                     ? meta.contractId
                     : null;
-                const hasInlineActions = Boolean(assignmentId || rejectedContractId);
+                const hasInlineActions = Boolean(
+                  (assignmentId && assignmentNeedsConfirm) || rejectedContractId
+                );
                 return (
                   <li
                     key={row.id}
@@ -98,7 +131,7 @@ export default async function NotificationsPage() {
                         <p className="text-xs text-muted-foreground">
                           {formatWhen(row.notification.createdAt)}
                         </p>
-                        {assignmentId ? (
+                        {assignmentId && assignmentNeedsConfirm ? (
                           <NotificationAssignmentConfirmActions
                             assignmentId={assignmentId}
                             receiptId={row.id}
@@ -126,7 +159,15 @@ export default async function NotificationsPage() {
                                     NOTIFICATION_TYPES.DAILY_REPORT_LATE
                                     ? "前往补录日报"
                                     : "前往填写日报"
-                                  : "查看相关页面"}
+                                  : row.notification.type ===
+                                        NOTIFICATION_TYPES.PHASE_COLLECTION_READY ||
+                                      row.notification.type ===
+                                        NOTIFICATION_TYPES.PHASE_COLLECTION_PREPARE
+                                    ? "前往合同催收"
+                                    : row.notification.type ===
+                                        NOTIFICATION_TYPES.HR_DOCUMENT_EXPIRY
+                                      ? "前往员工档案"
+                                      : "查看相关页面"}
                             </Link>
                           </Button>
                         ) : null}

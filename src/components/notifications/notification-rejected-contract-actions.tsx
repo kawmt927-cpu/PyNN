@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { deleteRejectedContract } from "@/app/(dashboard)/contracts/actions";
 import { markNotificationAsRead } from "@/app/(dashboard)/notifications/actions";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   contractId: string;
@@ -20,6 +21,7 @@ export function NotificationRejectedContractActions({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const returnTo = "/notifications";
 
   function handleDelete() {
     if (!window.confirm("确定删除该已驳回合同？删除后不可恢复。")) return;
@@ -41,7 +43,7 @@ export function NotificationRejectedContractActions({
       if (unread) {
         await markNotificationAsRead(receiptId);
       }
-      router.push(`/contracts/${contractId}?edit=1`);
+      router.push(withReturnTo(`/contracts/${contractId}?edit=1`, returnTo));
     });
   }
 
@@ -60,7 +62,7 @@ export function NotificationRejectedContractActions({
         删除合同
       </Button>
       <Button asChild type="button" size="sm" variant="ghost">
-        <Link href={`/contracts/${contractId}`}>查看详情</Link>
+        <Link href={withReturnTo(`/contracts/${contractId}`, returnTo)}>查看详情</Link>
       </Button>
     </div>
   );

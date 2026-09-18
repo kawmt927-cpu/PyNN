@@ -37,6 +37,7 @@ const ASSIGNABLE_ROLES: UserRole[] = [
   "PROJECT_STAFF",
   "ADMIN",
   "HR",
+  "OTHER",
 ];
 
 export function WeComAccessRequestsPanel({ requests, usersWithoutWecom }: Props) {

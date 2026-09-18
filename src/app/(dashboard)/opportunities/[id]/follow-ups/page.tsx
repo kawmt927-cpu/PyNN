@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
+  canFollowUpOpportunity,
   canFollowUpOpportunityForUser,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
@@ -32,10 +33,16 @@ export default async function OpportunityFollowUpsPage({ params, searchParams }:
 
   const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id, {
     allowAssignedWeeklyTask: true,
+    allowFollowUpOnAnyOpportunity: true,
   });
   if (!opportunity) notFound();
 
   const canFollowUp = await canFollowUpOpportunityForUser(
+    session.user.role,
+    session.user.id,
+    opportunity
+  );
+  const isOwnerFollowUp = canFollowUpOpportunity(
     session.user.role,
     session.user.id,
     opportunity
@@ -113,6 +120,8 @@ export default async function OpportunityFollowUpsPage({ params, searchParams }:
             <OpportunityFollowUpForm
               mode="create"
               opportunityId={id}
+              customerId={opportunity.customerId}
+              pendingConfirmHint={!isOwnerFollowUp && session.user.role === "SALES"}
               opportunity={opportunitySnapshot}
               stageOptions={stageOptions}
             />

@@ -22,9 +22,12 @@
     "db:seed:project-models": "tsx prisma/seed-project-models.ts",
     "db:clean:legacy-daily-log": "tsx scripts/legacy-daily-log-clean.ts",
     "db:import:legacy-daily-log": "tsx scripts/legacy-daily-log-import.ts",
+    "db:import:staff-site": "tsx scripts/import-staff-site-distribution.ts",
+    "db:import:payroll": "tsx scripts/import-payroll-costs.ts",
     "db:studio": "prisma studio",
     "cron:daily-report-remind": "bash scripts/cron-daily-report-remind.sh",
     "cron:sync-company-calendar": "bash scripts/cron-sync-company-calendar.sh",
+    "cron:hr-document-expiry": "bash scripts/cron-hr-document-expiry.sh",
     "postinstall": "prisma generate"
   },
   "prisma": {

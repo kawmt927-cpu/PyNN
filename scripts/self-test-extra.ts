@@ -24,7 +24,7 @@ async function main() {
     customerGrade: "STAR_1",
     ownerId: sales2.id,
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const row = await prisma.customer.findUnique({ where: { id: c.id } });
   if (row?.ownerId !== sales.id) {
     bugs.push(`SALES 新建客户时可通过 ownerId 指定他人为负责人（实际 owner=${row?.ownerId}）`);
@@ -57,7 +57,7 @@ async function main() {
       customerType,
       customerGrade: "NONE",
       tagValues: [],
-    });
+    }, { skipOrgNameVerification: true });
     bugs.push("空白名称客户仍可创建");
   } catch (e) {
     console.log("OK blank name rejected:", (e as Error).message.slice(0, 80));
@@ -72,7 +72,7 @@ async function main() {
       customerType,
       customerGrade: "NONE",
       tagValues: [],
-    });
+    }, { skipOrgNameVerification: true });
     bugs.push("超长客户名仍可写入");
   } catch (e) {
     console.log("OK long name rejected:", (e as Error).message.slice(0, 80));
@@ -86,7 +86,7 @@ async function main() {
       customerType,
       customerGrade: "NONE",
       tagValues: [],
-    });
+    }, { skipOrgNameVerification: true });
     bugs.push("空白字符客户名仍可入库");
   } catch (e) {
     console.log("OK whitespace name rejected:", (e as Error).message.slice(0, 80));

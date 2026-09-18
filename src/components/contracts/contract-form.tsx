@@ -16,7 +16,7 @@ import {
   resubmitContract,
   updateContract,
 } from "@/app/(dashboard)/contracts/actions";
-import { SIGNING_TYPE_LABELS } from "@/lib/permissions";
+import { SIGNING_TYPE_LABELS, CONTRACT_BUSINESS_TYPE_LABELS } from "@/lib/permissions";
 import { POOL_OWNER_VALUE } from "@/lib/customers/constants";
 import {
   asUserFacingError,
@@ -27,7 +27,9 @@ import {
 import { ActionErrorDisplay } from "@/components/ui/action-error-display";
 import { validateInstallmentCoverage } from "@/lib/validations/contract";
 import { getContractPaymentRemaining } from "@/lib/contracts/payment-waterfall";
+import { suggestAnnualMaintenanceAmount } from "@/lib/contracts/maintenance";
 import { confirmDestructiveAction } from "@/lib/ui/confirm-action";
+import type { ContractBusinessType } from "@prisma/client";
 import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
 import {
   ContractPendingAttachments,
@@ -38,6 +40,10 @@ import {
   defaultCostProductLine,
   type CostProductLine,
 } from "@/components/contracts/contract-cost-composition";
+import {
+  ContractDepositsFields,
+  type DepositLine,
+} from "@/components/contracts/contract-deposits-fields";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import { nextClientKey } from "@/lib/ui/stable-client-key";
 import {
@@ -71,6 +77,7 @@ type Props = {
     title?: string;
     totalAmount?: number;
     signingType?: string;
+    businessType?: ContractBusinessType | string;
     signCustomerId?: string;
     signCustomerName?: string;
     endUserCustomerId?: string;
@@ -84,8 +91,14 @@ type Props = {
     signedAt?: string;
     effectiveAt?: string;
     expiresAt?: string;
+    maintenanceStartAt?: string;
+    maintenanceEndAt?: string;
+    maintenanceTotalAmount?: number | null;
+    annualMaintenanceAmount?: number | null;
     notes?: string;
     products?: Array<{
+      id?: string;
+      hasPayouts?: boolean;
       productServiceId?: string | null;
       productName: string;
       description?: string | null;
@@ -104,12 +117,25 @@ type Props = {
       condition?: string | null;
       dueAt?: string | null;
     }>;
+    deposits?: Array<{
+      id?: string;
+      hasRecoveries?: boolean;
+      amount: number;
+      paidOutAt: string;
+      recoverCondition?: string | null;
+      notes?: string | null;
+    }>;
   };
   submitLabel?: string;
   initialParties?: DealPartyDraft[];
 };
 
 const signingOptions = Object.entries(SIGNING_TYPE_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));
+
+const businessTypeOptions = Object.entries(CONTRACT_BUSINESS_TYPE_LABELS).map(([value, label]) => ({
   value,
   label,
 }));
@@ -179,6 +205,28 @@ export function ContractForm({
     defaultValues?.signingType === "INDIRECT" ? "INDIRECT" : "DIRECT"
   );
   const isDirectSign = signingType === "DIRECT";
+  const [businessType, setBusinessType] = useState<ContractBusinessType>(
+    defaultValues?.businessType === "SECONDARY_PROJECT" ||
+      defaultValues?.businessType === "MAINTENANCE"
+      ? defaultValues.businessType
+      : "NEW_PROJECT"
+  );
+  const [maintenanceStartAt, setMaintenanceStartAt] = useState(
+    toDateInput(defaultValues?.maintenanceStartAt ?? null)
+  );
+  const [maintenanceEndAt, setMaintenanceEndAt] = useState(
+    toDateInput(defaultValues?.maintenanceEndAt ?? null)
+  );
+  const [maintenanceTotalAmount, setMaintenanceTotalAmount] = useState(
+    defaultValues?.maintenanceTotalAmount != null
+      ? String(defaultValues.maintenanceTotalAmount)
+      : ""
+  );
+  const [annualMaintenanceAmount, setAnnualMaintenanceAmount] = useState(
+    defaultValues?.annualMaintenanceAmount != null
+      ? String(defaultValues.annualMaintenanceAmount)
+      : ""
+  );
   const [parties, setParties] = useState<DealPartyDraft[]>(() =>
     initialParties.map((p) => ({ ...p, key: p.key || nextClientKey("party") }))
   );
@@ -192,6 +240,8 @@ export function ContractForm({
     defaultValues?.products?.length
       ? defaultValues.products.map((row) => ({
           key: newKey(),
+          id: row.id,
+          hasPayouts: row.hasPayouts,
           productName: row.productName,
           notes: row.description ?? "",
           costAmount: String(row.costAmount),
@@ -220,6 +270,20 @@ export function ContractForm({
           dueAt: row.dueAt ? toDateInput(row.dueAt) : "",
         }))
       : [defaultInstallmentLine(1)]
+  );
+
+  const [deposits, setDeposits] = useState<DepositLine[]>(() =>
+    defaultValues?.deposits?.length
+      ? defaultValues.deposits.map((row) => ({
+          key: newKey(),
+          id: row.id,
+          hasRecoveries: row.hasRecoveries,
+          amount: String(row.amount),
+          paidOutAt: row.paidOutAt ? toDateInput(row.paidOutAt) : "",
+          recoverCondition: row.recoverCondition ?? "",
+          notes: row.notes ?? "",
+        }))
+      : []
   );
 
   const productCostTotal = useMemo(
@@ -266,6 +330,7 @@ export function ContractForm({
     }
 
     const productsPayload = products.map((row) => ({
+      id: row.id || undefined,
       productName: row.productName.trim(),
       description: row.notes.trim() || null,
       costType: row.costType,
@@ -288,8 +353,19 @@ export function ContractForm({
       dueAt: row.dueAt || null,
     }));
 
+    const depositsPayload = deposits
+      .filter((row) => Number(row.amount) > 0 || row.paidOutAt || row.recoverCondition.trim())
+      .map((row) => ({
+        id: row.id || undefined,
+        amount: Number(row.amount) || 0,
+        paidOutAt: row.paidOutAt || "",
+        recoverCondition: row.recoverCondition.trim() || null,
+        notes: row.notes.trim() || null,
+      }));
+
     formData.set("productsJson", JSON.stringify(productsPayload));
     formData.set("installmentsJson", JSON.stringify(installmentsPayload));
+    formData.set("depositsJson", JSON.stringify(depositsPayload));
     formData.set("partiesJson", partiesToJson(parties));
 
     const coverageError = validateInstallmentCoverage(contractAmountNum, installmentsPayload);
@@ -402,6 +478,135 @@ export function ContractForm({
             className={FORM_GRID_CELL}
             labelClassName={FORM_GRID_LABEL}
           />
+
+          <SelectField
+            id="businessType"
+            label="业务类型 *"
+            name="businessType"
+            options={businessTypeOptions}
+            value={businessType}
+            onValueChange={(next) => {
+              const typed =
+                next === "SECONDARY_PROJECT" || next === "MAINTENANCE"
+                  ? next
+                  : "NEW_PROJECT";
+              setBusinessType(typed);
+            }}
+            className={FORM_GRID_CELL}
+            labelClassName={FORM_GRID_LABEL}
+          />
+
+          {businessType === "MAINTENANCE" ? (
+            <div className="md:col-span-2 space-y-4 rounded-md border bg-muted/20 p-4">
+              <p className="text-sm font-medium">维保信息</p>
+              <p className="text-xs text-muted-foreground">
+                填写维保起止日期与维保总额；系统按年换算每年额度，可微调后保存。
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="maintenanceStartAt" className={FORM_GRID_LABEL}>
+                    维保开始日 *
+                  </Label>
+                  <Input
+                    id="maintenanceStartAt"
+                    name="maintenanceStartAt"
+                    type="date"
+                    value={maintenanceStartAt}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setMaintenanceStartAt(next);
+                      const total = Number(maintenanceTotalAmount);
+                      if (next && maintenanceEndAt && total > 0) {
+                        setAnnualMaintenanceAmount(
+                          String(
+                            suggestAnnualMaintenanceAmount(
+                              total,
+                              new Date(next),
+                              new Date(maintenanceEndAt)
+                            )
+                          )
+                        );
+                      }
+                    }}
+                    required
+                  />
+                </div>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="maintenanceEndAt" className={FORM_GRID_LABEL}>
+                    维保结束日 *
+                  </Label>
+                  <Input
+                    id="maintenanceEndAt"
+                    name="maintenanceEndAt"
+                    type="date"
+                    value={maintenanceEndAt}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setMaintenanceEndAt(next);
+                      const total = Number(maintenanceTotalAmount);
+                      if (maintenanceStartAt && next && total > 0) {
+                        setAnnualMaintenanceAmount(
+                          String(
+                            suggestAnnualMaintenanceAmount(
+                              total,
+                              new Date(maintenanceStartAt),
+                              new Date(next)
+                            )
+                          )
+                        );
+                      }
+                    }}
+                    required
+                  />
+                </div>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="maintenanceTotalAmount" className={FORM_GRID_LABEL}>
+                    维保总额 *
+                  </Label>
+                  <Input
+                    id="maintenanceTotalAmount"
+                    name="maintenanceTotalAmount"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={maintenanceTotalAmount}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setMaintenanceTotalAmount(next);
+                      const total = Number(next);
+                      if (maintenanceStartAt && maintenanceEndAt && total > 0) {
+                        setAnnualMaintenanceAmount(
+                          String(
+                            suggestAnnualMaintenanceAmount(
+                              total,
+                              new Date(maintenanceStartAt),
+                              new Date(maintenanceEndAt)
+                            )
+                          )
+                        );
+                      }
+                    }}
+                    required
+                  />
+                </div>
+                <div className={FORM_GRID_CELL}>
+                  <Label htmlFor="annualMaintenanceAmount" className={FORM_GRID_LABEL}>
+                    每年维保额度 *
+                  </Label>
+                  <Input
+                    id="annualMaintenanceAmount"
+                    name="annualMaintenanceAmount"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={annualMaintenanceAmount}
+                    onChange={(e) => setAnnualMaintenanceAmount(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <CustomerSearchSelect
             id="signCustomerId"
@@ -677,6 +882,8 @@ export function ContractForm({
         paymentPlan={installments}
         onError={(message) => setError(asUserFacingError(message))}
       />
+
+      <ContractDepositsFields deposits={deposits} onChange={setDeposits} />
 
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">合同附件</h2>

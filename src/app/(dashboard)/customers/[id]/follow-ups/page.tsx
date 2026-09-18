@@ -12,6 +12,7 @@ import {
   CONFIG_CATEGORY,
   loadCustomerFieldLabelMaps,
 } from "@/lib/config-options";
+import { isChannelCustomerType } from "@/lib/customers/customer-type-grade";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpHistoryList } from "@/components/customers/follow-up-history-list";
@@ -48,6 +49,7 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
 
   const customer = await getCustomerForUser(id, session.user.role, session.user.id, {
     allowAssignedWeeklyTask: true,
+    allowFollowUpOnAnyCustomer: true,
   });
   if (!customer) {
     const { backHref, backLabel } = resolveBackNavigation(query, "/customers");
@@ -59,17 +61,29 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   }
 
   const canManage = canManageCustomerOwner(session.user.role);
-  const canEdit = canEditCustomerFollowUp(session.user.role, session.user.id, customer);
+  const canEdit =
+    session.user.role === "SALES" ||
+    session.user.role === "SALES_MANAGER" ||
+    session.user.role === "ADMIN" ||
+    canEditCustomerFollowUp(session.user.role, session.user.id, customer);
+  const isOwnerOrAssistant = canEditCustomerFollowUp(
+    session.user.role,
+    session.user.id,
+    customer
+  );
 
   const now = new Date();
   const opportunityId = query.opportunityId?.trim() || undefined;
   const contactId = query.contactId?.trim() || undefined;
 
   const [followUps, followUpCount, labelMaps, pendingPlans, opportunity] = await Promise.all([
-    getCustomerFollowUpHistory(id, 50),
+    getCustomerFollowUpHistory(id, 50, {
+      includePendingForViewer: true,
+      viewerUserId: session.user.id,
+    }),
     countCustomerFollowUps(id),
     loadCustomerFieldLabelMaps(),
-    getCustomerPendingFollowPlans(id, now),
+    getCustomerPendingFollowPlans(id, now, { forUserId: session.user.id }),
     opportunityId
       ? prisma.opportunity.findFirst({
           where: { id: opportunityId, customerId: id },
@@ -82,10 +96,14 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
   const pendingOpportunity = pendingPlans.find((item) => item.opportunity)?.opportunity;
 
   const typeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-  const gradeLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
+  const isChannel = isChannelCustomerType(customer.customerType, typeLabels);
+  const gradeLabels = isChannel
+    ? labelMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE] ?? {}
+    : labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE] ?? {};
 
   const selfPath = selfReturnPath(`/customers/${id}/follow-ups`, query);
   const detailHref = selfReturnPath(`/customers/${id}`, query);
+  const { backHref, backLabel } = resolveBackNavigation(query, detailHref);
 
   return (
     <div className="space-y-6">
@@ -94,7 +112,11 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
           <h1 className="text-2xl font-bold">客户跟进</h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <p className="text-base font-medium">{customer.name}</p>
-            <CustomerGradeMetaBadge grade={customer.customerGrade} labelMap={gradeLabels} />
+            <CustomerGradeMetaBadge
+              grade={customer.customerGrade}
+              labelMap={gradeLabels}
+              tone={isChannel ? "blue" : "amber"}
+            />
           </div>
           <CustomerMetaLine
             className="mt-1"
@@ -104,7 +126,7 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
           />
         </div>
         <div className="flex gap-2">
-          <BackLink href={detailHref} />
+          <BackLink href={backHref} label={backLabel} />
           <Button asChild variant="outline">
             <Link href={withReturnTo("/follow-ups", selfPath)}>待跟进列表</Link>
           </Button>
@@ -116,12 +138,18 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
           <CardHeader>
             <CardTitle className="text-lg">往来打卡</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {!isOwnerOrAssistant && session.user.role === "SALES" ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                该客户非你负责。提交后为「待确认」，需销售管理确认后正式入库。
+              </p>
+            ) : null}
             <CustomerFollowUpCheckInSection
               role={session.user.role}
               customer={{
                 id: customer.id,
                 name: customer.name,
+                customerType: customer.customerType,
                 customerGrade: customer.customerGrade,
                 contacts: customer.contacts.map((contact) => ({
                   id: contact.id,
@@ -152,7 +180,12 @@ export default async function CustomerFollowUpsPage({ params, searchParams }: Pr
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
+          <FollowUpHistoryList
+            followUps={followUps}
+            linkReturnTo={selfPath}
+            canDelete={canManage}
+            customerId={customer.id}
+          />
         </CardContent>
       </Card>
     </div>

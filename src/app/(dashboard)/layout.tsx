@@ -1,4 +1,5 @@
-import { getNavForRole, ROLE_LABELS } from "@/lib/permissions";
+import { ROLE_LABELS } from "@/lib/permissions";
+import { getNavForRoleAsync } from "@/lib/rbac/has-permission";
 import { requireSession } from "@/lib/session";
 import { countPendingApprovals } from "@/lib/approvals/pending-count";
 import { DashboardShell } from "@/components/layout/dashboard-shell";
@@ -13,14 +14,28 @@ import {
   canAccessNotifications,
   countUnreadNotifications,
 } from "@/lib/notifications/app-notifications";
+import { resolveExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
+import { applySidebarNavOrder, parseSidebarNavOrder } from "@/lib/nav/sidebar-order";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
-  const nav = getNavForRole(session.user.role);
-  const pendingApprovalCount = await countPendingApprovals({
-    id: session.user.id,
-    role: session.user.role,
-  });
+  // 刷新报销开关缓存，供侧栏同步判断
+  await resolveExpenseFeatureEnabled();
+  const [navBase, userPrefs, pendingApprovalCount] = await Promise.all([
+    getNavForRoleAsync(session.user.role),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { sidebarNavOrder: true },
+    }),
+    countPendingApprovals({
+      id: session.user.id,
+      role: session.user.role,
+    }),
+  ]);
+  const nav = applySidebarNavOrder(
+    navBase,
+    parseSidebarNavOrder(userPrefs?.sidebarNavOrder)
+  );
   const unreadNotificationCount = canAccessNotifications(session.user.role)
     ? await countUnreadNotifications(session.user.id)
     : 0;

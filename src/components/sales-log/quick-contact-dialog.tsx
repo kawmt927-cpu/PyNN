@@ -38,6 +38,8 @@ type Props = {
   titleOptions?: ConfigOptionItem[];
   departmentOptions?: ConfigOptionItem[];
   roleOptions?: ConfigOptionItem[];
+  /** 非负责人代建：提示将提交确认 */
+  pendingConfirmHint?: boolean;
   onSaved: (contact: { id: string; name: string }) => void;
 };
 
@@ -64,6 +66,7 @@ export function QuickContactDialog({
   titleOptions = [],
   departmentOptions = [],
   roleOptions = [],
+  pendingConfirmHint = false,
   onSaved,
 }: Props) {
   const isEdit = Boolean(contact);
@@ -187,7 +190,11 @@ export function QuickContactDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑联系人" : "新增联系人"}</DialogTitle>
           <DialogDescription>
-            {isEdit ? "保存后列表将刷新显示最新信息。" : "保存后将自动选中该联系人。"}
+            {isEdit
+              ? "保存后列表将刷新显示最新信息。"
+              : pendingConfirmHint
+                ? "非负责客户：保存后自动选中；将随本次往来一并提交审核。"
+                : "保存后将自动选中该联系人。"}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

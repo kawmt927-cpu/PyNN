@@ -18,6 +18,11 @@ import {
   customerGradeFormValue,
   customerGradeSubmitValue,
 } from "@/lib/customers/grade";
+import {
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveGradeOptionsForCustomerType,
+} from "@/lib/customers/customer-type-grade";
 import { createManualLogAction } from "@/app/(dashboard)/sales-log/actions";
 import type { ConfigOptionItem } from "@/lib/config-options";
 
@@ -29,6 +34,8 @@ function toLocalDatetimeValue(date = new Date()) {
 export type InteractionFormOptions = {
   stageOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
+  typeOptions?: ConfigOptionItem[];
 };
 
 export function InteractionLogForm({ formOptions }: { formOptions: InteractionFormOptions }) {
@@ -38,6 +45,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   const [customerId, setCustomerId] = useState("");
   const [customerLabel, setCustomerLabel] = useState("");
   const [currentCustomerGrade, setCurrentCustomerGrade] = useState<string | null>(null);
+  const [currentCustomerType, setCurrentCustomerType] = useState<string | null>(null);
   const [contactId, setContactId] = useState("");
   const [opportunityId, setOpportunityId] = useState("");
   const [opportunityLabel, setOpportunityLabel] = useState("");
@@ -49,10 +57,22 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
   const [nextFollowUpContent, setNextFollowUpContent] = useState("");
 
+  const activeGradeOptions = resolveGradeOptionsForCustomerType(
+    currentCustomerType,
+    formOptions.gradeOptions,
+    formOptions.channelGradeOptions ?? [],
+    formOptions.typeOptions
+  );
+  const gradeTone = gradeToneForCustomerType(currentCustomerType, formOptions.typeOptions);
+  const gradeFieldLabel = isChannelCustomerType(currentCustomerType, formOptions.typeOptions)
+    ? "渠道等级（可选，选择后将更新）"
+    : "客户等级（可选，选择后将更新客户等级）";
+
   function resetForm() {
     setCustomerId("");
     setCustomerLabel("");
     setCurrentCustomerGrade(null);
+    setCurrentCustomerType(null);
     setContactId("");
     setOpportunityId("");
     setOpportunityLabel("");
@@ -119,6 +139,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
               setCustomerLabel(option?.label ?? "");
               const grade = option?.customerGrade ?? null;
               setCurrentCustomerGrade(grade);
+              setCurrentCustomerType(option?.customerType ?? null);
               setSuggestedGrade(customerGradeFormValue(grade));
               setContactId("");
               setOpportunityId("");
@@ -197,10 +218,11 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
 
         <CustomerGradeSelect
           id="interactionGrade"
-          label="客户等级（可选，选择后将更新客户等级）"
+          label={gradeFieldLabel}
           value={suggestedGrade}
           onValueChange={setSuggestedGrade}
-          options={formOptions.gradeOptions}
+          options={activeGradeOptions}
+          tone={gradeTone}
         />
 
         <div className="space-y-2 md:col-span-2">
@@ -227,7 +249,7 @@ export function InteractionLogForm({ formOptions }: { formOptions: InteractionFo
             onContentChange={setNextFollowUpContent}
             suggestedGrade={suggestedGrade}
             currentCustomerGrade={currentCustomerGrade}
-            gradeOptions={formOptions.gradeOptions}
+            gradeOptions={activeGradeOptions}
           />
         </div>
 

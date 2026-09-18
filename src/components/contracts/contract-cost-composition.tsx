@@ -22,6 +22,8 @@ export type ExternalInstallmentLine = {
 
 export type CostProductLine = {
   key: string;
+  id?: string;
+  hasPayouts?: boolean;
   productName: string;
   notes: string;
   costAmount: string;
@@ -139,7 +141,15 @@ function CostRow({
               variant="ghost"
               size="sm"
               onClick={() => {
-                if (
+                if (row.hasPayouts) {
+                  if (
+                    !confirmDestructiveAction(
+                      `「${row.productName || "该外部成本"}」已有实付记录。从构成中移除并保存后，将作废保留（不删除实付历史）。确定继续？`
+                    )
+                  ) {
+                    return;
+                  }
+                } else if (
                   !confirmDestructiveAction(
                     `确定删除「${row.productName || "该行"}」？需保存合同后才会生效。`
                   )

@@ -15,6 +15,7 @@ type Props = {
   customer: {
     id: string;
     name: string;
+    customerType?: string | null;
     customerGrade: string | null;
     contacts: Array<{ id: string; isPrimary: boolean }>;
   };
@@ -46,6 +47,7 @@ export async function CustomerFollowUpCheckInSection({
   const customerContext: CheckInCustomerContext = {
     customerId: customer.id,
     customerLabel: customer.name,
+    customerType: customer.customerType,
     customerGrade: customer.customerGrade,
     initialContactIds: initialContactId
       ? [initialContactId]

@@ -18,6 +18,8 @@ enum UserRole {
   ADMIN
   /** 行政人事：人员成本、报销打款等 */
   HR
+  /** 其他：仅计入人员日成本，无业务模块权限 */
+  OTHER
 }
 
 enum StaffCategory {
@@ -138,6 +140,13 @@ enum AllocationMode {
   MANUAL
 }
 
+/** 项目页访问：默认不可打开，由项目经理授予 */
+enum ProjectMemberAccess {
+  NONE
+  VIEW
+  EDIT
+}
+
 enum TaskStatus {
   PENDING_APPROVAL
   PENDING
@@ -158,6 +167,9 @@ enum TaskPriority {
 enum ProjectTaskStatus {
   NOT_STARTED
   IN_PROGRESS
+  TESTING
+  WAITING
+  PAUSED
   COMPLETED
 }
 
@@ -219,9 +231,34 @@ enum PresalesAssignmentStatus {
   CANCELLED
 }
 
+enum PresalesRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum CustomerClaimStatus {
   PENDING
   APPROVED
+  REJECTED
+}
+
+enum ProjectAcceptanceResult {
+  PASSED
+  FAILED
+}
+
+enum ProjectChangeRequestStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+/** 往来正式入库状态：非本人客户/商机录入为待确认 */
+enum FollowUpConfirmStatus {
+  CONFIRMED
+  PENDING_MANAGER
   REJECTED
 }
 
@@ -235,8 +272,25 @@ enum ExpenseClaimStatus {
   DRAFT
   PENDING_MANAGER
   REJECTED
+  /** 上级通过后：行政人事确认 */
+  PENDING_HR
+  /** 行政确认后：管理员终审打款 */
   PENDING_PAYOUT
   PAID
+}
+
+/** 报销单入口类型：差旅 / 费用 / 项目 */
+enum ExpenseClaimKind {
+  TRAVEL
+  FEE
+  PROJECT
+}
+
+/** 报销单内项目类型：差旅 / 其他 / 项目费用 */
+enum ExpenseItemKind {
+  TRAVEL
+  OTHER
+  PROJECT
 }
 
 enum ExpenseCostTarget {
@@ -247,12 +301,20 @@ enum ExpenseCostTarget {
 
 enum ExpenseApprovalStep {
   MANAGER
+  HR
   FINANCE
 }
 
 enum ExpenseApprovalAction {
   APPROVED
   REJECTED
+}
+
+/** 报销审批流程步骤类型（旧版；新版用申请人/审批人两侧字段，kind 仅兼容） */
+enum ExpenseFlowStepKind {
+  SUPERIOR_PICK
+  ROLE_POOL
+  FIXED_USERS
 }
 
 // ─── User & Personnel ────────────────────────────────────
@@ -271,6 +333,8 @@ model User {
   includeInTeamPerformance Boolean @default(true)
   /** 是否参与月度 KPI 考核（临时配置，后续可迁到权限） */
   includeInMonthlyAssessment Boolean @default(true)
+  /** 侧栏一级入口自定义顺序（nav id 数组）；空则用系统默认顺序 */
+  sidebarNavOrder Json?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -279,6 +343,9 @@ model User {
   contractInvoiceAttachmentsUploaded ContractInvoiceAttachment[] @relation("ContractInvoiceAttachmentUploader")
   ownedCustomers     Customer[]           @relation("CustomerOwner")
   followUps          FollowUp[]
+  followUpsConfirmed FollowUp[]           @relation("FollowUpConfirmer")
+  contactsCreated    Contact[]            @relation("ContactCreator")
+  contactsConfirmed  Contact[]            @relation("ContactConfirmer")
   contracts          Contract[]           @relation("ContractOwner")
   salesTargets        SalesTarget[]
   salesMonthlyTargets SalesMonthlyTarget[]
@@ -290,14 +357,25 @@ model User {
   assignedTasks      Task[]               @relation("TaskAssignee")
   createdTasks       Task[]               @relation("TaskCreator")
   assignedProjectTasks ProjectTask[]      @relation("ProjectTaskAssignee")
+  projectMemosAuthored ProjectMemo[]      @relation("ProjectMemoAuthor")
   managedProjects    Project[]            @relation("ProjectManager")
   presalesAssigned   PresalesAssignment[] @relation("PresalesStaff")
   presalesCreated    PresalesAssignment[] @relation("PresalesAssigner")
   presalesCostFor    SalesCost[]          @relation("PresalesCostUser")
   presalesSalesFor   PresalesAssignment[] @relation("PresalesSalesUser")
+  presalesRequestsAsSales       PresalesRequest[] @relation("PresalesRequestSales")
+  preferredPresalesRequests     PresalesRequest[] @relation("PresalesRequestPreferred")
+  presalesRequestsReviewed      PresalesRequest[] @relation("PresalesRequestReviewer")
+  salesMonthlyReportsConfirmed  SalesMonthlyReport[] @relation("SalesMonthlyReportConfirmer")
+  projectAcceptancesCreated     ProjectAcceptance[]  @relation("ProjectAcceptanceCreator")
+  projectChangeRequestsMade     ProjectChangeRequest[] @relation("ProjectChangeRequester")
+  projectChangeRequestsReviewed ProjectChangeRequest[] @relation("ProjectChangeReviewer")
   projectCosts       ProjectCost[]
   staffAllocations   ProjectStaffAllocation[]
   monthlyCostAdjustments PersonnelMonthlyCostAdjustment[]
+  personnelHrProfile     PersonnelHrProfile?
+  personnelHrDocuments   PersonnelHrDocument[]
+  personnelHrFilesUploaded PersonnelHrDocumentFile[] @relation("PersonnelHrDocumentUploader")
   personnelLeaves        PersonnelLeave[]                 @relation("PersonnelLeaveSubject")
   personnelLeavesCreated PersonnelLeave[]                 @relation("PersonnelLeaveCreator")
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
@@ -311,6 +389,8 @@ model User {
   contractDepositRecoveriesRecorded ContractDepositRecovery[] @relation("ContractDepositRecoveryRecorder")
   contractProductsVoided      ContractProduct[]          @relation("ContractProductVoidedBy")
   ownedOpportunities      Opportunity[]          @relation("OpportunityOwner")
+  opportunitiesCreated    Opportunity[]          @relation("OpportunityCreator")
+  opportunitiesConfirmed  Opportunity[]          @relation("OpportunityConfirmer")
   opportunityStageLogs    OpportunityStageLog[]
   projectDevReviews       OpportunityStageLog[]  @relation("ProjectDevReviewer")
   opportunityFollowUps    OpportunityFollowUp[]
@@ -321,6 +401,7 @@ model User {
   appFeatureFlagsUpdated  AppFeatureFlags[]    @relation("AppFeatureFlagsUpdater")
   channelCoverageUpdated  ChannelCoverageConfig[] @relation("ChannelCoverageConfigUpdater")
   expenseTravelPoliciesUpdated ExpenseTravelPolicy[] @relation("ExpenseTravelPolicyUpdater")
+  expenseApprovalFlowsUpdated  ExpenseApprovalFlow[] @relation("ExpenseApprovalFlowUpdater")
   salesCheckIns           SalesCheckIn[]       @relation("SalesCheckInUser")
   weeklyAssignmentsCreated SalesWeeklyAssignment[] @relation("WeeklyAssignmentCreator")
   weeklyAssignmentsAssigned SalesWeeklyAssignment[] @relation("WeeklyAssignmentAssignee")
@@ -332,6 +413,7 @@ model User {
   entityOperationLogs        EntityOperationLog[]
   appNotificationsReceived   AppNotificationReceipt[]
   expenseClaimsSubmitted     ExpenseClaim[]           @relation("ExpenseClaimApplicant")
+  expenseClaimsAsBeneficiary ExpenseClaim[]           @relation("ExpenseClaimBeneficiary")
   expenseClaimsToApprove     ExpenseClaim[]           @relation("ExpenseClaimManager")
   expenseApprovalsActed      ExpenseApproval[]        @relation("ExpenseApprovalActor")
   expensePayoutsRecorded     ExpensePayout[]          @relation("ExpensePayoutRecorder")
@@ -398,14 +480,49 @@ model PersonnelMonthlyCostAdjustment {
   baseSalary             Decimal?
   /** 社保公司承担（元/月） */
   socialSecurityCompany  Decimal?
-  /** 公积金公司承担（元/月） */
+  /** 公积金公司承担（元/月）；工资表无公司列时可由个人扣缴近似 */
   housingFundCompany     Decimal?
-  /** 相对本月固定成本的增减（元，可为负）；绩效与其他手工调整 */
+  /** 相对本月固定成本的增减（元，可为负）；= 奖金+绩效+加减工资 */
   adjustmentAmount       Decimal  @default(0)
-  /** 按假种规则汇总的请假扣款（元，≥0）；关账时可覆盖 */
+  /** 扣罚（元，≥0，不含请假扣款） */
+  penaltyAmount          Decimal  @default(0)
+  /** 按假种规则汇总的请假扣款（元，≥0）；可与工资条病假/事假扣除对齐 */
   leaveDeductionAmount   Decimal  @default(0)
+  /** 复制来源月（自动带入草稿时） */
+  copiedFromYear         Int?
+  copiedFromMonth        Int?
+  /** 复制时的构成快照 JSON */
+  copiedSnapshot         String?
+  /** 相对来源月的增减说明，如「基本工资增加了 500」 */
+  changeSummary          String?
   /** 关账时锁定的个人实际出勤天数 */
   attendanceDays         Int?
+
+  // ─── 完整工资条明细（方案 C；不直接进项目人天公式）───
+  /** 发放主体：北京 / 上海 / 未拆分 */
+  payrollEntity          String?
+  /** 司龄（年） */
+  seniorityYears         Decimal?
+  bonus                  Decimal?
+  performancePay         Decimal?
+  wageAdjust             Decimal?
+  sickLeaveDays          Decimal?
+  sickLeaveDeduction     Decimal?
+  personalLeaveDays      Decimal?
+  personalLeaveDeduction Decimal?
+  /** 应付工资（税前应发） */
+  payableWage            Decimal?
+  pensionPersonal        Decimal?
+  medicalPersonal        Decimal?
+  unemploymentPersonal   Decimal?
+  /** 扣社保合计（个人） */
+  socialSecurityPersonal Decimal?
+  /** 扣公积金（个人） */
+  housingFundPersonal    Decimal?
+  incomeTax              Decimal?
+  /** 税后实发工资 */
+  netPay                 Decimal?
+
   notes                  String?
   /** 行政确认保存时间；为空则不参与项目人力成本核算 */
   confirmedAt            DateTime?
@@ -417,6 +534,63 @@ model PersonnelMonthlyCostAdjustment {
   @@unique([userId, year, month])
   @@index([userId, year, month])
   @@index([confirmedAt])
+}
+
+enum PersonnelHrDocumentKind {
+  ID_CARD
+  CERTIFICATE
+  EMPLOYMENT_CONTRACT
+  NDA
+}
+
+model PersonnelHrProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  hiredAt            DateTime?
+  idNumber           String?
+  idExpiresAt        DateTime?
+  emergencyName      String?
+  emergencyPhone     String?
+  address            String?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PersonnelHrDocument {
+  id         String                  @id @default(cuid())
+  userId     String
+  kind       PersonnelHrDocumentKind
+  title      String
+  issuedAt   DateTime?
+  expiresAt  DateTime?
+  notes      String?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  user  User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files PersonnelHrDocumentFile[]
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+}
+
+model PersonnelHrDocumentFile {
+  id           String   @id @default(cuid())
+  documentId   String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  document   PersonnelHrDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy User                @relation("PersonnelHrDocumentUploader", fields: [uploadedById], references: [id])
+
+  @@index([documentId])
 }
 
 // ─── CRM: Customer ───────────────────────────────────────
@@ -452,6 +626,7 @@ model Customer {
   salesTasks         SalesTask[]
   salesCosts         SalesCost[]        @relation("BusinessExpenseCustomer")
   presalesAssignments PresalesAssignment[]
+  presalesRequests    PresalesRequest[]
 
   relationsFrom CustomerRelation[] @relation("CustomerFrom")
   relationsTo   CustomerRelation[] @relation("CustomerTo")
@@ -467,6 +642,7 @@ model Customer {
   coverageProvinces CustomerCoverageProvince[]
   expenseTrips      ExpenseTrip[]
   expenseInvoices   ExpenseInvoice[]
+  expenseClaimItems ExpenseClaimItem[]
 }
 
 /** 渠道客户覆盖的省区（总公司档案 + 多省覆盖，用于按省统计，不打地图锚点） */
@@ -547,14 +723,39 @@ model Contact {
   email       String?
   role        String      @default("OTHER")
   isPrimary   Boolean     @default(false)
+  /** 非负责人代建为待确认；正式档案仅 CONFIRMED */
+  confirmStatus         FollowUpConfirmStatus @default(CONFIRMED)
+  confirmedAt           DateTime?
+  confirmedById         String?
+  confirmRejectReason   String?
+  createdById           String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy        User?      @relation("ContactCreator", fields: [createdById], references: [id])
+  confirmedBy      User?      @relation("ContactConfirmer", fields: [confirmedById], references: [id])
   followUps        FollowUp[]
   followUpLinks    FollowUpContact[]
   checkIns         SalesCheckIn[]
   contractsAsSign  Contract[] @relation("ContractSignContact")
+  responsibleProvinces ContactResponsibleProvince[]
+
+  @@index([confirmStatus, createdAt])
+  @@index([customerId, confirmStatus])
+}
+
+/** 渠道联系人负责的省区（可多选、可空；拜访时可选该联系人，不必选省） */
+model ContactResponsibleProvince {
+  contactId String
+  /** 归一化短省名，如「江苏」 */
+  province  String
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, province])
+  @@index([province])
 }
 
 // ─── CRM: Follow-up & Face Visit ─────────────────────────
@@ -574,6 +775,11 @@ model FollowUp {
   suggestedGrade        String?
   gradeApplied          Boolean        @default(false)
   opportunityId         String?
+  /** 正式入库：本人/管理直接 CONFIRMED；非本人录入 PENDING_MANAGER */
+  confirmStatus         FollowUpConfirmStatus @default(CONFIRMED)
+  confirmedAt           DateTime?
+  confirmedById         String?
+  confirmRejectReason   String?
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
@@ -581,6 +787,7 @@ model FollowUp {
   contact        Contact?         @relation(fields: [contactId], references: [id])
   linkedContacts FollowUpContact[]
   user           User             @relation(fields: [userId], references: [id])
+  confirmedBy    User?            @relation("FollowUpConfirmer", fields: [confirmedById], references: [id])
   opportunity    Opportunity?     @relation(fields: [opportunityId], references: [id])
   linkedOpportunities FollowUpOpportunity[]
   salesTask      SalesTask?
@@ -588,6 +795,9 @@ model FollowUp {
   salesDailyLog  SalesDailyLog?   @relation(fields: [salesDailyLogId], references: [id])
   salesDailyLogId String?
   weeklyAssignment SalesWeeklyAssignment?
+
+  @@index([confirmStatus, createdAt])
+  @@index([customerId, confirmStatus, followUpAt])
 }
 
 model FollowUpContact {
@@ -632,11 +842,19 @@ model Opportunity {
   abandonReason     OpportunityAbandonReason?
   abandonNote       String?
   notes             String?
+  /** 非负责人在他人客户下建商机：待管理确认 */
+  confirmStatus         FollowUpConfirmStatus @default(CONFIRMED)
+  confirmedAt           DateTime?
+  confirmedById         String?
+  confirmRejectReason   String?
+  createdById           String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   customer   Customer?               @relation(fields: [customerId], references: [id])
   owner      User                    @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  createdBy  User?                   @relation("OpportunityCreator", fields: [createdById], references: [id])
+  confirmedBy User?                  @relation("OpportunityConfirmer", fields: [confirmedById], references: [id])
   parties    OpportunityParty[]
   contracts  Contract[]
   stageLogs  OpportunityStageLog[]
@@ -652,6 +870,8 @@ model Opportunity {
   @@index([status])
   @@index([stage])
   @@index([grade])
+  @@index([confirmStatus, createdAt])
+  @@index([customerId, confirmStatus])
 }
 
 /** 商机额外关联客户（渠道/第三方等；主要客户用 Opportunity.customerId） */
@@ -1038,6 +1258,11 @@ model Project {
   costs          ProjectCost[]
   staffAllocations ProjectStaffAllocation[]
   expenseInvoices ExpenseInvoice[]
+  expenseClaims   ExpenseClaim[]
+  expenseClaimItems ExpenseClaimItem[]
+  memos          ProjectMemo[]
+  acceptances    ProjectAcceptance[]
+  changeRequests ProjectChangeRequest[]
 }
 
 model ProjectPhase {
@@ -1074,6 +1299,8 @@ model ProjectTask {
   status             ProjectTaskStatus @default(NOT_STARTED)
   plannedStartAt     DateTime
   plannedEndAt       DateTime
+  /// 完成进度 0–100；空则按状态推导
+  progressPercent    Int?
   /// 实际完成时间（计划区间已全部落在过去时可填）
   actualCompletedAt  DateTime?
   /// 任务取消/作废备注
@@ -1087,17 +1314,54 @@ model ProjectTask {
   project  Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   phase    ProjectPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   assignee User?        @relation("ProjectTaskAssignee", fields: [assigneeId], references: [id])
+  memoLinks ProjectMemoTask[]
 
   @@index([projectId, phaseId, sortOrder])
   @@index([phaseId, sortOrder])
 }
 
+model ProjectMemo {
+  id           String   @id @default(cuid())
+  projectId    String
+  content      String
+  /** FEEDBACK | MEETING | OTHER（历史 RISK 已迁到 isRisk） */
+  category     String   @default("OTHER")
+  /** 独立风险点标记，可与分类共存 */
+  isRisk       Boolean  @default(false)
+  /** OPEN 待跟进 | DONE 已处理 */
+  followStatus String   @default("OPEN")
+  authorId     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author    User              @relation("ProjectMemoAuthor", fields: [authorId], references: [id])
+  taskLinks ProjectMemoTask[]
+
+  @@index([projectId, createdAt])
+  @@index([followStatus, createdAt])
+  @@index([isRisk, createdAt])
+}
+
+model ProjectMemoTask {
+  memoId String
+  taskId String
+
+  memo ProjectMemo @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  task ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([memoId, taskId])
+  @@index([taskId])
+}
+
 model ProjectMember {
-  id               String @id @default(cuid())
+  id               String              @id @default(cuid())
   projectId        String
   userId           String
   memberRole       PersonnelType
-  isProjectManager Boolean @default(false)
+  isProjectManager Boolean             @default(false)
+  /** 打开项目页权限：NONE 不可进，VIEW 只读，EDIT 可改计划等 */
+  accessLevel      ProjectMemberAccess @default(NONE)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id])
@@ -1496,6 +1760,83 @@ model PresalesAssignment {
   assignedBy   User     @relation("PresalesAssigner", fields: [assignedById], references: [id])
 }
 
+/// 售前支援申请：销售发起 → 项目管理员审批 → 通过后写 PresalesAssignment
+model PresalesRequest {
+  id                       String                @id @default(cuid())
+  salesUserId              String
+  customerId               String
+  preferredPresalesUserId  String?
+  startDate                DateTime
+  endDate                  DateTime?
+  notes                    String?
+  status                   PresalesRequestStatus @default(PENDING)
+  reviewedById             String?
+  reviewedAt               DateTime?
+  rejectReason             String?
+  createdAt                DateTime              @default(now())
+
+  salesUser             User      @relation("PresalesRequestSales", fields: [salesUserId], references: [id])
+  customer              Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  preferredPresalesUser User?     @relation("PresalesRequestPreferred", fields: [preferredPresalesUserId], references: [id])
+  reviewedBy            User?     @relation("PresalesRequestReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([customerId])
+  @@index([salesUserId])
+}
+
+/// 销售月报归档快照（按自然月唯一）
+model SalesMonthlyReport {
+  id            String   @id @default(cuid())
+  year          Int
+  month         Int
+  snapshot      Json
+  confirmedAt   DateTime @default(now())
+  confirmedById String
+
+  confirmedBy User @relation("SalesMonthlyReportConfirmer", fields: [confirmedById], references: [id])
+
+  @@unique([year, month])
+  @@index([year, month])
+}
+
+/// 项目验收记录
+model ProjectAcceptance {
+  id          String                   @id @default(cuid())
+  projectId   String
+  acceptedAt  DateTime
+  result      ProjectAcceptanceResult
+  notes       String?
+  createdById String
+  createdAt   DateTime                 @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ProjectAcceptanceCreator", fields: [createdById], references: [id])
+
+  @@index([projectId])
+}
+
+/// 项目变更请求
+model ProjectChangeRequest {
+  id          String                     @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  impact      String?
+  status      ProjectChangeRequestStatus @default(DRAFT)
+  requesterId String
+  reviewerId  String?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requester User    @relation("ProjectChangeRequester", fields: [requesterId], references: [id])
+  reviewer  User?   @relation("ProjectChangeReviewer", fields: [reviewerId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+}
+
 // ─── System Config ───────────────────────────────────────
 
 model FieldDefinition {
@@ -1513,15 +1854,17 @@ model FieldDefinition {
   @@unique([entityType, fieldKey])
 }
 
-model PermissionRule {
-  id       String  @id @default(cuid())
-  role     UserRole
-  resource String
-  action   String
-  scope    String
-  enabled  Boolean @default(true)
+model RolePermission {
+  id            String   @id @default(cuid())
+  role          UserRole
+  permissionKey String
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  @@unique([role, resource, action])
+  @@unique([role, permissionKey])
+  @@index([role])
+  @@index([permissionKey])
 }
 
 model ConfigOption {
@@ -1543,7 +1886,7 @@ model AiAgentConfig {
   provider              String   @default("kimi")
   apiKey                String?
   apiBase               String   @default("https://api.moonshot.cn/v1")
-  model                 String   @default("kimi-k2.5")
+  model                 String   @default("kimi-k2.6")
   maxSteps              Int      @default(5)
   thinkingEnabled       Boolean  @default(false)
   salesLogSystemPrompt  String?
@@ -1573,7 +1916,7 @@ model AmapConfig {
 /** 系统功能开关（后台可配；环境变量可强制覆盖） */
 model AppFeatureFlags {
   id                          String   @id @default("default")
-  expenseReimbursementEnabled Boolean  @default(false)
+  expenseReimbursementEnabled Boolean  @default(true)
   updatedAt                   DateTime @updatedAt
   updatedById                 String?
 
@@ -1645,11 +1988,21 @@ model AppNotificationReceipt {
 model ExpenseClaim {
   id              String             @id @default(cuid())
   applicantId     String
+  /** 实际报销人（可与填报人不同） */
+  beneficiaryId   String
   managerId       String?
+  /** 默认归属项目（项目页发起时预填） */
+  projectId       String?
+  /** 报销单类型：差旅 / 费用 / 项目 */
+  claimKind       ExpenseClaimKind   @default(FEE)
   title           String
   description     String?
   status          ExpenseClaimStatus @default(DRAFT)
   totalAmount     Decimal            @default(0)
+  /** 提交时审批流程快照 { steps: [...] }，在途单不受后续改配置影响 */
+  flowSnapshot    Json?
+  /** 当前待审步骤下标（对应 flowSnapshot.steps） */
+  currentStepIndex Int?
   submittedAt     DateTime?
   rejectedAt      DateTime?
   rejectReason    String?
@@ -1657,37 +2010,73 @@ model ExpenseClaim {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
-  applicant  User              @relation("ExpenseClaimApplicant", fields: [applicantId], references: [id])
-  manager    User?             @relation("ExpenseClaimManager", fields: [managerId], references: [id])
-  trips      ExpenseTrip[]
-  invoices   ExpenseInvoice[]
-  approvals  ExpenseApproval[]
-  payout     ExpensePayout?
+  applicant   User               @relation("ExpenseClaimApplicant", fields: [applicantId], references: [id])
+  beneficiary User               @relation("ExpenseClaimBeneficiary", fields: [beneficiaryId], references: [id])
+  manager     User?              @relation("ExpenseClaimManager", fields: [managerId], references: [id])
+  project     Project?           @relation(fields: [projectId], references: [id])
+  items       ExpenseClaimItem[]
+  trips       ExpenseTrip[]
+  invoices    ExpenseInvoice[]
+  approvals   ExpenseApproval[]
+  payout      ExpensePayout?
 
   @@index([applicantId, status, updatedAt])
+  @@index([beneficiaryId, status, updatedAt])
   @@index([managerId, status])
+  @@index([projectId, status])
+  @@index([claimKind, status, updatedAt])
   @@index([status, submittedAt])
+  @@index([status, currentStepIndex])
+}
+
+/** 报销单内的差旅/其他项目 */
+model ExpenseClaimItem {
+  id         String          @id @default(cuid())
+  claimId    String
+  kind       ExpenseItemKind
+  sortOrder  Int             @default(0)
+  title      String?
+  /** 费用细类，与差旅并列：lodging / transport / office 等 */
+  categoryKey String?
+  customerId String?
+  projectId  String?
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  claim    ExpenseClaim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  customer Customer?        @relation(fields: [customerId], references: [id])
+  project  Project?         @relation(fields: [projectId], references: [id])
+  trips    ExpenseTrip[]
+  invoices ExpenseInvoice[]
+
+  @@index([claimId, sortOrder])
+  @@index([projectId])
 }
 
 model ExpenseTrip {
   id          String   @id @default(cuid())
   claimId     String
+  /** 可选：历史挂在费用行上；差旅单行程挂 claim 级时可为空 */
+  itemId      String?
   /** 段序号，支持同一报销单多段行程 */
   sortOrder   Int      @default(0)
   startDate   DateTime
   endDate     DateTime
-  /** 出发城市 */
+  /** 出发地 */
   fromCity    String?
-  /** 目的地/住宿城市（用于匹配住宿标准） */
+  /** 到达地点（亦用于匹配住宿标准） */
   city        String?
   customerId  String?
   description String?
   createdAt   DateTime @default(now())
 
-  claim    ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
-  customer Customer?    @relation(fields: [customerId], references: [id])
+  claim    ExpenseClaim      @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  item     ExpenseClaimItem? @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  customer Customer?         @relation(fields: [customerId], references: [id])
 
   @@index([claimId, sortOrder])
+  @@index([itemId, sortOrder])
 }
 
 /** 城市线级：用于差旅住宿标准 */
@@ -1709,6 +2098,45 @@ model ExpenseTravelPolicy {
   updatedBy User? @relation("ExpenseTravelPolicyUpdater", fields: [updatedById], references: [id])
 }
 
+/** 报销审批流程（系统配置单例；步骤可配角色或固定人） */
+model ExpenseApprovalFlow {
+  id          String   @id @default("default")
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  updatedBy User?                     @relation("ExpenseApprovalFlowUpdater", fields: [updatedById], references: [id])
+  steps     ExpenseApprovalFlowStep[]
+}
+
+model ExpenseApprovalFlowStep {
+  id            String             @id @default(cuid())
+  flowId        String             @default("default")
+  sortOrder     Int                @default(0)
+  name          String
+  /** 旧版类型，保留兼容；新逻辑读 applicant / approver 字段 */
+  kind          ExpenseFlowStepKind @default(ROLE_POOL)
+  /** 旧字段，迁移后可空 */
+  roleKeys      Json?
+  userIds       Json?
+  roleMappings  Json?
+  /** 节点内多条映射 [{ id, applicants, approvers }] */
+  mappings     Json?
+  /** 旧扁平字段，仅兼容迁移 */
+  applicantRoles Json?
+  applicantUserIds Json?
+  approverRoles Json?
+  approverUserIds Json?
+  approverSkip  Boolean            @default(false)
+  /** 该步通过后打款结案 */
+  isFinalPayout Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  flow ExpenseApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, sortOrder])
+}
+
 /** 城市 → 线级映射；未收录城市按三线及以下处理 */
 model ExpenseCityTierMapping {
   id        String          @id @default(cuid())
@@ -1725,6 +2153,7 @@ model ExpenseCityTierMapping {
 model ExpenseInvoice {
   id                 String             @id @default(cuid())
   claimId            String
+  itemId             String
   fileName           String
   mimeType           String
   sizeBytes          Int
@@ -1732,6 +2161,8 @@ model ExpenseInvoice {
   /** 费用类别建议键，如 customer_visit / project_site / admin_office */
   categoryKey        String?
   amount             Decimal?
+  /** OCR 识别金额；用户可改 amount，不一致时对照此值 */
+  ocrAmount          Decimal?
   taxRatePercent     Decimal?
   invoiceNo          String?
   invoicedAt         DateTime?
@@ -1751,14 +2182,16 @@ model ExpenseInvoice {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  claim            ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
-  customer         Customer?    @relation(fields: [customerId], references: [id])
-  presalesUser     User?        @relation("ExpenseInvoicePresales", fields: [presalesUserId], references: [id])
-  project          Project?     @relation(fields: [projectId], references: [id])
-  postedSalesCost  SalesCost?   @relation("ExpenseInvoicePostedSalesCost", fields: [postedSalesCostId], references: [id])
-  postedProjectCost ProjectCost? @relation("ExpenseInvoicePostedProjectCost", fields: [postedProjectCostId], references: [id])
+  claim            ExpenseClaim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  item             ExpenseClaimItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  customer         Customer?        @relation(fields: [customerId], references: [id])
+  presalesUser     User?            @relation("ExpenseInvoicePresales", fields: [presalesUserId], references: [id])
+  project          Project?         @relation(fields: [projectId], references: [id])
+  postedSalesCost  SalesCost?       @relation("ExpenseInvoicePostedSalesCost", fields: [postedSalesCostId], references: [id])
+  postedProjectCost ProjectCost?    @relation("ExpenseInvoicePostedProjectCost", fields: [postedProjectCostId], references: [id])
 
   @@index([claimId, sortOrder])
+  @@index([itemId, sortOrder])
 }
 
 model ExpenseApproval {

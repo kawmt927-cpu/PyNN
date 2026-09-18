@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { SelectField } from "@/components/ui/select-field";
 import { CustomerGradeSelect } from "@/components/customers/customer-grade-select";
 import { CustomerTagSelect } from "@/components/customers/customer-tag-select";
-import { CoverageProvincesField } from "@/components/customers/coverage-provinces-field";
 import { AssistantOwnersField } from "@/components/customers/assistant-owners-field";
 import type { CustomerTagDefinition } from "@/lib/customers/tags";
 import { CUSTOMER_CATEGORY_LABELS, HOSPITAL_LEVEL_LABELS } from "@/lib/permissions";
@@ -23,6 +22,7 @@ import {
   type UserFacingActionError,
 } from "@/lib/action-result";
 import { ActionErrorDisplay } from "@/components/ui/action-error-display";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import type { CustomerCategory, HospitalLevel } from "@prisma/client";
 import {
   categoryLocksToDirectCustomer,
@@ -53,9 +53,8 @@ type CustomerFormValues = {
   customerType: string | null;
   customerGrade: string | null;
   channelKind: string | null;
-  /** 全国性渠道才可勾选覆盖省份 */
+  /** 全国性渠道：覆盖省以联系人负责省为准 */
   nationwideChannel?: boolean;
-  coverageProvinces?: string[];
   notes: string | null;
   ownerId: string | null;
   assistantOwnerIds?: string[];
@@ -79,6 +78,10 @@ type Props = {
   channelKindOptions?: ConfigOptionItem[];
   tagOptions: CustomerTagDefinition[];
   initialTagValues?: string[];
+  /** 仅管理员/销管可勾选全国性渠道 */
+  canEditNationwideChannel?: boolean;
+  /** 已有联系人负责省区数量；取消全国性时需二次确认 */
+  contactResponsibleProvinceCount?: number;
 };
 
 const categoryOptions = Object.entries(CUSTOMER_CATEGORY_LABELS).map(([value, label]) => ({
@@ -124,17 +127,20 @@ export function CustomerForm({
   channelKindOptions = [],
   tagOptions,
   initialTagValues = [],
+  canEditNationwideChannel = false,
+  contactResponsibleProvinceCount = 0,
 }: Props) {
   const router = useRouter();
   const isCreate = mode === "create";
   const initialCategory = initial?.category ?? "HOSPITAL";
+  const initialNationwide = Boolean(initial?.nationwideChannel);
   const [category, setCategory] = useState<CustomerCategory>(initialCategory);
   const [customerType, setCustomerType] = useState(initial?.customerType ?? "");
   const [customerGrade, setCustomerGrade] = useState(initial?.customerGrade ?? "");
   const [channelKind, setChannelKind] = useState(initial?.channelKind ?? "");
-  const [nationwideChannel, setNationwideChannel] = useState(
-    Boolean(initial?.nationwideChannel)
-  );
+  const [nationwideChannel, setNationwideChannel] = useState(initialNationwide);
+  const [confirmClearContactProvinces, setConfirmClearContactProvinces] = useState(false);
+  const [nationwideUncheckOpen, setNationwideUncheckOpen] = useState(false);
   const [name, setName] = useState(initial?.name ?? "");
   const [province, setProvince] = useState(initial?.province ?? "");
   const [city, setCity] = useState(initial?.city ?? "");
@@ -187,7 +193,7 @@ export function CustomerForm({
     setCustomerGrade("");
   }, [relationTypeLocked, directTypeValue, customerType]);
 
-  const canEnrich = isCreate && canUseCustomerKimiEnrich(category);
+  const canEnrich = canUseCustomerKimiEnrich(category);
 
   function handleKimiEnrich() {
     if (!name.trim()) {
@@ -251,60 +257,42 @@ export function CustomerForm({
 
   return (
     <form action={handleSubmit} className="max-w-2xl space-y-6">
-      {isCreate ? (
+      {canEnrich ? (
         <p className="text-sm text-muted-foreground">
-          医院/公司可一键核对官方名称，并自动填充等级、床位数与省市区地址；不会写入备注。
-          「Kimi 智能填充」仅根据当前客户名称检索，不使用表单中已填地址。
+          医院/公司须先核对官方准确全称后再保存；请先点「Kimi 智能填充」核对名称与地址（等级、床位数一并填充，不写入备注）。
+          保存时系统会再次核验，简称或不明确名称将被拒绝。
         </p>
       ) : null}
       <div className="grid gap-x-4 gap-y-5 md:grid-cols-2">
-        {isCreate ? (
-          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
-            <div className="min-w-[240px] flex-1 space-y-2">
-              <Label htmlFor="name">客户名称 *</Label>
-              <Input
-                id="name"
-                name="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </div>
-            {canEnrich ? (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={enriching || !name.trim()}
-                onClick={handleKimiEnrich}
-              >
-                {enriching ? "Kimi 检索中…" : "Kimi 智能填充"}
-              </Button>
-            ) : null}
-          </div>
-        ) : convertingToCompany ? (
-          <div className={FORM_FULL_WIDTH}>
-            <Label htmlFor="name">公司名称 *</Label>
+        <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+          <div className="min-w-[240px] flex-1 space-y-2">
+            <Label htmlFor="name">
+              {convertingToCompany ? "公司名称 *" : "客户名称 *"}
+            </Label>
             <Input
               id="name"
               name="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="请填写公司全称，勿沿用个人姓名"
+              placeholder={
+                convertingToCompany
+                  ? "请填写公司全称，勿沿用个人姓名"
+                  : undefined
+              }
               required
             />
           </div>
-        ) : (
-          <div className={FORM_FULL_WIDTH}>
-            <Label htmlFor="name">客户名称 *</Label>
-            <Input
-              id="name"
-              name="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          </div>
-        )}
+          {canEnrich ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={enriching || !name.trim()}
+              onClick={handleKimiEnrich}
+            >
+              {enriching ? "Kimi 检索中…" : "Kimi 智能填充"}
+            </Button>
+          ) : null}
+        </div>
 
         <div className={FORM_GRID_CELL}>
           <Label htmlFor="category" className={FORM_GRID_LABEL}>
@@ -393,6 +381,7 @@ export function CustomerForm({
             if (!isChannelCustomerType(value, typeOptions)) {
               setChannelKind("");
               setNationwideChannel(false);
+              setConfirmClearContactProvinces(false);
             }
           }}
           required
@@ -423,24 +412,52 @@ export function CustomerForm({
 
         {showChannelKind ? (
           <div className={cn(FORM_FULL_WIDTH, "space-y-3")}>
-            <label className="flex items-start gap-3 rounded-md border p-3">
-              <input
-                type="checkbox"
-                name="nationwideChannel"
-                value="1"
-                checked={nationwideChannel}
-                onChange={(e) => setNationwideChannel(e.target.checked)}
-                className="mt-0.5 size-3.5 rounded border"
-              />
-              <span className="space-y-1">
-                <span className="block text-sm font-medium leading-snug">全国性渠道</span>
-                <span className="block text-xs text-muted-foreground">
-                  仅全国性渠道可勾选覆盖省份；普通渠道按档案所在省/市统计，无需勾选，避免误操作。
+            {canEditNationwideChannel ? (
+              <label className="flex items-start gap-3 rounded-md border p-3">
+                <input
+                  type="checkbox"
+                  name="nationwideChannel"
+                  value="1"
+                  checked={nationwideChannel}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    if (
+                      !next &&
+                      initialNationwide &&
+                      contactResponsibleProvinceCount > 0
+                    ) {
+                      setNationwideUncheckOpen(true);
+                      return;
+                    }
+                    setNationwideChannel(next);
+                    if (next) setConfirmClearContactProvinces(false);
+                  }}
+                  className="mt-0.5 size-3.5 rounded border"
+                />
+                  <span className="space-y-1">
+                  <span className="block text-sm font-medium leading-snug">全国性渠道</span>
+                  <span className="block text-xs text-muted-foreground">
+                    仅管理员/销管可设置。勾选后公司本身不按总部划省；按联系人「负责省区」计入各省与 KPI。
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            ) : (
+              <div className="rounded-md border p-3 space-y-1">
+                <p className="text-sm font-medium leading-snug">
+                  全国性渠道：{nationwideChannel ? "是" : "否"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  仅管理员或销售管理员可设置该标记；普通销售不可更改。
+                </p>
+              </div>
+            )}
+            {confirmClearContactProvinces ? (
+              <input type="hidden" name="confirmClearContactProvinces" value="1" />
+            ) : null}
             {nationwideChannel ? (
-              <CoverageProvincesField defaultValue={initial?.coverageProvinces ?? []} />
+              <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                请在下方联系人中标注「负责省区」。同一公司同一省多名联系人不重复计。
+              </p>
             ) : null}
           </div>
         ) : null}
@@ -587,14 +604,16 @@ export function CustomerForm({
           </>
         )}
 
-        <div className={FORM_FULL_WIDTH}>
-          <Label htmlFor="existingSystem">现有系统</Label>
-          <Input
-            id="existingSystem"
-            name="existingSystem"
-            defaultValue={initial?.existingSystem ?? ""}
-          />
-        </div>
+        {!showChannelKind ? (
+          <div className={FORM_FULL_WIDTH}>
+            <Label htmlFor="existingSystem">现有系统</Label>
+            <Input
+              id="existingSystem"
+              name="existingSystem"
+              defaultValue={initial?.existingSystem ?? ""}
+            />
+          </div>
+        ) : null}
 
         {showOwnerSelect && (
           <SelectField
@@ -649,6 +668,18 @@ export function CustomerForm({
               : submitLabel}
         </Button>
       </div>
+      <ConfirmDestructiveDialog
+        open={nationwideUncheckOpen}
+        title="取消全国性渠道"
+        message={`当前有 ${contactResponsibleProvinceCount} 位联系人标注了负责省区。取消全国性渠道后，这些负责省区将被清空，且无法再为联系人设置负责省区。确定继续？`}
+        confirmLabel="确认取消"
+        onCancel={() => setNationwideUncheckOpen(false)}
+        onConfirm={() => {
+          setNationwideChannel(false);
+          setConfirmClearContactProvinces(true);
+          setNationwideUncheckOpen(false);
+        }}
+      />
     </form>
   );
 }

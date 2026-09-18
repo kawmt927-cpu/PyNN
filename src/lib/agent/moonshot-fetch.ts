@@ -1,11 +1,11 @@
 import type { FetchFunction } from "@ai-sdk/provider-utils";
 
-/** Kimi K2 系列默认开启 thinking，OpenAI 兼容层不解析 reasoning_content 会导致空回复 */
+/** Kimi 新一代模型默认开启 thinking；OpenAI 兼容层不解析 reasoning_content 会导致空回复 */
 export function isKimiThinkingModel(model: string): boolean {
-  return /kimi-k2/i.test(model);
+  return /^kimi-k/i.test(model.trim());
 }
 
-/** Kimi K2.5 等模型仅允许 temperature=0.6 */
+/** Kimi thinking 模型建议 temperature=0.6 */
 export function getKimiModelStreamSettings(model: string): {
   temperature?: number;
 } {

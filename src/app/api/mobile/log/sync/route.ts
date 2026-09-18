@@ -9,6 +9,7 @@ import {
   syncDailyLogConversation,
   type ConversationMessage,
 } from "@/lib/sales-log/daily-log";
+import { parsePendingCheckInLocation } from "@/lib/sales-log/auto-daily-log-check-in-on-submit";
 
 const SYNC_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
 
@@ -57,18 +58,34 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json();
-  const messages = (body.messages ?? []) as ConversationMessage[];
   const logDate = parseLogDateParam(
     typeof body.date === "string" ? body.date : undefined
   );
+
+  if (body.clear === true) {
+    const log = await syncDailyLogConversation(session.user.id, [], logDate);
+    const fresh = await getDailyLogForUser(session.user.id, logDate);
+    return Response.json({
+      dailyLogId: log.id,
+      status: fresh?.status ?? log.status,
+      submittedAt: fresh?.submittedAt ?? null,
+      date: body.date ?? null,
+      cleared: true,
+    });
+  }
+
+  const messages = (body.messages ?? []) as ConversationMessage[];
   const sanitized = messages
     .filter((m) => m.content?.trim() && m.role !== "system")
     .map((m) => ({ role: m.role, content: m.content.trim() }));
 
+  const pendingCheckInLocation = parsePendingCheckInLocation(body.location);
+
   const log = await syncDailyLogConversation(
     session.user.id,
     sanitized,
-    logDate
+    logDate,
+    pendingCheckInLocation ? { pendingCheckInLocation } : undefined
   );
   // 再读一次，拿到 Agent 可能刚写入的 status
   const fresh = await getDailyLogForUser(session.user.id, logDate);

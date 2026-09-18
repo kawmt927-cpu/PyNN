@@ -1,10 +1,13 @@
-import { Prisma, UserRole } from "@prisma/client";
+import { FollowUpConfirmStatus, Prisma, UserRole } from "@prisma/client";
 import { hasPendingWeeklyAssignmentForCustomer } from "@/lib/today-work/weekly-assignments";
 import { prisma } from "@/lib/prisma";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 
 export type CustomerAccessOptions = {
   /** 销售被指派该客户的待完成周任务时，允许查看跟进页（不可录入） */
   allowAssignedWeeklyTask?: boolean;
+  /** 录入往来：允许加载任意已有客户（非负责人写入为待确认） */
+  allowFollowUpOnAnyCustomer?: boolean;
 };
 
 export type CustomerResponsibleShape = {
@@ -22,7 +25,16 @@ export const customerDetailInclude = {
     },
     orderBy: { createdAt: "asc" as const },
   },
-  contacts: { orderBy: [{ isPrimary: "desc" as const }, { updatedAt: "desc" as const }] },
+  contacts: {
+    where: { confirmStatus: FollowUpConfirmStatus.CONFIRMED },
+    orderBy: [{ isPrimary: "desc" as const }, { updatedAt: "desc" as const }],
+    include: {
+      responsibleProvinces: {
+        select: { province: true },
+        orderBy: { province: "asc" as const },
+      },
+    },
+  },
   relationsFrom: {
     include: {
       relatedCustomer: {
@@ -39,12 +51,12 @@ export const customerDetailInclude = {
   },
   tags: { select: { tagValue: true } },
   coverageProvinces: { select: { province: true }, orderBy: { province: "asc" as const } },
-};
+} satisfies Prisma.CustomerInclude;
 
 export type CustomerListView = "mine" | "pool" | "all";
 
 export function canManageCustomerOwner(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "customers.manage");
 }
 
 /** 可作为客户负责人 / 协助负责人的角色（含管理员） */
@@ -146,6 +158,7 @@ export async function getCustomerForUser(
   if (canManageCustomerOwner(role)) return customer;
 
   if (role === "SALES") {
+    if (options?.allowFollowUpOnAnyCustomer) return customer;
     if (customer.ownerId === null) return customer;
     if (isCustomerResponsible(userId, customer)) return customer;
     if (
@@ -165,6 +178,8 @@ export async function assertCustomerFollowUpWriteAccess(
   userId: string,
   customer: CustomerResponsibleShape
 ) {
+  // 销售可对任意客户提交往来；非负责人由上层标记 PENDING_MANAGER
+  if (role === "SALES" || role === "SALES_MANAGER" || role === "ADMIN") return;
   if (!canEditCustomerFollowUp(role, userId, customer)) {
     throw new Error("无权为该客户录入往来");
   }

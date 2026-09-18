@@ -38,9 +38,14 @@ export default async function EditContractPage({ params, searchParams }: Props) 
         orderBy: { productName: "asc" },
         include: {
           externalInstallments: { orderBy: { periodNumber: "asc" } },
+          externalPayoutRecords: { select: { id: true } },
         },
       },
       installments: { orderBy: { periodNumber: "asc" } },
+      deposits: {
+        orderBy: { paidOutAt: "asc" },
+        include: { recoveries: { select: { id: true } } },
+      },
     },
   });
 
@@ -112,6 +117,7 @@ export default async function EditContractPage({ params, searchParams }: Props) 
           title: contract.title,
           totalAmount: Number(contract.totalAmount),
           signingType: contract.signingType,
+          businessType: contract.businessType,
           signCustomerId: contract.signCustomerId,
           signCustomerName: contract.signCustomer.name,
           endUserCustomerId: contract.endUserCustomerId,
@@ -125,25 +131,47 @@ export default async function EditContractPage({ params, searchParams }: Props) 
           signedAt: contract.signedAt?.toISOString(),
           effectiveAt: contract.effectiveAt?.toISOString(),
           expiresAt: contract.expiresAt?.toISOString(),
+          maintenanceStartAt: contract.maintenanceStartAt?.toISOString(),
+          maintenanceEndAt: contract.maintenanceEndAt?.toISOString(),
+          maintenanceTotalAmount:
+            contract.maintenanceTotalAmount != null
+              ? Number(contract.maintenanceTotalAmount)
+              : null,
+          annualMaintenanceAmount:
+            contract.annualMaintenanceAmount != null
+              ? Number(contract.annualMaintenanceAmount)
+              : null,
           notes: contract.notes ?? undefined,
-          products: contract.products.map((row) => ({
-            productServiceId: row.productServiceId,
-            productName: row.productName,
-            description: row.description,
-            costAmount: Number(row.costAmount || row.actualCostPrice),
-            costType: row.costType,
-            externalInstallments: row.externalInstallments.map((item) => ({
-              periodNumber: item.periodNumber,
-              amount: Number(item.amount),
-              condition: item.condition,
-              dueAt: item.dueAt?.toISOString(),
+          products: contract.products
+            .filter((row) => !row.voidedAt)
+            .map((row) => ({
+              id: row.id,
+              hasPayouts: row.externalPayoutRecords.length > 0,
+              productServiceId: row.productServiceId,
+              productName: row.productName,
+              description: row.description,
+              costAmount: Number(row.costAmount || row.actualCostPrice),
+              costType: row.costType,
+              externalInstallments: row.externalInstallments.map((item) => ({
+                periodNumber: item.periodNumber,
+                amount: Number(item.amount),
+                condition: item.condition,
+                dueAt: item.dueAt?.toISOString(),
+              })),
             })),
-          })),
           installments: contract.installments.map((row) => ({
             periodNumber: row.periodNumber,
             amount: Number(row.amount),
             condition: row.condition,
             dueAt: row.dueAt?.toISOString(),
+          })),
+          deposits: contract.deposits.map((row) => ({
+            id: row.id,
+            hasRecoveries: row.recoveries.length > 0,
+            amount: Number(row.amount),
+            paidOutAt: row.paidOutAt.toISOString(),
+            recoverCondition: row.recoverCondition,
+            notes: row.notes,
           })),
         }}
         submitLabel="保存修改"

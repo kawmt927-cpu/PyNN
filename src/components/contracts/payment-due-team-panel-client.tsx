@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   PAYMENT_DUE_FILTERS,
   paymentCollectionAssignTitle,
+  paymentCollectionAssignTitlesForItem,
   type PaymentDueFilterValue,
   type PaymentDueItem,
 } from "@/lib/contracts/payment-due";
@@ -17,6 +18,7 @@ import { CustomerNameLink } from "@/components/customers/customer-name-link";
 import { CreateWeeklyAssignmentDialog } from "@/components/plans-tasks/create-weekly-assignment-dialog";
 import { cn } from "@/lib/utils";
 import { withPreservedMainScroll } from "@/lib/ui/preserve-main-scroll";
+import { ScrollChain, ScrollChainList } from "@/components/ui/scroll-chain";
 
 type SalesUser = { id: string; name: string };
 
@@ -29,6 +31,7 @@ type Props = {
     count: number;
     overdueCount: number;
   }>;
+  windowCounts: Record<"30" | "90" | "180", number>;
   returnPath: string;
   salesUsers: SalesUser[];
   baseSearchParams?: Record<string, string | undefined>;
@@ -53,20 +56,30 @@ function buildTodayWorkHref(
 }
 
 function collectionAssignDescription(row: PaymentDueItem) {
+  const periodLabel =
+    row.periodNumbers.length > 1
+      ? `第 ${row.periodNumbers.join("、")} 期`
+      : `第 ${row.periodNumber} 期`;
   return [
     `客户：${row.customerName}`,
     `计划到期 ${format(row.dueAt, "yyyy-MM-dd")}`,
-    `待收 ${formatAmount(row.remainingAmount)}`,
+    `${periodLabel} · 待收 ${formatAmount(row.remainingAmount)}`,
     row.contractNo ? `合同编号 ${row.contractNo}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
 }
 
+function periodLabel(row: PaymentDueItem) {
+  if (row.periodNumbers.length <= 1) return `第 ${row.periodNumber} 期`;
+  return `第 ${row.periodNumbers.join("、")} 期（${row.periodNumbers.length} 期）`;
+}
+
 export function PaymentDueTeamPanelClient({
   filter,
   items,
   byOwner,
+  windowCounts,
   returnPath,
   salesUsers,
   baseSearchParams = {},
@@ -91,69 +104,96 @@ export function PaymentDueTeamPanelClient({
       <div className="flex shrink-0 flex-wrap gap-2">
         {PAYMENT_DUE_FILTERS.map((option) => {
           const active = option.value === filter;
+          const isOverdueTab = option.value === "overdue";
+          const badgeCount =
+            option.value === "30" || option.value === "90" || option.value === "180"
+              ? windowCounts[option.value]
+              : 0;
           return (
             <button
               key={option.value}
               type="button"
               onClick={() => selectFilter(option.value)}
               className={cn(
-                "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-input bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                "relative rounded-full border px-3 py-1.5 text-sm transition-colors",
+                isOverdueTab
+                  ? active
+                    ? "border-orange-500 bg-orange-500 text-white"
+                    : "border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200 dark:hover:bg-orange-950/70"
+                  : active
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-input bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
               )}
             >
               {option.label}
+              {!isOverdueTab && badgeCount > 0 ? (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground">
+                  {badgeCount > 99 ? "99+" : badgeCount}
+                </span>
+              ) : null}
             </button>
           );
         })}
       </div>
 
-      {byOwner.length > 0 ? (
-        <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {byOwner.map((owner) => (
-            <div key={owner.ownerId} className="rounded-lg border bg-muted/30 p-3 text-sm">
-              <p className="font-medium">{owner.ownerName}</p>
-              <p className="mt-1 text-muted-foreground">
-                {isOverdueFilter
-                  ? `逾期 ${owner.count} 期`
-                  : `${filterMeta?.label ?? ""} ${owner.count} 期`}
-                {!isOverdueFilter && owner.overdueCount > 0
-                  ? ` · 含逾期 ${owner.overdueCount}`
-                  : ""}
-              </p>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="space-y-3">
-        <h3
-          className={cn(
-            "shrink-0 text-sm font-medium",
-            isOverdueFilter
-              ? "text-red-700 dark:text-red-400"
-              : "text-amber-800 dark:text-amber-300"
+      {/* 固定高度：切换标签时不撑高/缩短整页，内部自行滚动 */}
+      <div className="flex h-[34rem] flex-col gap-3">
+        <ScrollChain className="grid max-h-[7.5rem] shrink-0 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+          {byOwner.length > 0 ? (
+            byOwner.map((owner) => (
+              <div key={owner.ownerId} className="rounded-lg border bg-muted/30 p-3 text-sm">
+                <p className="font-medium">{owner.ownerName}</p>
+                <p className="mt-1 text-muted-foreground">
+                  {isOverdueFilter
+                    ? `逾期 ${owner.count} 份合同`
+                    : `${filterMeta?.label ?? ""} ${owner.count} 期`}
+                  {!isOverdueFilter && owner.overdueCount > 0
+                    ? ` · 含逾期 ${owner.overdueCount}`
+                    : ""}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="col-span-full text-sm text-muted-foreground">当前筛选下暂无负责人汇总。</p>
           )}
-        >
-          {isOverdueFilter ? "逾期回款" : `${filterMeta?.label ?? ""}内待收`}
-          <span className="ml-2 font-normal text-muted-foreground">({items.length})</span>
-        </h3>
-        {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">当前筛选下暂无回款计划。</p>
-        ) : (
-          <ul className="h-[calc(8*6.75rem)] space-y-2 overflow-y-auto pr-1">
-            {items.map((row) => {
+        </ScrollChain>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <h3
+            className={cn(
+              "shrink-0 text-sm font-medium",
+              isOverdueFilter
+                ? "text-orange-700 dark:text-orange-400"
+                : "text-primary"
+            )}
+          >
+            {isOverdueFilter ? "逾期回款" : `${filterMeta?.label ?? ""}内待收`}
+            <span className="ml-2 font-normal text-muted-foreground">
+              ({items.length}
+              {isOverdueFilter ? " 份合同" : " 期"})
+            </span>
+          </h3>
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">当前筛选下暂无回款计划。</p>
+          ) : (
+            <ScrollChainList className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+              {items.map((row) => {
               const remaining = getRemainingTimeInfo(row.dueAt, now);
               const assignTitle = paymentCollectionAssignTitle(row);
-              const alreadyAssigned = assignedSet.has(assignTitle);
+              const alreadyAssigned = paymentCollectionAssignTitlesForItem(row).some(
+                (title) => assignedSet.has(title)
+              );
               return (
                 <li
-                  key={row.installmentId}
+                  key={
+                    row.installmentIds.length > 1
+                      ? `${row.contractId}-merged`
+                      : row.installmentId
+                  }
                   className={cn(
                     "flex min-h-[6.25rem] flex-wrap items-start justify-between gap-2 rounded-md border p-3",
                     row.overdue
-                      ? "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20"
+                      ? "border-orange-200 bg-orange-50/50 dark:border-orange-900 dark:bg-orange-950/20"
                       : "bg-card"
                   )}
                 >
@@ -174,10 +214,11 @@ export function PaymentDueTeamPanelClient({
                         returnTo={returnPath}
                         className="font-normal"
                       />{" "}
-                      · 第 {row.periodNumber} 期 · 待收 {formatAmount(row.remainingAmount)}
+                      · {periodLabel(row)} · 待收 {formatAmount(row.remainingAmount)}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      计划到期 {format(row.dueAt, "yyyy-MM-dd")}
+                      {row.periodNumbers.length > 1 ? "最早计划到期" : "计划到期"}{" "}
+                      {format(row.dueAt, "yyyy-MM-dd")}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
@@ -214,8 +255,9 @@ export function PaymentDueTeamPanelClient({
                 </li>
               );
             })}
-          </ul>
-        )}
+          </ScrollChainList>
+          )}
+        </div>
       </div>
     </div>
   );

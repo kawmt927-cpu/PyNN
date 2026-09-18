@@ -29,7 +29,9 @@ export async function POST(req: Request) {
     return Response.json({
       id: customer.id,
       name: customer.name,
+      customerType: customer.customerType,
       customerGrade: customer.customerGrade,
+      nationwideChannel: customer.nationwideChannel,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

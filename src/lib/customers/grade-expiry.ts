@@ -99,15 +99,9 @@ export async function getCustomerGradeFollowUpSchedule(input: {
   return { intervalDays, lastInteractionAt, dueAt };
 }
 
+/** 等级逾期待跟进仅主负责人；与统一待跟进口径一致 */
 function customerOwnerFilter(role: UserRole, userId: string) {
-  return role === "SALES"
-    ? {
-        OR: [
-          { ownerId: userId },
-          { assistantOwners: { some: { userId } } },
-        ],
-      }
-    : {};
+  return role === "SALES" ? { ownerId: userId } : {};
 }
 
 async function getLastInteractionMap(customerIds: string[]): Promise<Map<string, Date>> {
@@ -116,7 +110,7 @@ async function getLastInteractionMap(customerIds: string[]): Promise<Map<string,
   const [customerFollowUps, opportunityFollowUps, customers] = await Promise.all([
     prisma.followUp.groupBy({
       by: ["customerId"],
-      where: { customerId: { in: customerIds } },
+      where: { customerId: { in: customerIds }, confirmStatus: "CONFIRMED" },
       _max: { followUpAt: true },
     }),
     prisma.opportunityFollowUp.findMany({
@@ -299,7 +293,7 @@ export async function getLastInteractionBefore(
 ): Promise<Date | null> {
   const [customerFollowUp, opportunityFollowUp, customer] = await Promise.all([
     prisma.followUp.findFirst({
-      where: { customerId, followUpAt: { lt: before } },
+      where: { customerId, followUpAt: { lt: before }, confirmStatus: "CONFIRMED" },
       orderBy: { followUpAt: "desc" },
       select: { followUpAt: true },
     }),

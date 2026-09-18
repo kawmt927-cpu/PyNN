@@ -17,9 +17,15 @@ export type ExpenseApprovalListItem = {
 type Props = {
   items: ExpenseApprovalListItem[];
   emptyText?: string;
+  /** 详情链接前缀，默认 PC `/expenses`；手机端传 `/mobile/expenses` */
+  hrefPrefix?: string;
 };
 
-export function ExpenseApprovalList({ items, emptyText = "暂无记录" }: Props) {
+export function ExpenseApprovalList({
+  items,
+  emptyText = "暂无记录",
+  hrefPrefix = "/expenses",
+}: Props) {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyText}</p>;
   }
@@ -47,7 +53,10 @@ export function ExpenseApprovalList({ items, emptyText = "暂无记录" }: Props
             {row.manager ? ` · 上级 ${row.manager.name}` : ""}
           </p>
           <div className="mt-3">
-            <Link href={`/expenses/${row.id}`} className="text-primary hover:underline">
+            <Link
+              href={`${hrefPrefix}/${row.id}`}
+              className="text-primary hover:underline"
+            >
               打开报销单
             </Link>
           </div>

@@ -1,43 +1,106 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ALL_AUTHED_ROLES, EXPENSE_CLAIM_STATUS_LABELS, canFinanceExpense } from "@/lib/expenses/labels";
+import {
+  ALL_AUTHED_ROLES,
+  EXPENSE_CLAIM_KIND_LABELS,
+  formatExpenseClaimListStatus,
+} from "@/lib/expenses/labels";
 import { CreateExpenseClaimButton } from "@/components/expenses/create-expense-claim-button";
+import { ExpenseClaimTable } from "@/components/expenses/expense-claim-list";
 import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
-import { format } from "date-fns";
+import {
+  getClaimCurrentStep,
+  userCanActOnFlowStep,
+} from "@/lib/expenses/approval-flow";
+import { hasPermission } from "@/lib/rbac/has-permission";
 
 export default async function ExpensesPage() {
   if (!isExpenseFeatureEnabled()) {
     redirect("/today-work");
   }
   const session = await requireRole([...ALL_AUTHED_ROLES]);
+  if (!(await hasPermission(session.user.role, "expense.access"))) {
+    redirect("/today-work");
+  }
   const userId = session.user.id;
-  const finance = canFinanceExpense(session.user.role);
 
-  const [mine, toApprove, toPay] = await Promise.all([
+  const [mine, toApprove, pendingHrAll, pendingPayAll, projects] = await Promise.all([
     prisma.expenseClaim.findMany({
-      where: { applicantId: userId },
+      where: {
+        OR: [{ applicantId: userId }, { beneficiaryId: userId }],
+      },
       orderBy: { updatedAt: "desc" },
-      take: 50,
-      include: { manager: { select: { name: true } } },
+      take: 80,
+      include: {
+        manager: { select: { name: true } },
+        beneficiary: { select: { name: true } },
+        applicant: { select: { name: true } },
+        project: { select: { name: true } },
+      },
     }),
     prisma.expenseClaim.findMany({
       where: { managerId: userId, status: "PENDING_MANAGER" },
       orderBy: { submittedAt: "asc" },
       take: 50,
-      include: { applicant: { select: { name: true } } },
+      include: {
+        applicant: { select: { name: true } },
+        manager: { select: { name: true } },
+      },
     }),
-    finance
-      ? prisma.expenseClaim.findMany({
-          where: { status: "PENDING_PAYOUT" },
-          orderBy: { submittedAt: "asc" },
-          take: 50,
-          include: { applicant: { select: { name: true } }, manager: { select: { name: true } } },
-        })
-      : Promise.resolve([]),
+    prisma.expenseClaim.findMany({
+      where: { status: "PENDING_HR" },
+      orderBy: { submittedAt: "asc" },
+      take: 80,
+      include: { applicant: { select: { name: true } }, manager: { select: { name: true } } },
+    }),
+    prisma.expenseClaim.findMany({
+      where: { status: "PENDING_PAYOUT" },
+      orderBy: { submittedAt: "asc" },
+      take: 80,
+      include: { applicant: { select: { name: true } }, manager: { select: { name: true } } },
+    }),
+    prisma.project.findMany({
+      select: { id: true, name: true },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+    }),
   ]);
+
+  const toHr = pendingHrAll.filter((c) => {
+    const step = getClaimCurrentStep(c);
+    return (
+      step &&
+      userCanActOnFlowStep({
+        step,
+        user: session.user,
+        managerId: c.managerId,
+      })
+    );
+  });
+  const toPay = pendingPayAll.filter((c) => {
+    const step = getClaimCurrentStep(c);
+    return (
+      step &&
+      userCanActOnFlowStep({
+        step,
+        user: session.user,
+        managerId: c.managerId,
+      })
+    );
+  });
+
+  const mineRows = mine.map((c) => ({
+    id: c.id,
+    kindLabel: EXPENSE_CLAIM_KIND_LABELS[c.claimKind] ?? c.claimKind,
+    title: c.title,
+    amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
+    statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
+    at: c.updatedAt,
+    canDelete:
+      c.applicantId === userId && (c.status === "DRAFT" || c.status === "REJECTED"),
+  }));
 
   return (
     <div className="space-y-6">
@@ -45,10 +108,10 @@ export default async function ExpensesPage() {
         <div>
           <h1 className="text-2xl font-semibold">报销</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            上传电子发票 AI 识别，上级按发票指定销售/项目成本归属，财务打款结案。
+            审批流程可在「系统配置 → 报销设置」中调整；提交时锁定流程快照。草稿可删除，指定上级审批时填写成本归属。
           </p>
         </div>
-        <CreateExpenseClaimButton />
+        <CreateExpenseClaimButton projects={projects} />
       </div>
 
       {toApprove.length > 0 ? (
@@ -57,12 +120,12 @@ export default async function ExpensesPage() {
             <CardTitle>待我审批（{toApprove.length}）</CardTitle>
           </CardHeader>
           <CardContent>
-            <ClaimTable
+            <ExpenseClaimTable
               rows={toApprove.map((c) => ({
                 id: c.id,
                 title: c.title,
-                meta: `${c.applicant.name} · ¥${Number(c.totalAmount).toFixed(2)}`,
-                status: c.status,
+                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
+                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
                 at: c.submittedAt,
               }))}
             />
@@ -70,18 +133,37 @@ export default async function ExpensesPage() {
         </Card>
       ) : null}
 
-      {finance && toPay.length > 0 ? (
+      {toHr.length > 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>待打款（{toPay.length}）</CardTitle>
+            <CardTitle>待我确认（{toHr.length}）</CardTitle>
           </CardHeader>
           <CardContent>
-            <ClaimTable
+            <ExpenseClaimTable
+              rows={toHr.map((c) => ({
+                id: c.id,
+                title: c.title,
+                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
+                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
+                at: c.submittedAt,
+              }))}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {toPay.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>待我打款（{toPay.length}）</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ExpenseClaimTable
               rows={toPay.map((c) => ({
                 id: c.id,
                 title: c.title,
-                meta: `${c.applicant.name} · 上级 ${c.manager?.name ?? "—"} · ¥${Number(c.totalAmount).toFixed(2)}`,
-                status: c.status,
+                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
+                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
                 at: c.submittedAt,
               }))}
             />
@@ -91,65 +173,16 @@ export default async function ExpensesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>我的报销</CardTitle>
+          <CardTitle>我的报销（{mineRows.length}）</CardTitle>
         </CardHeader>
         <CardContent>
-          {mine.length === 0 ? (
-            <p className="text-sm text-muted-foreground">暂无报销单，点击「新建报销」开始。</p>
+          {mineRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无报销单，点击右上角新建。</p>
           ) : (
-            <ClaimTable
-              rows={mine.map((c) => ({
-                id: c.id,
-                title: c.title,
-                meta: `审批人 ${c.manager?.name ?? "—"} · ¥${Number(c.totalAmount).toFixed(2)}`,
-                status: c.status,
-                at: c.updatedAt,
-              }))}
-            />
+            <ExpenseClaimTable rows={mineRows} />
           )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function ClaimTable({
-  rows,
-}: {
-  rows: Array<{ id: string; title: string; meta: string; status: string; at: Date | null }>;
-}) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-muted-foreground">
-            <th className="pb-2 pr-4">标题</th>
-            <th className="pb-2 pr-4">信息</th>
-            <th className="pb-2 pr-4">状态</th>
-            <th className="pb-2 pr-4">时间</th>
-            <th className="pb-2">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b">
-              <td className="py-3 pr-4 font-medium">{row.title}</td>
-              <td className="py-3 pr-4 text-muted-foreground">{row.meta}</td>
-              <td className="py-3 pr-4">
-                {EXPENSE_CLAIM_STATUS_LABELS[row.status] ?? row.status}
-              </td>
-              <td className="py-3 pr-4 whitespace-nowrap">
-                {row.at ? format(row.at, "yyyy-MM-dd HH:mm") : "—"}
-              </td>
-              <td className="py-3">
-                <Link href={`/expenses/${row.id}`} className="text-primary hover:underline">
-                  打开
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

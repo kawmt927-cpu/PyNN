@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -11,6 +12,7 @@ import {
   resolveDailyReportSubjectUser,
 } from "@/lib/sales-log/daily-report-day";
 import { DailyReportHistoryQuery } from "@/components/daily-reports/daily-report-history-query";
+import { Button } from "@/components/ui/button";
 
 type Props = {
   searchParams: Promise<{
@@ -69,13 +71,18 @@ export default async function DailyReportsPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">日报管理</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {showAll
-            ? "先选择销售，再选日期查看打卡、往来与日报；日历圆点仅标记该销售有记录的日子。"
-            : "按日查看本人的打卡、往来与日报。"}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">日报管理</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {showAll
+              ? "先选择销售，再选日期查看打卡、往来与日报；日历圆点仅标记该销售有记录的日子。"
+              : "按日查看本人的打卡、往来与日报。"}
+          </p>
+        </div>
+        <Button asChild variant="outline">
+          <Link href="/daily-reports/search">工作检索</Link>
+        </Button>
       </div>
 
       <DailyReportHistoryQuery

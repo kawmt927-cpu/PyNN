@@ -161,7 +161,7 @@ async function main() {
     province: "浙江省",
     city: "杭州市",
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   pass("create-customer-sales", customer.id);
 
   await expectThrow(
@@ -175,7 +175,7 @@ async function main() {
         customerType,
         customerGrade: "STAR_1",
         tagValues: [],
-      }),
+      }, { skipOrgNameVerification: true }),
     "重名"
   );
 
@@ -189,7 +189,7 @@ async function main() {
         customerType: "",
         customerGrade: "STAR_1",
         tagValues: [],
-      }),
+      }, { skipOrgNameVerification: true }),
     "缺关系类型"
   );
 
@@ -201,7 +201,7 @@ async function main() {
     customerGrade: "NONE",
     ownerId: null,
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const poolRow = await prisma.customer.findUnique({ where: { id: pool.id } });
   if (poolRow?.ownerId == null) pass("create-pool");
   else fail("create-pool", `owner=${poolRow?.ownerId}`);
@@ -364,7 +364,7 @@ async function main() {
     customerGrade: "STAR_1",
     ownerId: manager.id,
     tagValues: [],
-  });
+  }, { skipOrgNameVerification: true });
   const mgrContact = await prisma.contact.create({
     data: { customerId: mgrCust.id, name: `${TAG} 联系人` },
   });

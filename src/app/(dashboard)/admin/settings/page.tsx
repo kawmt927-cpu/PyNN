@@ -14,7 +14,7 @@ import { getAllConfigOptionsGrouped } from "@/lib/config-options";
 import {
   canAccessSettingsTab,
   getAccessibleConfigModules,
-  getAccessibleSettingsTabs,
+  getAccessibleSettingsTabsAsync,
   requireSettingsPageAccess,
   resolveAccessibleConfigField,
   SETTINGS_TAB,
@@ -24,6 +24,10 @@ import { AiAgentSettings } from "@/components/admin/ai-agent-settings";
 import { SalesLogPromptSettings } from "@/components/admin/sales-log-prompt-settings";
 import { AmapSettings } from "@/components/admin/amap-settings";
 import { ExpenseTravelSettings } from "@/components/admin/expense-travel-settings";
+import { ExpenseFeeCategorySettings } from "@/components/admin/expense-fee-category-settings";
+import { ExpenseApprovalFlowSettings } from "@/components/admin/expense-approval-flow-settings";
+import { FeatureFlagsSettings } from "@/components/admin/feature-flags-settings";
+import { RolePermissionsSettings } from "@/components/admin/role-permissions-settings";
 import { UnbindWecomButton } from "@/components/admin/unbind-wecom-button";
 import { KpiSettings } from "@/components/admin/kpi-settings";
 import { ProductTemplatesPanel } from "@/components/admin/product-templates-panel";
@@ -35,18 +39,35 @@ import { SettingsTabs } from "@/components/admin/settings-tabs";
 import { getAiAgentConfigForAdmin, getSalesLogPromptSettings } from "@/lib/agent/config";
 import { getAmapConfigForAdmin } from "@/lib/amap/config";
 import { getExpenseTravelPolicyForAdmin } from "@/lib/expenses/travel-policy";
+import { listExpenseFeeCategories } from "@/lib/expenses/fee-categories";
+import { getExpenseApprovalFlowForAdmin } from "@/lib/expenses/approval-flow";
+import { getExpenseFeatureFlagForAdmin } from "@/lib/expenses/feature-flag";
+import {
+  countUsersByRole,
+  ensureDefaultRolePermissions,
+  getRolePermissionMap,
+  listUsersByRole,
+} from "@/lib/rbac/has-permission";
+import { ALL_ROLES } from "@/lib/rbac/permission-keys";
+import type { UserRole } from "@prisma/client";
 
 type Props = {
-  searchParams: Promise<{ tab?: string; module?: string; field?: string; model?: string }>;
+  searchParams: Promise<{ tab?: string; module?: string; field?: string; model?: string; role?: string }>;
 };
 
 export default async function AdminSettingsPage({ searchParams }: Props) {
   const session = await requireSettingsPageAccess();
   const role = session.user.role;
-  const { tab: rawTab, module: rawModule, field: rawField, model: rawModel } = await searchParams;
+  const {
+    tab: rawTab,
+    module: rawModule,
+    field: rawField,
+    model: rawModel,
+    role: rawRole,
+  } = await searchParams;
 
   const accessibleModules = getAccessibleConfigModules(role);
-  const accessibleTabs = getAccessibleSettingsTabs(role);
+  const accessibleTabs = await getAccessibleSettingsTabsAsync(role);
 
   if (accessibleTabs.length === 0) redirect("/");
 
@@ -63,6 +84,13 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
   const projectModelParam =
     activeTab === SETTINGS_TAB.PROJECT_MODELS ? rawModel?.trim() || null : null;
 
+  const rolesTabRole: UserRole =
+    activeTab === SETTINGS_TAB.ROLES &&
+    rawRole &&
+    (ALL_ROLES as string[]).includes(rawRole)
+      ? (rawRole as UserRole)
+      : "ADMIN";
+
   const [
     users,
     optionsByCategory,
@@ -70,10 +98,16 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     salesLogPrompt,
     amapConfig,
     expenseTravelPolicy,
+    expenseFeeCategories,
+    expenseApprovalFlow,
+    featureFlags,
     productTemplates,
     projectModels,
     projectModelDetail,
     wecomAccessRequests,
+    roleCounts,
+    rolePermissions,
+    roleMembers,
   ] = await Promise.all([
     prisma.user.findMany({
       orderBy: { name: "asc" },
@@ -85,6 +119,15 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
     role === "ADMIN" ? getAmapConfigForAdmin() : Promise.resolve(null),
     activeTab === SETTINGS_TAB.EXPENSE_TRAVEL
       ? getExpenseTravelPolicyForAdmin()
+      : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.EXPENSE_TRAVEL
+      ? listExpenseFeeCategories({ includeDisabled: true })
+      : Promise.resolve([]),
+    activeTab === SETTINGS_TAB.EXPENSE_TRAVEL
+      ? getExpenseApprovalFlowForAdmin()
+      : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.FEATURES && role === "ADMIN"
+      ? getExpenseFeatureFlagForAdmin()
       : Promise.resolve(null),
     activeTab === SETTINGS_TAB.PRODUCTS
       ? prisma.productServiceTemplate.findMany({ orderBy: { name: "asc" } })
@@ -108,6 +151,15 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
       : Promise.resolve(null),
     activeTab === SETTINGS_TAB.WECOM && role === "ADMIN"
       ? listPendingWeComAccessRequests()
+      : Promise.resolve([]),
+    activeTab === SETTINGS_TAB.ROLES
+      ? ensureDefaultRolePermissions().then(() => countUsersByRole())
+      : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.ROLES
+      ? getRolePermissionMap(rolesTabRole)
+      : Promise.resolve(null),
+    activeTab === SETTINGS_TAB.ROLES
+      ? listUsersByRole(rolesTabRole)
       : Promise.resolve([]),
   ]);
 
@@ -274,15 +326,56 @@ export default async function AdminSettingsPage({ searchParams }: Props) {
             <AmapSettings initial={amapConfig} />
           </CardContent>
         </Card>
-      ) : activeTab === SETTINGS_TAB.EXPENSE_TRAVEL && expenseTravelPolicy ? (
+      ) : activeTab === SETTINGS_TAB.FEATURES && featureFlags ? (
         <Card>
           <CardHeader>
-            <CardTitle>差旅住宿标准</CardTitle>
+            <CardTitle>功能开关</CardTitle>
           </CardHeader>
           <CardContent>
-            <ExpenseTravelSettings initial={expenseTravelPolicy} />
+            <FeatureFlagsSettings initial={featureFlags} />
           </CardContent>
         </Card>
+      ) : activeTab === SETTINGS_TAB.ROLES && roleCounts && rolePermissions ? (
+        <Card>
+          <CardContent className="pt-6">
+            <RolePermissionsSettings
+              roleCounts={roleCounts}
+              initialRole={rolesTabRole}
+              initialPermissions={rolePermissions}
+              members={roleMembers}
+            />
+          </CardContent>
+        </Card>
+      ) : activeTab === SETTINGS_TAB.EXPENSE_TRAVEL && expenseTravelPolicy ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>审批流程</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ExpenseApprovalFlowSettings
+                initialSteps={expenseApprovalFlow?.steps ?? []}
+                users={users.map((u) => ({ id: u.id, name: u.name, role: u.role }))}
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>城市划分与住宿标准</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ExpenseTravelSettings initial={expenseTravelPolicy} />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>报销费用细类</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ExpenseFeeCategorySettings initial={expenseFeeCategories} />
+            </CardContent>
+          </Card>
+        </div>
       ) : activeTab === SETTINGS_TAB.WECOM ? (
         <>
           <Card>

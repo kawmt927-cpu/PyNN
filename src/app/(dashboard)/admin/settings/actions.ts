@@ -5,6 +5,7 @@ import { UserRole } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/session";
 import {
   requireConfigCategoryManage,
   requireAiAgentSettingsAccess,
@@ -723,4 +724,103 @@ export async function removeExpenseCityTierMapping(id: string) {
   await prisma.expenseCityTierMapping.delete({ where: { id } });
   revalidatePath("/admin/settings");
   revalidatePath("/expenses");
+}
+
+export async function saveExpenseFeeCategory(formData: FormData) {
+  await requireExpenseTravelSettingsAccess();
+  const key = String(formData.get("key") ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  const label = String(formData.get("label") ?? "").trim();
+  const sortOrder = Number(String(formData.get("sortOrder") ?? "0").trim() || "0");
+  const enforceHotelCap = formData.get("enforceHotelCap") === "1";
+  if (!/^[a-z0-9_]+$/.test(key)) throw new Error("标识仅允许小写字母、数字和下划线");
+  if (!label) throw new Error("请填写名称");
+  if (!Number.isFinite(sortOrder)) throw new Error("排序无效");
+
+  await prisma.expenseFeeCategory.upsert({
+    where: { key },
+    create: {
+      key,
+      label,
+      sortOrder,
+      enforceHotelCap,
+      enabled: true,
+    },
+    update: {
+      label,
+      sortOrder,
+      enforceHotelCap,
+    },
+  });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
+}
+
+export async function setExpenseFeeCategoryEnabled(key: string, enabled: boolean) {
+  await requireExpenseTravelSettingsAccess();
+  if (!key) throw new Error("参数不完整");
+  await prisma.expenseFeeCategory.update({
+    where: { key },
+    data: { enabled },
+  });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
+}
+
+export async function saveExpenseFeatureFlag(formData: FormData) {
+  const session = await requireSession();
+  if (session.user.role !== "ADMIN") {
+    throw new Error("仅管理员可修改功能开关");
+  }
+  const {
+    getExpenseFeatureFlagForAdmin,
+    setExpenseFeatureFlag,
+  } = await import("@/lib/expenses/feature-flag");
+  const current = await getExpenseFeatureFlagForAdmin();
+  if (current.envOverride !== null) {
+    throw new Error("当前由环境变量强制控制，无法通过后台修改");
+  }
+  const enabled = formData.get("expenseReimbursementEnabled") === "1";
+  await setExpenseFeatureFlag(enabled, session.user.id);
+  revalidatePath("/admin/settings");
+  revalidatePath("/admin/ops");
+  revalidatePath("/expenses");
+  revalidatePath("/approvals");
+  revalidatePath("/hr");
+}
+
+export async function saveExpenseApprovalFlow(input: {
+  steps: unknown;
+}): Promise<{ error?: string }> {
+  const session = await requireExpenseTravelSettingsAccess();
+  const {
+    normalizeExpenseFlowSteps,
+    saveExpenseApprovalFlowSteps,
+    assertExpenseFlowActorCoverage,
+    missingSubmitterRolesInFlow,
+  } = await import("@/lib/expenses/approval-flow");
+  const normalized = normalizeExpenseFlowSteps(input.steps);
+  if (!normalized.ok) return { error: normalized.error };
+  const missingGaps = missingSubmitterRolesInFlow(normalized.steps);
+  if (missingGaps.length > 0) {
+    const { ROLE_LABELS: labels } = await import("@/lib/permissions");
+    const first = missingGaps[0]!;
+    return {
+      error: `「${first.stepName}」映射未覆盖：${first.roles
+        .map((r) => labels[r] ?? r)
+        .join("、")}。请在该节点继续添加映射直到覆盖所有人。`,
+    };
+  }
+  const coverage = await assertExpenseFlowActorCoverage(normalized.steps);
+  if (!coverage.ok) return { error: coverage.error };
+  await saveExpenseApprovalFlowSteps({
+    steps: normalized.steps,
+    updatedById: session.user.id,
+  });
+  revalidatePath("/admin/settings");
+  revalidatePath("/expenses");
+  revalidatePath("/approvals");
+  return {};
 }

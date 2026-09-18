@@ -63,31 +63,84 @@ function sameCalendarDay(a: Date, b: Date) {
 }
 
 
+/**
+ * 渠道开发口径：
+ * 1) 本月新建「普通渠道」客户，且月内至少一次往来 → 计 1（按客户）
+ * 2) 全国性渠道（负责人或协助人）本月首次挂上某联系人负责省 → 每省计 1
+ *    （同客户同省多名联系人不重复；与 1 同一客户当月不重复）
+ */
 async function countChannelDevelopment(
   userId: string,
   start: Date,
   end: Date
 ): Promise<number> {
-  const customers = await prisma.customer.findMany({
+  const counted = new Set<string>();
+
+  const newChannelCustomers = await prisma.customer.findMany({
     where: {
       ownerId: userId,
       customerType: "CHANNEL",
+      nationwideChannel: false,
       createdAt: { gte: start, lt: end },
     },
     select: { id: true },
   });
-  if (customers.length === 0) return 0;
+  if (newChannelCustomers.length > 0) {
+    const withFollowUp = await prisma.followUp.groupBy({
+      by: ["customerId"],
+      where: {
+        customerId: { in: newChannelCustomers.map((c) => c.id) },
+        followUpAt: { gte: start, lt: end },
+        confirmStatus: "CONFIRMED",
+      },
+    });
+    for (const row of withFollowUp) {
+      counted.add(`customer:${row.customerId}`);
+    }
+  }
 
-  const customerIds = customers.map((c) => c.id);
-  const withFollowUp = await prisma.followUp.groupBy({
-    by: ["customerId"],
+  const nationwideAccess = {
+    customerType: "CHANNEL" as const,
+    nationwideChannel: true,
+    OR: [{ ownerId: userId }, { assistantOwners: { some: { userId } } }],
+  };
+
+  const monthRows = await prisma.contactResponsibleProvince.findMany({
     where: {
-      customerId: { in: customerIds },
-      followUpAt: { gte: start, lt: end },
+      createdAt: { gte: start, lt: end },
+      contact: { customer: nationwideAccess },
+    },
+    select: {
+      province: true,
+      contact: { select: { customerId: true } },
     },
   });
 
-  return withFollowUp.length;
+  const pairKeys = new Map<string, { customerId: string; province: string }>();
+  for (const row of monthRows) {
+    const customerId = row.contact.customerId;
+    const key = `${customerId}:${row.province}`;
+    if (!pairKeys.has(key)) {
+      pairKeys.set(key, { customerId, province: row.province });
+    }
+  }
+
+  for (const { customerId, province } of pairKeys.values()) {
+    if (counted.has(`customer:${customerId}`)) continue;
+    const earliest = await prisma.contactResponsibleProvince.findFirst({
+      where: {
+        province,
+        contact: { customerId },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    });
+    if (!earliest) continue;
+    if (earliest.createdAt < start || earliest.createdAt >= end) continue;
+    counted.add(`province:${customerId}:${province}`);
+  }
+
+  return counted.size;
 }
 
 /** 单次阶段变更是否算「往前推进」候选（供人工核算勾选） */
@@ -189,7 +242,8 @@ async function sumPaymentCollection(userId: string, start: Date, end: Date): Pro
   return sumContractPaymentsForOwner(userId, start, end);
 }
 
-async function computeProcessCompliance(
+/** 任意区间内的日报过程合规（与月 KPI 同口径；仅考核需交日报日） */
+export async function computeProcessCompliance(
   userId: string,
   start: Date,
   end: Date,
@@ -277,6 +331,7 @@ async function countMaintenanceVisits(
       userId,
       method: FollowUpMethod.FACE_VISIT,
       followUpAt: { gte: start, lt: end },
+      confirmStatus: "CONFIRMED",
     },
     select: {
       customerId: true,

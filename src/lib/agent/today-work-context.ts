@@ -100,7 +100,8 @@ export async function buildTodayWorkContextForAgent(role: UserRole, userId: stri
   lines.push("- 销售先自述；自述后再对照本快照匹配打卡并写入。");
   lines.push("- 打卡与权限自己看本快照/工具，禁止问销售「有没有打卡」「能不能写」。");
   lines.push("- 信息清楚则直接写入；仅缺失、矛盾、无权限、建档改商机时才追问（每次一个问题）。");
-  lines.push("- 可写时不要向销售汇报负责人/协助负责人等正常事实；仅不可写时才说明需联系负责人。");
+  lines.push("- 可写档案时不要向销售汇报负责人等正常事实。");
+  lines.push("- 非本人负责：仍须 createFollowUp 记往来；勿改客户等级。");
 
   return lines.join("\n");
 }

@@ -52,7 +52,10 @@ export async function findDuplicateCustomerByName(name: string) {
   return candidates.find((row) => isSameCustomerName(row.name, trimmed)) ?? null;
 }
 
-export async function assertCustomerNameAvailable(name: string): Promise<void> {
+export async function assertCustomerNameAvailable(
+  name: string,
+  excludeId?: string
+): Promise<void> {
   const trimmed = name.trim();
   if (!trimmed) {
     throw new Error("请输入客户名称");
@@ -61,7 +64,7 @@ export async function assertCustomerNameAvailable(name: string): Promise<void> {
     throw new Error("客户名称不超过 100 字");
   }
   const duplicate = await findDuplicateCustomerByName(trimmed);
-  if (duplicate) {
+  if (duplicate && duplicate.id !== excludeId) {
     throw new Error(`客户「${duplicate.name}」已存在，请直接搜索选择`);
   }
 }

@@ -158,7 +158,13 @@ export function CustomerFieldsSection({
         value={values.customerType}
         onValueChange={(customerType) => {
           if (relationTypeLocked) return;
-          onChange({ customerType, customerGrade: "" });
+          onChange({
+            customerType,
+            customerGrade: "",
+            ...(isChannelCustomerType(customerType, typeOptions)
+              ? { existingSystem: "" }
+              : {}),
+          });
         }}
         required
         disabled={relationTypeLocked}
@@ -241,15 +247,17 @@ export function CustomerFieldsSection({
         />
       </div>
 
-      <div className="space-y-2 md:col-span-2">
-        <Label htmlFor="existingSystem">现有系统</Label>
-        <Input
-          id="existingSystem"
-          name="existingSystem"
-          value={values.existingSystem}
-          onChange={(e) => onChange({ existingSystem: e.target.value })}
-        />
-      </div>
+      {!isChannelCustomerType(values.customerType, typeOptions) ? (
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="existingSystem">现有系统</Label>
+          <Input
+            id="existingSystem"
+            name="existingSystem"
+            value={values.existingSystem}
+            onChange={(e) => onChange({ existingSystem: e.target.value })}
+          />
+        </div>
+      ) : null}
 
       {showOwnerSelect && (
         <SelectField

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useTransition } from "react";
 import {
   buildOpportunityListHref,
   EMPTY_OPPORTUNITY_LIST_FILTERS,
@@ -12,6 +13,8 @@ import type { ConfigOptionItem } from "@/lib/config-options";
 import { OpportunityMultiFilterSelect } from "@/components/opportunities/opportunity-multi-filter-select";
 import { OpportunityGradeDisplay } from "@/components/opportunities/opportunity-grade-icon";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { withPreservedMainScroll } from "@/lib/ui/preserve-main-scroll";
 
 type SalesOption = { id: string; name: string };
@@ -34,16 +37,46 @@ export function OpportunityListFilters({
   salesUsers = [],
 }: Props) {
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
 
   function applyFilters(next: OpportunityListFilters) {
     withPreservedMainScroll(() => {
-      router.replace(buildOpportunityListHref(next, sort), { scroll: false });
+      startTransition(() => {
+        router.replace(buildOpportunityListHref(next, sort), { scroll: false });
+      });
     });
   }
 
   return (
     <div className="space-y-3 border-b pb-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="opportunity-q">搜索</Label>
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = new FormData(e.currentTarget);
+              applyFilters({
+                ...filters,
+                q: String(form.get("q") ?? "").trim(),
+              });
+            }}
+          >
+            <Input
+              id="opportunity-q"
+              name="q"
+              defaultValue={filters.q}
+              key={filters.q}
+              placeholder="商机名称 / 客户"
+              className="h-10"
+              disabled={pending}
+            />
+            <Button type="submit" variant="secondary" size="sm" className="h-10 shrink-0" disabled={pending}>
+              搜索
+            </Button>
+          </form>
+        </div>
         <OpportunityMultiFilterSelect
           id="opportunity-stage"
           label="阶段"
@@ -84,6 +117,7 @@ export function OpportunityListFilters({
           type="button"
           variant="outline"
           size="sm"
+          disabled={pending}
           onClick={() => applyFilters(EMPTY_OPPORTUNITY_LIST_FILTERS)}
         >
           重置

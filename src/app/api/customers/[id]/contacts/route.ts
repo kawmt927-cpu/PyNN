@@ -2,9 +2,18 @@ import { getServerSession } from "next-auth";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
-import { getCustomerForUser, assertCustomerContentWriteAccess, canEditCustomerContent } from "@/lib/customers/access";
+import {
+  getCustomerForUser,
+  assertCustomerContentWriteAccess,
+  canEditCustomerContent,
+} from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
 import { quickContactSchema } from "@/lib/validations/sales-log";
+import {
+  canProposeCustomerContact,
+  contactSelectableWhere,
+  resolveContactConfirmStatus,
+} from "@/lib/customers/contact-confirm-status";
 import type { UserRole } from "@prisma/client";
 
 const SALES_LOG_ROLES: UserRole[] = ["SALES", "SALES_MANAGER", "ADMIN"];
@@ -19,15 +28,26 @@ export async function GET(
   }
 
   const { id } = await params;
-  const customer = await getCustomerForUser(id, session.user.role, session.user.id);
+  // 代录往来时需能读取非本人客户的联系人列表（新增仍要求可写档案或代建待审）
+  const customer = await getCustomerForUser(id, session.user.role, session.user.id, {
+    allowFollowUpOnAnyCustomer: true,
+  });
   if (!customer) {
-    return Response.json({ items: [], canWriteContent: false });
+    return Response.json({
+      items: [],
+      canWriteContent: false,
+      canProposeContact: false,
+    });
   }
 
   const canWriteContent = canEditCustomerContent(session.user.role, session.user.id, customer);
+  const canPropose = canProposeCustomerContact(session.user.role);
 
   const contacts = await prisma.contact.findMany({
-    where: { customerId: id },
+    where: {
+      customerId: id,
+      ...contactSelectableWhere(session.user.id),
+    },
     orderBy: [{ isPrimary: "desc" }, { name: "asc" }],
     select: {
       id: true,
@@ -38,10 +58,30 @@ export async function GET(
       wechat: true,
       role: true,
       isPrimary: true,
+      confirmStatus: true,
+      responsibleProvinces: {
+        select: { province: true },
+        orderBy: { province: "asc" },
+      },
     },
   });
 
-  return Response.json({ items: contacts, canWriteContent });
+  return Response.json({
+    items: contacts.map((c) => ({
+      id: c.id,
+      name: c.name,
+      title: c.title,
+      department: c.department,
+      phone: c.phone,
+      wechat: c.wechat,
+      role: c.role,
+      isPrimary: c.isPrimary,
+      confirmStatus: c.confirmStatus,
+      responsibleProvinces: c.responsibleProvinces.map((r) => r.province),
+    })),
+    canWriteContent,
+    canProposeContact: canPropose,
+  });
 }
 
 export async function POST(
@@ -54,13 +94,18 @@ export async function POST(
   }
 
   const { id: customerId } = await params;
-  const customer = await getCustomerForUser(customerId, session.user.role, session.user.id);
+  const customer = await getCustomerForUser(customerId, session.user.role, session.user.id, {
+    allowFollowUpOnAnyCustomer: true,
+  });
   if (!customer) {
     return Response.json({ error: "客户不存在或无权访问" }, { status: 404 });
   }
 
+  if (!canProposeCustomerContact(session.user.role)) {
+    return Response.json({ error: "无权新增联系人" }, { status: 403 });
+  }
+
   try {
-    await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
     const body = await req.json();
     const parsed = quickContactSchema.parse(body);
 
@@ -69,6 +114,12 @@ export async function POST(
     if (!role) {
       return Response.json({ error: "请选择角色" }, { status: 400 });
     }
+
+    const confirmStatus = resolveContactConfirmStatus({
+      role: session.user.role,
+      userId: session.user.id,
+      customer,
+    });
 
     const contact = await prisma.contact.create({
       data: {
@@ -79,13 +130,39 @@ export async function POST(
         phone: parsed.phone ?? null,
         wechat: parsed.wechat ?? null,
         role,
+        createdById: session.user.id,
+        confirmStatus,
+        confirmedAt: confirmStatus === "CONFIRMED" ? new Date() : undefined,
+        confirmedById: confirmStatus === "CONFIRMED" ? session.user.id : undefined,
       },
-      select: { id: true, name: true, title: true, phone: true, wechat: true, isPrimary: true },
+      select: {
+        id: true,
+        name: true,
+        title: true,
+        phone: true,
+        wechat: true,
+        isPrimary: true,
+        confirmStatus: true,
+      },
     });
+
+    if (confirmStatus === "PENDING_MANAGER") {
+      // 联系人随往来代录一并确认，不单独进审批队列
+    }
 
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/today-work");
-    return Response.json({ id: contact.id, name: contact.name, contact });
+    revalidatePath("/approvals");
+    return Response.json({
+      id: contact.id,
+      name: contact.name,
+      contact,
+      confirmStatus: contact.confirmStatus,
+      message:
+        confirmStatus === "PENDING_MANAGER"
+          ? `已添加联系人「${contact.name}」（待确认，将随本次往来一并提交审核）`
+          : undefined,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: error.errors[0]?.message ?? "表单无效" }, { status: 400 });
@@ -121,11 +198,11 @@ export async function PATCH(
     }
 
     const existing = await prisma.contact.findFirst({
-      where: { id: contactId, customerId },
+      where: { id: contactId, customerId, confirmStatus: "CONFIRMED" },
       select: { id: true },
     });
     if (!existing) {
-      return Response.json({ error: "联系人不存在" }, { status: 404 });
+      return Response.json({ error: "联系人不存在或尚未确认入库" }, { status: 404 });
     }
 
     const parsed = quickContactSchema.parse(body);

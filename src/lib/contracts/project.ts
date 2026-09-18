@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
+import { syncContractStatusFromProject } from "@/lib/contracts/sync-contract-status-from-project";
 
+/** 程序化建项（可选）；UI 主路径为 /projects/new?contractId= */
 export async function createProjectForContract(contractId: string) {
   const contract = await prisma.contract.findUnique({
     where: { id: contractId },
@@ -12,7 +14,7 @@ export async function createProjectForContract(contractId: string) {
   });
   if (!contract || contract.project) return contract?.project ?? null;
 
-  return prisma.project.create({
+  const project = await prisma.project.create({
     data: {
       name: contract.title,
       customerId: contract.endUserCustomerId,
@@ -20,4 +22,6 @@ export async function createProjectForContract(contractId: string) {
       status: "PENDING_START",
     },
   });
+  await syncContractStatusFromProject(project.id);
+  return project;
 }

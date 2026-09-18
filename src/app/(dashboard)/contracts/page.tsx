@@ -8,8 +8,17 @@ import { getContractPaymentDueBadgeMap } from "@/lib/contracts/payment-due";
 import { sumPaymentRecords } from "@/lib/contracts/payment-waterfall";
 import { SIGNED_CONTRACT_STATUSES, canEditContract } from "@/lib/contracts/access";
 import {
+  analyzeContractCollectible,
+  listWindowCollectibleInstallments,
+  matchesCollectFilter,
+  matchesDueWithinFilter,
+  matchesSettlementFilter,
+  type CollectiblePeriod,
+} from "@/lib/contracts/contract-collectible";
+import {
   buildContractListFilterWhere,
   buildContractListHref,
+  DUE_WITHIN_FILTER_OPTIONS,
   hasActiveContractListFilters,
   parseContractListFilters,
 } from "@/lib/contracts/list-filters";
@@ -22,6 +31,7 @@ import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { ContractPaymentDueStatusBadge } from "@/components/contracts/contract-payment-due-badge";
 import { ContractListFilters } from "@/components/contracts/contract-list-filters";
 import { CustomerNameLink } from "@/components/customers/customer-name-link";
+import { ContractProjectLinkBadge } from "@/components/contracts/contract-project-link-badge";
 
 function formatPaymentRatio(paid: number, total: number) {
   if (total <= 0) return "—";
@@ -33,6 +43,9 @@ type Props = {
     q?: string;
     status?: string;
     ownerId?: string;
+    settlement?: string;
+    collect?: string;
+    dueWithin?: string;
   }>;
 };
 
@@ -48,8 +61,9 @@ export default async function ContractsPage({ searchParams }: Props) {
   const showOwnerFilter =
     session.user.role === "SALES_MANAGER" || session.user.role === "ADMIN";
   const canManageContracts = canEditContract(session.user.role);
+  const now = new Date();
 
-  const [contracts, salesUsers] = await Promise.all([
+  const [rawContracts, salesUsers] = await Promise.all([
     prisma.contract.findMany({
       where,
       orderBy: { updatedAt: "desc" },
@@ -60,9 +74,22 @@ export default async function ContractsPage({ searchParams }: Props) {
         opportunity: { select: { id: true, title: true } },
         project: { select: { id: true } },
         paymentRecords: { select: { amount: true } },
-        products: { select: { costAmount: true, actualCostPrice: true, costType: true } },
+        installments: {
+          orderBy: { periodNumber: "asc" },
+          select: {
+            id: true,
+            periodNumber: true,
+            amount: true,
+            condition: true,
+            dueAt: true,
+            collectionStatus: true,
+          },
+        },
+        products: {
+          select: { costAmount: true, actualCostPrice: true, costType: true, voidedAt: true },
+        },
       },
-      take: 200,
+      take: 500,
     }),
     showOwnerFilter
       ? listSalesUsersForSelect({
@@ -72,6 +99,23 @@ export default async function ContractsPage({ searchParams }: Props) {
       : Promise.resolve([]),
   ]);
 
+  type ListRow = (typeof rawContracts)[number] & {
+    analysis: ReturnType<typeof analyzeContractCollectible>;
+    windowPeriods: CollectiblePeriod[];
+  };
+
+  const contracts: ListRow[] = [];
+  for (const contract of rawContracts) {
+    const analysis = analyzeContractCollectible(contract, now);
+    if (!matchesSettlementFilter(analysis, filters.settlement)) continue;
+    if (!matchesCollectFilter(analysis, filters.collect)) continue;
+    if (!matchesDueWithinFilter(analysis, filters.dueWithin, now)) continue;
+    const windowPeriods = filters.dueWithin
+      ? listWindowCollectibleInstallments(analysis, filters.dueWithin, now)
+      : [];
+    contracts.push({ ...contract, analysis, windowPeriods });
+  }
+
   const dueBadgeMap = await getContractPaymentDueBadgeMap(contracts.map((c) => c.id));
   const listPath = buildContractListHref(filters);
   const filtersActive = hasActiveContractListFilters(filters);
@@ -80,16 +124,38 @@ export default async function ContractsPage({ searchParams }: Props) {
     SIGNED_CONTRACT_STATUSES.includes(c.status)
   );
   const signedAmount = signedContracts.reduce((sum, c) => sum + Number(c.totalAmount), 0);
-  const signedPaid = signedContracts.reduce(
-    (sum, c) => sum + sumPaymentRecords(c.paymentRecords),
+  // 可催口径待回款（扣坏账）
+  const signedUnpaid = signedContracts.reduce(
+    (sum, c) => sum + c.analysis.collectibleRemaining,
     0
   );
-  const signedUnpaid = Math.max(0, signedAmount - signedPaid);
+
+  const windowSummary = filters.dueWithin
+    ? (() => {
+        let amount = 0;
+        let periods = 0;
+        for (const row of contracts) {
+          for (const period of row.windowPeriods) {
+            amount += period.remainingAmount;
+            periods += 1;
+          }
+        }
+        return {
+          amount: Math.round(amount * 100) / 100,
+          periods,
+          contracts: contracts.filter((c) => c.windowPeriods.length > 0).length,
+          label:
+            DUE_WITHIN_FILTER_OPTIONS.find((o) => o.value === filters.dueWithin)?.label ??
+            "计划窗口",
+        };
+      })()
+    : null;
+
   const signedCostSelf = signedContracts.reduce(
     (sum, c) =>
       sum +
       c.products
-        .filter((row) => row.costType !== "EXTERNAL")
+        .filter((row) => !row.voidedAt && row.costType !== "EXTERNAL")
         .reduce(
           (productSum, row) => productSum + Number(row.costAmount || row.actualCostPrice || 0),
           0
@@ -100,14 +166,13 @@ export default async function ContractsPage({ searchParams }: Props) {
     (sum, c) =>
       sum +
       c.products
-        .filter((row) => row.costType === "EXTERNAL")
+        .filter((row) => !row.voidedAt && row.costType === "EXTERNAL")
         .reduce(
           (productSum, row) => productSum + Number(row.costAmount || row.actualCostPrice || 0),
           0
         ),
     0
   );
-  // 与合同详情一致：关联签约客户 / 最终用户的商务费用；列表汇总按客户去重，避免多合同重复累加
   const linkedCustomerIds = [
     ...new Set(
       signedContracts.flatMap((c) =>
@@ -159,7 +224,7 @@ export default async function ContractsPage({ searchParams }: Props) {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">待回款总额</p>
+            <p className="text-xs text-muted-foreground">待催余额合计</p>
             <p className="mt-1 text-xl font-semibold">{formatAmount(signedUnpaid)}</p>
           </CardContent>
         </Card>
@@ -191,9 +256,24 @@ export default async function ContractsPage({ searchParams }: Props) {
         </Card>
       </div>
       <p className="text-xs text-muted-foreground">
-        汇总基于当前列表筛选结果中的已签署合同
+        汇总基于当前列表筛选结果中的已签署合同；待催余额不含坏账
         {session.user.role === "SALES" ? "（仅本人负责）" : "（可见范围内）"}。
+        默认仅显示未完成合同。
       </p>
+
+      {windowSummary ? (
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm font-medium">
+              计划窗口 · {windowSummary.label}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              可催 {formatAmount(windowSummary.amount)} · {windowSummary.periods} 期 ·{" "}
+              {windowSummary.contracts} 份合同
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -231,11 +311,15 @@ export default async function ContractsPage({ searchParams }: Props) {
               const ratio = formatPaymentRatio(totalPaid, totalAmount);
               const due = dueBadgeMap.get(c.id);
               const href = withReturnTo(`/contracts/${c.id}`, listPath);
+              const projectProgressHref = withReturnTo(
+                `/contracts/${c.id}#contract-project`,
+                listPath
+              );
 
               return (
                 <li key={c.id}>
                   <Card className="transition-colors hover:border-primary/40 hover:bg-muted/30">
-                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
                       <div className="min-w-0 flex-1 space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <CardTitle className="text-base leading-snug">
@@ -246,6 +330,12 @@ export default async function ContractsPage({ searchParams }: Props) {
                           <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                             {CONTRACT_STATUS_LABELS[c.status]}
                           </span>
+                          <ContractProjectLinkBadge
+                            status={c.status}
+                            hasProject={Boolean(c.project)}
+                            href={projectProgressHref}
+                            role={session.user.role}
+                          />
                           <ContractPaymentDueStatusBadge summary={due} />
                         </div>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -282,8 +372,30 @@ export default async function ContractsPage({ searchParams }: Props) {
                               </Link>
                             </span>
                           ) : null}
-                          {c.contractNo ? <span>编号：{c.contractNo}</span> : null}
                         </div>
+                        {c.windowPeriods.length > 0 ? (
+                          <ul className="mt-1 space-y-1 border-l border-border/70 pl-3 text-xs text-muted-foreground">
+                            {c.windowPeriods.map((period) => (
+                              <li
+                                key={period.installmentId}
+                                className="flex flex-wrap items-baseline justify-between gap-2"
+                              >
+                                <span>
+                                  第 {period.periodNumber} 期
+                                  {period.dueAt
+                                    ? ` · 计划 ${period.dueAt.toISOString().slice(0, 10)}`
+                                    : ""}
+                                  {period.overdue ? " · 已逾期" : ""}
+                                  {" · "}
+                                  {period.collectionStatusLabel}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-foreground">
+                                  待收 {formatAmount(period.remainingAmount)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
                       </div>
                       <div className="shrink-0 space-y-1 text-sm sm:text-right">
                         <p>
@@ -299,6 +411,14 @@ export default async function ContractsPage({ searchParams }: Props) {
                           </span>
                           <span className="ml-1.5 font-medium">（{ratio}）</span>
                         </p>
+                        {SIGNED_CONTRACT_STATUSES.includes(c.status) ? (
+                          <p>
+                            <span className="text-muted-foreground">待催余额 </span>
+                            <span className="font-medium">
+                              {formatAmount(c.analysis.collectibleRemaining)}
+                            </span>
+                          </p>
+                        ) : null}
                         <p>
                           <Link href={href} className="text-primary hover:underline">
                             查看合同

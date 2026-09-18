@@ -60,6 +60,10 @@ export const checkInFormSchema = z
     followUp: checkInFollowUpSchema.optional().nullable(),
     updateCheckInId: z.string().optional().nullable(),
     completedPendingKeys: z.array(z.string().min(1)).optional().default([]),
+    /** 指派任务：跳过完成 */
+    skipAssignmentCompletion: z.boolean().optional().default(false),
+    /** 指派任务：要完成的 assignmentId 列表 */
+    completedAssignmentIds: z.array(z.string().min(1)).optional().default([]),
   })
   .superRefine((data, ctx) => {
     const mode = normalizeCheckInMode(data.checkInMode);

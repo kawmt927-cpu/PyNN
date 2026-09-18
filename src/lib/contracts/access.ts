@@ -1,8 +1,9 @@
 import { ContractStatus, UserRole } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 
 export function canManageContractApproval(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "contracts.approve");
 }
 
 /** 销售管理 / 管理员：新建、编辑、删除合同（普通销售仅可查看本人负责的合同） */
@@ -11,12 +12,12 @@ export function canEditContract(role: UserRole) {
 }
 
 export function canRecordContractPayment(role: UserRole) {
-  return role === "SALES" || role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "contracts.payment");
 }
 
 /** 可查看合同的销售侧角色可上传/管理附件 */
 export function canManageContractAttachments(role: UserRole) {
-  return role === "SALES" || role === "SALES_MANAGER" || role === "ADMIN" || role === "PROJECT_MANAGER";
+  return hasPermissionSync(role, "contracts.attachments");
 }
 
 /** 已驳回合同：发起人（提交人/负责人）或销管可改后重提 / 删除 */

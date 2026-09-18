@@ -64,5 +64,11 @@ export function mapDesktopPathToMobile(pathname: string, search = ""): string | 
     return "/mobile/tasks";
   }
 
+  if (pathname === "/expenses" || pathname.startsWith("/expenses/")) {
+    if (pathname === "/expenses") return `/mobile/expenses${search}`;
+    const id = pathname.match(/^\/expenses\/([^/]+)\/?$/);
+    if (id) return `/mobile/expenses/${id[1]}${search}`;
+  }
+
   return null;
 }

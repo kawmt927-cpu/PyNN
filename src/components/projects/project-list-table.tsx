@@ -3,9 +3,11 @@ import { PROJECT_STATUS_LABELS } from "@/lib/projects/labels";
 import type { ProjectListRow } from "@/lib/projects/cost-summary";
 import { formatAmount } from "@/lib/opportunities/funnel";
 import { CustomerNameLink } from "@/components/customers/customer-name-link";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   items: ProjectListRow[];
+  returnTo?: string;
 };
 
 function formatPeriod(start: Date | null, end: Date | null) {
@@ -16,7 +18,7 @@ function formatPeriod(start: Date | null, end: Date | null) {
   return fmt(end!);
 }
 
-export function ProjectListTable({ items }: Props) {
+export function ProjectListTable({ items, returnTo = "/projects" }: Props) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -35,7 +37,10 @@ export function ProjectListTable({ items }: Props) {
           {items.map((item) => (
             <tr key={item.id} className="border-b">
               <td className="py-3 pr-4">
-                <Link href={`/projects/${item.id}`} className="font-medium hover:underline">
+                <Link
+                  href={withReturnTo(`/projects/${item.id}`, returnTo)}
+                  className="font-medium hover:underline"
+                >
                   {item.name}
                 </Link>
               </td>
@@ -44,6 +49,7 @@ export function ProjectListTable({ items }: Props) {
                   customerId={item.customerId}
                   name={item.customerName}
                   fallback="内部项目"
+                  returnTo={returnTo}
                 />
               </td>
               <td className="py-3 pr-4">

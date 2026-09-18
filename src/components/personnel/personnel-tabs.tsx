@@ -5,20 +5,36 @@ import { cn } from "@/lib/utils";
 
 export type PersonnelTabId = "info" | "costs";
 
-const TABS: Array<{ id: PersonnelTabId; label: string; href: string }> = [
-  { id: "info", label: "人员信息", href: "/personnel?tab=info" },
-  { id: "costs", label: "人员成本", href: "/personnel?tab=costs" },
-];
-
 type Props = {
   activeTab: PersonnelTabId;
   costsHref?: string;
+  showInfoTab?: boolean;
+  showCostsTab?: boolean;
 };
 
-export function PersonnelTabs({ activeTab, costsHref }: Props) {
+export function PersonnelTabs({
+  activeTab,
+  costsHref,
+  showInfoTab = true,
+  showCostsTab = true,
+}: Props) {
+  const tabs: Array<{ id: PersonnelTabId; label: string; href: string }> = [];
+  if (showInfoTab) {
+    tabs.push({ id: "info", label: "人员信息", href: "/personnel?tab=info" });
+  }
+  if (showCostsTab) {
+    tabs.push({
+      id: "costs",
+      label: "人员成本",
+      href: costsHref ?? "/personnel?tab=costs",
+    });
+  }
+
+  if (tabs.length <= 1) return null;
+
   return (
     <div className="flex gap-2 border-b overflow-x-auto">
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const href = tab.id === "costs" && costsHref ? costsHref : tab.href;
         return (
           <Link

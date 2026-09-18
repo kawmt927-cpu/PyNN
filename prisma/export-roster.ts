@@ -1,5 +1,5 @@
 /**
- * 从当前 DATABASE_URL 导出公司人员（含档案与月成本），供同步到线上。
+ * 从当前 DATABASE_URL 导出公司人员（含档案与月成本/工资条），供同步到线上。
  * 用法：npx tsx prisma/export-roster.ts [输出路径]
  * 默认输出：tmp/roster-sync.json
  */
@@ -8,6 +8,11 @@ import path from "path";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+
+function decStr(v: { toString(): string } | null | undefined): string | null {
+  if (v == null) return null;
+  return v.toString();
+}
 
 async function main() {
   const outPath = path.resolve(
@@ -32,28 +37,50 @@ async function main() {
       wecomUserId: u.wecomUserId,
       role: u.role,
       passwordHash: u.passwordHash,
+      includeInTeamPerformance: u.includeInTeamPerformance,
+      includeInMonthlyAssessment: u.includeInMonthlyAssessment,
       personnelProfile: u.personnelProfile
         ? {
             staffCategory: u.personnelProfile.staffCategory,
             personnelType: u.personnelProfile.personnelType,
             isPresales: u.personnelProfile.isPresales,
-            contributionBase: u.personnelProfile.contributionBase?.toString() ?? null,
-            baseSalary: u.personnelProfile.baseSalary?.toString() ?? null,
-            socialSecurityCompany: u.personnelProfile.socialSecurityCompany?.toString() ?? null,
-            housingFundCompany: u.personnelProfile.housingFundCompany?.toString() ?? null,
-            dailyRate: u.personnelProfile.dailyRate?.toString() ?? null,
+            contributionBase: decStr(u.personnelProfile.contributionBase),
+            baseSalary: decStr(u.personnelProfile.baseSalary),
+            socialSecurityCompany: decStr(u.personnelProfile.socialSecurityCompany),
+            housingFundCompany: decStr(u.personnelProfile.housingFundCompany),
+            dailyRate: decStr(u.personnelProfile.dailyRate),
             enabled: u.personnelProfile.enabled,
           }
         : null,
       monthlyCostAdjustments: u.monthlyCostAdjustments.map((m) => ({
         year: m.year,
         month: m.month,
-        contributionBase: m.contributionBase?.toString() ?? null,
-        baseSalary: m.baseSalary?.toString() ?? null,
-        socialSecurityCompany: m.socialSecurityCompany?.toString() ?? null,
-        housingFundCompany: m.housingFundCompany?.toString() ?? null,
+        contributionBase: decStr(m.contributionBase),
+        baseSalary: decStr(m.baseSalary),
+        socialSecurityCompany: decStr(m.socialSecurityCompany),
+        housingFundCompany: decStr(m.housingFundCompany),
         adjustmentAmount: m.adjustmentAmount.toString(),
+        leaveDeductionAmount: m.leaveDeductionAmount.toString(),
+        attendanceDays: m.attendanceDays,
+        payrollEntity: m.payrollEntity,
+        seniorityYears: decStr(m.seniorityYears),
+        bonus: decStr(m.bonus),
+        performancePay: decStr(m.performancePay),
+        wageAdjust: decStr(m.wageAdjust),
+        sickLeaveDays: decStr(m.sickLeaveDays),
+        sickLeaveDeduction: decStr(m.sickLeaveDeduction),
+        personalLeaveDays: decStr(m.personalLeaveDays),
+        personalLeaveDeduction: decStr(m.personalLeaveDeduction),
+        payableWage: decStr(m.payableWage),
+        pensionPersonal: decStr(m.pensionPersonal),
+        medicalPersonal: decStr(m.medicalPersonal),
+        unemploymentPersonal: decStr(m.unemploymentPersonal),
+        socialSecurityPersonal: decStr(m.socialSecurityPersonal),
+        housingFundPersonal: decStr(m.housingFundPersonal),
+        incomeTax: decStr(m.incomeTax),
+        netPay: decStr(m.netPay),
         notes: m.notes,
+        confirmedAt: m.confirmedAt?.toISOString() ?? null,
       })),
     })),
   };

@@ -36,6 +36,7 @@ export async function GET(req: Request) {
     id: row.id,
     title: row.title,
     status: row.status,
+    confirmStatus: row.confirmStatus,
     customerName: row.customer?.name ?? "未指定客户",
   }));
 

@@ -8,6 +8,7 @@ import {
 import { OPPORTUNITY_STATUS_LABELS } from "@/lib/opportunities/status";
 
 export type OpportunityListFilters = {
+  q: string;
   statuses: OpportunityStatus[];
   stages: string[];
   ownerIds: string[];
@@ -15,9 +16,11 @@ export type OpportunityListFilters = {
 };
 
 export const OPPORTUNITY_LIST_SORT_COLUMNS = [
+  "createdAt",
   "grade",
   "amount",
   "stage",
+  "expectedClose",
   "lastVisit",
   "nextVisit",
 ] as const;
@@ -32,6 +35,7 @@ export type OpportunityListSort = {
 export const DEFAULT_OPPORTUNITY_LIST_STATUSES: OpportunityStatus[] = ["NOT_SIGNED"];
 
 export const EMPTY_OPPORTUNITY_LIST_FILTERS: OpportunityListFilters = {
+  q: "",
   statuses: [...DEFAULT_OPPORTUNITY_LIST_STATUSES],
   stages: [],
   ownerIds: [],
@@ -86,6 +90,7 @@ export function parseOpportunityListFilters(
   }
 
   return {
+    q: params.q?.trim() ?? "",
     statuses,
     stages: parseCsvParam(params.stage),
     ownerIds: parseCsvParam(params.ownerId),
@@ -107,7 +112,8 @@ export function parseOpportunityListSort(
 
 export function hasActiveOpportunityListFilters(filters: OpportunityListFilters) {
   return Boolean(
-    filters.stages.length ||
+    filters.q.trim() ||
+      filters.stages.length ||
       filters.ownerIds.length ||
       filters.grades.length ||
       !sameStatuses(filters.statuses, DEFAULT_OPPORTUNITY_LIST_STATUSES)
@@ -119,6 +125,7 @@ export function buildOpportunityListHref(
   sort: OpportunityListSort = { column: "", dir: "asc" }
 ) {
   const params = new URLSearchParams();
+  if (filters.q.trim()) params.set("q", filters.q.trim());
   if (filters.statuses.length === 0) {
     params.set("status", "all");
   } else if (!sameStatuses(filters.statuses, DEFAULT_OPPORTUNITY_LIST_STATUSES)) {
@@ -135,13 +142,16 @@ export function buildOpportunityListHref(
   return query ? `/opportunities?${query}` : "/opportunities";
 }
 
-/** 点击列头：同列切换升降序，换列默认升序 */
+/** 点击列头：同列切换升降序；录入时间默认新→旧，其它列默认升序 */
 export function nextOpportunityListSort(
   current: OpportunityListSort,
   column: OpportunityListSortColumn
 ): OpportunityListSort {
   if (current.column === column) {
     return { column, dir: current.dir === "asc" ? "desc" : "asc" };
+  }
+  if (column === "createdAt") {
+    return { column, dir: "desc" };
   }
   return { column, dir: "asc" };
 }
@@ -184,6 +194,20 @@ export function buildOpportunityListWhere(
   if (filters.ownerIds.length > 0 && canManageOpportunityOwner(role)) {
     where.ownerId =
       filters.ownerIds.length === 1 ? filters.ownerIds[0] : { in: filters.ownerIds };
+  }
+
+  const q = filters.q.trim();
+  if (q) {
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      {
+        OR: [
+          { title: { contains: q } },
+          { customer: { name: { contains: q } } },
+          { parties: { some: { customer: { name: { contains: q } } } } },
+        ],
+      },
+    ];
   }
 
   return where;

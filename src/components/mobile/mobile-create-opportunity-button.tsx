@@ -16,24 +16,51 @@ import type { ConfigOptionItem } from "@/lib/config-options";
 
 type Props = {
   stageOptions: ConfigOptionItem[];
+  /** 已选定客户时可跳过选客步骤 */
+  initialCustomerId?: string;
+  initialCustomerName?: string;
+  buttonLabel?: string;
+  className?: string;
 };
 
-export function MobileCreateOpportunityButton({ stageOptions }: Props) {
+export function MobileCreateOpportunityButton({
+  stageOptions,
+  initialCustomerId,
+  initialCustomerName,
+  buttonLabel = "新增",
+  className,
+}: Props) {
   const router = useRouter();
+  const preselected = Boolean(initialCustomerId && initialCustomerName);
   const [pickOpen, setPickOpen] = useState(false);
   const [oppOpen, setOppOpen] = useState(false);
-  const [customerId, setCustomerId] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  const [customerId, setCustomerId] = useState(initialCustomerId ?? "");
+  const [customerName, setCustomerName] = useState(initialCustomerName ?? "");
 
   function resetPick() {
+    if (preselected) {
+      setCustomerId(initialCustomerId ?? "");
+      setCustomerName(initialCustomerName ?? "");
+      return;
+    }
     setCustomerId("");
     setCustomerName("");
   }
 
+  function openFlow() {
+    if (preselected) {
+      setCustomerId(initialCustomerId!);
+      setCustomerName(initialCustomerName!);
+      setOppOpen(true);
+      return;
+    }
+    setPickOpen(true);
+  }
+
   return (
     <>
-      <Button type="button" size="sm" onClick={() => setPickOpen(true)}>
-        新增
+      <Button type="button" size="sm" className={className} onClick={openFlow}>
+        {buttonLabel}
       </Button>
 
       <Dialog

@@ -36,7 +36,7 @@ export default async function MobileOpportunitiesPage({ searchParams }: Props) {
   const [raw, labelMaps, stageOptions] = await Promise.all([
     prisma.opportunity.findMany({
       where,
-      orderBy: { updatedAt: "desc" },
+      orderBy: { createdAt: "desc" },
       include: {
         customer: { select: { id: true, name: true } },
         owner: { select: { name: true } },

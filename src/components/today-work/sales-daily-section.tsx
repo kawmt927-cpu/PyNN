@@ -106,10 +106,13 @@ export async function CheckInSection({ role, userId, mapKey, geocodeReady }: Sec
                           checkInId={row.id}
                           customerId={row.customer.id}
                           customerName={row.customer.name}
+                          customerType={row.customer.customerType}
                           currentCustomerGrade={row.customer.customerGrade}
                           contactId={row.contact?.id}
                           stageOptions={interactionFormOptions.stageOptions}
                           gradeOptions={interactionFormOptions.gradeOptions}
+                          channelGradeOptions={interactionFormOptions.channelGradeOptions}
+                          typeOptions={interactionFormOptions.typeOptions}
                         />
                       ) : null}
                       <CheckInDeleteButton
@@ -169,6 +172,8 @@ export async function DailyReportSection({
         formOptions={{
           stageOptions: interactionFormOptions.stageOptions,
           gradeOptions: interactionFormOptions.gradeOptions,
+          channelGradeOptions: interactionFormOptions.channelGradeOptions,
+          typeOptions: interactionFormOptions.typeOptions,
         }}
       />
       <div className="overflow-x-auto">

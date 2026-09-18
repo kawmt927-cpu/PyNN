@@ -7,6 +7,8 @@ type SortableOpportunity = {
   stage: string;
   grade: string | null;
   expectedAmount: { toString(): string } | number;
+  expectedCloseDate: Date;
+  createdAt: Date;
 };
 
 function compareNullableNumber(a: number | null, b: number | null, dir: "asc" | "desc") {
@@ -42,6 +44,9 @@ export function sortOpportunitiesWithVisits<T extends SortableOpportunity>(
 
   sorted.sort((left, right) => {
     switch (sort.column) {
+      case "createdAt": {
+        return compareNullableDate(left.createdAt, right.createdAt, dir);
+      }
       case "grade": {
         const leftStars = getOpportunityGradeStarCount(left.grade ?? "P3");
         const rightStars = getOpportunityGradeStarCount(right.grade ?? "P3");
@@ -58,6 +63,9 @@ export function sortOpportunitiesWithVisits<T extends SortableOpportunity>(
         const leftOrder = stageOrder[left.stage] ?? Number.MAX_SAFE_INTEGER;
         const rightOrder = stageOrder[right.stage] ?? Number.MAX_SAFE_INTEGER;
         return compareNullableNumber(leftOrder, rightOrder, dir);
+      }
+      case "expectedClose": {
+        return compareNullableDate(left.expectedCloseDate, right.expectedCloseDate, dir);
       }
       case "lastVisit": {
         return compareNullableDate(

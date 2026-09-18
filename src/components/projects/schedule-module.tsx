@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { usePropagateWheelAtEdgeRef } from "@/hooks/use-propagate-wheel-at-edge";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import {
   SCHEDULE_CUSTOM_MAX_DAYS,
   buildScheduleModuleHref,
+  buildProjectScheduleHref,
   buildTimelineDays,
   customRangeFromProjectDates,
   defaultAllocationDates,
@@ -28,6 +30,7 @@ import {
   periodRangeSwitchEnd,
   periodRangeSwitchStart,
   periodStartKey,
+  scheduleFocusDatesFromFilter,
   shiftPeriod,
   type ScheduleDetailAxis,
   type ScheduleModuleView,
@@ -44,19 +47,29 @@ import type {
 import { buildDraftScheduleBar } from "@/lib/projects/schedule-serialize";
 import type { AllocationRecord } from "@/lib/projects/allocation-split";
 import { ScheduleStaffPanel } from "@/components/projects/schedule-staff-panel";
+import {
+  ScheduleStaffCard,
+  STAFF_GANTT_LABEL_WIDTH,
+} from "@/components/projects/schedule-staff-card";
 import { ScheduleProjectCards } from "@/components/projects/schedule-project-cards";
 import { ScheduleProjectMultiSelect } from "@/components/projects/schedule-project-multi-select";
 import {
   ScheduleTimelineHeader,
   ScheduleTimelineRow,
   ScheduleTimelineAddRow,
+  ScheduleProjectDropZone,
 } from "@/components/projects/schedule-timeline";
 import { AllocationEditDialog } from "@/components/projects/allocation-edit-dialog";
+import { AddAllocationPickerDialog } from "@/components/projects/add-allocation-picker-dialog";
 import { findOverlappingSegment } from "@/lib/projects/allocation-overlap";
 import { peekScheduleReturn, saveScheduleReturn } from "@/lib/projects/task-form-draft";
+import { useScheduleFullscreen } from "@/components/layout/dashboard-shell";
+import { ChevronDown, Maximize2, Minimize2 } from "lucide-react";
+import { StaffColorProvider } from "@/lib/projects/timeline-colors";
 
 const ROW_LABEL_WIDTH = 160;
 const PROJECT_COL_WIDTH = 168;
+const STAFF_ROW_MIN_HEIGHT = 72;
 
 type Props = {
   data: ScheduleModuleData;
@@ -64,22 +77,32 @@ type Props = {
   view: ScheduleModuleView;
   axis: ScheduleDetailAxis;
   selectedProjectIds: ScheduleProjectIds;
-  lockedPersonIds: string[];
   peerRecordsByUser: Record<string, AllocationRecord[]>;
+  /** 全局排班人员锁定；项目详情内嵌不传 */
+  lockedPersonIds?: string[];
+  /** 项目详情页内嵌：锁定单项目，URL 写在 ?tab=schedule */
+  embedProjectId?: string;
 };
 
 export function ScheduleModule({
   data,
   canEdit,
   view,
-  axis,
+  axis: axisProp,
   selectedProjectIds,
-  lockedPersonIds,
   peerRecordsByUser,
+  lockedPersonIds = [],
+  embedProjectId,
 }: Props) {
+  const embedded = Boolean(embedProjectId);
+  /** 项目详情内嵌排班固定按「项目」维度，不再切换人员视图 */
+  const axis: ScheduleDetailAxis = embedded ? "project" : axisProp;
+  const lockEnabled = !embedded;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnTaskFromUrl = searchParams.get("returnTask")?.trim() || null;
+  const returnTaskFromUrl = embedded
+    ? null
+    : searchParams.get("returnTask")?.trim() || null;
   const [returnTask, setReturnTask] = useState(returnTaskFromUrl);
   const [error, setError] = useState<string | null>(null);
   const [activeStaff, setActiveStaff] = useState<ScheduleStaff | null>(null);
@@ -87,6 +110,9 @@ export function ScheduleModule({
   const [draftSegment, setDraftSegment] = useState<{ startDate: string; endDate: string } | null>(
     null
   );
+  const [addPickerProjectId, setAddPickerProjectId] = useState<string | null>(null);
+  const [showResignedStaff, setShowResignedStaff] = useState(true);
+  const { fullscreen, toggle: toggleFullscreen } = useScheduleFullscreen();
 
   useEffect(() => {
     const projectId =
@@ -114,8 +140,15 @@ export function ScheduleModule({
   const periodKey = periodStartKey(period);
   const days = useMemo(() => buildTimelineDays(period), [period]);
   const timelinePaneRef = useRef<HTMLDivElement>(null);
+  const timelineWheelChainRef = usePropagateWheelAtEdgeRef<HTMLDivElement>();
+  const globalWheelChainRef = usePropagateWheelAtEdgeRef<HTMLDivElement>();
   const [timelinePaneWidth, setTimelinePaneWidth] = useState(0);
-  const sideLabelWidth = axis === "person" ? PROJECT_COL_WIDTH : ROW_LABEL_WIDTH;
+  /** 仅项目详情内嵌排班：人员富信息卡并入甘特；全局排班始终保留左侧人员侧栏 */
+  const mergeStaffIntoGantt = embedded && axis === "project";
+  const personLabelWidth = mergeStaffIntoGantt
+    ? STAFF_GANTT_LABEL_WIDTH
+    : ROW_LABEL_WIDTH;
+  const sideLabelWidth = axis === "person" ? PROJECT_COL_WIDTH : personLabelWidth;
 
   useEffect(() => {
     const el = timelinePaneRef.current;
@@ -135,8 +168,12 @@ export function ScheduleModule({
   });
   const periodLabel =
     period.mode === "month" ? "本月" : period.mode === "week" ? "本周" : "本周期";
-  const hasLocks = lockedPersonIds.length > 0;
-  const lockedSet = useMemo(() => new Set(lockedPersonIds), [lockedPersonIds]);
+
+  const hasLocks = lockEnabled && lockedPersonIds.length > 0;
+  const lockedSet = useMemo(
+    () => new Set(lockEnabled ? lockedPersonIds : []),
+    [lockEnabled, lockedPersonIds]
+  );
 
   const barsByProject = useMemo(() => {
     const map = new Map<string, ScheduleBar[]>();
@@ -148,6 +185,34 @@ export function ScheduleModule({
     }
     return map;
   }, [data.allBars, hasLocks, lockedSet]);
+
+  function scrollTimelineToDate(dateKey: string) {
+    const el = timelinePaneRef.current;
+    if (!el || days.length === 0 || dayWidth <= 0) return;
+    const target = parseDateOnlyInput(dateKey);
+    const msPerDay = 86400000;
+    let dayIndex = Math.round(
+      (target.getTime() - period.from.getTime()) / msPerDay
+    );
+    dayIndex = Math.max(0, Math.min(days.length - 1, dayIndex));
+    el.scrollTo({ left: dayIndex * dayWidth, behavior: "smooth" });
+  }
+
+  function scrollToStaffAllocationStart(userId: string, projectId: string) {
+    const segments = data.allocationSegments.filter(
+      (b) => b.userId === userId && b.projectId === projectId
+    );
+    const visible = (barsByProject.get(projectId) ?? []).filter(
+      (b) => b.userId === userId
+    );
+    const pool = segments.length > 0 ? segments : visible;
+    if (pool.length === 0) return;
+    const earliest = pool.reduce(
+      (min, b) => (b.startDate < min ? b.startDate : min),
+      pool[0].startDate
+    );
+    scrollTimelineToDate(earliest);
+  }
 
   const barsByUser = useMemo(() => {
     const map = new Map<string, ScheduleBar[]>();
@@ -168,27 +233,24 @@ export function ScheduleModule({
 
   const visibleProjects = useMemo(() => {
     if (!hasLocks) return data.projects;
-    const withBars = data.projects.filter((p) => (barsByProject.get(p.id)?.length ?? 0) > 0);
-    // 当前选中的项目即使尚无锁定人员投入也保留，便于继续拖入排班
-    const extras = data.projects.filter(
-      (p) => selectedProjectSet.has(p.id) && !withBars.some((w) => w.id === p.id)
-    );
-    return [...withBars, ...extras];
-  }, [data.projects, barsByProject, hasLocks, selectedProjectSet]);
+    return data.projects.filter((p) => {
+      const bars = barsByProject.get(p.id) ?? [];
+      return bars.length > 0;
+    });
+  }, [data.projects, barsByProject, hasLocks]);
 
   const projectsForDisplay = useMemo(() => {
     if (!hasLocks) return visibleProjects;
-    return visibleProjects.map((project) => {
-      const bars = barsByProject.get(project.id) ?? [];
-      const staff = new Map<string, string>();
-      for (const bar of bars) staff.set(bar.userId, bar.userName);
+    return visibleProjects.map((p) => {
+      const bars = barsByProject.get(p.id) ?? [];
+      const staff = new Map(bars.map((b) => [b.userId, b.userName]));
       return {
-        ...project,
+        ...p,
         periodEffectiveDays: bars.reduce((sum, bar) => sum + bar.effectiveDays, 0),
         periodStaffCount: staff.size,
         periodCost: bars.reduce((sum, bar) => sum + bar.cost, 0),
         periodStaff: [...staff.entries()]
-          .map(([userId, name]) => ({ userId, name }))
+          .map(([userId, name]) => ({ userId, name, resigned: false as const }))
           .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
       };
     });
@@ -209,8 +271,8 @@ export function ScheduleModule({
   );
 
   const detailPeople = useMemo(() => {
-    if (hasLocks) return data.staff.filter((s) => lockedSet.has(s.id));
     return data.staff.filter((s) => {
+      if (hasLocks && !lockedSet.has(s.id)) return false;
       const bars = barsByUser.get(s.id) ?? [];
       return bars.some((b) => detailProjectIdSet.has(b.projectId));
     });
@@ -242,10 +304,9 @@ export function ScheduleModule({
   }) {
     const nextLock =
       overrides.lock !== undefined ? overrides.lock : lockedPersonIds;
-
     const nextPeriod = overrides.period ?? period;
     const nextRange = overrides.range ?? nextPeriod.mode;
-    const nextAxis = overrides.axis ?? axis;
+    const nextAxis = embedded ? "project" : overrides.axis ?? axis;
 
     let nextProject: ScheduleProjectIds | undefined;
     if (overrides.project === null) {
@@ -254,6 +315,18 @@ export function ScheduleModule({
       nextProject = overrides.project;
     } else if ((overrides.view ?? view) === "detail") {
       nextProject = selectedProjectIds;
+    }
+
+    if (embedProjectId) {
+      return buildProjectScheduleHref(embedProjectId, {
+        range: nextRange,
+        start: overrides.start ?? periodStartKey(nextPeriod),
+        end:
+          nextRange === "custom"
+            ? overrides.end ?? periodEndKey(nextPeriod)
+            : undefined,
+        axis: nextAxis,
+      });
     }
 
     return buildScheduleModuleHref({
@@ -266,7 +339,7 @@ export function ScheduleModule({
       view: overrides.view ?? view,
       axis: nextAxis,
       project: nextProject,
-      lock: nextLock,
+      lock: lockEnabled ? nextLock : undefined,
       returnTask,
     });
   }
@@ -275,23 +348,64 @@ export function ScheduleModule({
     router.push(hrefFor(params));
   }
 
+  function toggleLock(userId: string) {
+    if (!lockEnabled) return;
+    const next = lockedPersonIds.includes(userId)
+      ? lockedPersonIds.filter((id) => id !== userId)
+      : [...lockedPersonIds, userId];
+    navigate({ lock: next });
+  }
+
+  function clearLocks() {
+    if (!lockEnabled) return;
+    navigate({ lock: [] });
+  }
+
+  function projectCustomSpan(project: (typeof data.projects)[number]) {
+    return customRangeFromProjectDates({
+      plannedStartAt: project.plannedStartAt,
+      plannedEndAt: project.plannedEndAt,
+      actualStartAt: project.actualStartAt,
+      actualEndAt: project.actualEndAt,
+      allocationSpanStart: project.allocationSpanStart,
+      allocationSpanEnd: project.allocationSpanEnd,
+    });
+  }
+
+  /** 按当前筛选项目（及锁定人员）合成：有投入的最后时段 / 自定义最大并集 */
+  const focusScheduleDates = useMemo(
+    () =>
+      scheduleFocusDatesFromFilter({
+        projects: data.projects,
+        selectedProjectIds: embedded
+          ? embedProjectId
+            ? [embedProjectId]
+            : selectedProjectIds
+          : selectedProjectIds,
+        lockedUserIds: hasLocks ? lockedPersonIds : [],
+        allocationSegments: data.allocationSegments,
+      }),
+    [
+      data.projects,
+      data.allocationSegments,
+      embedded,
+      embedProjectId,
+      selectedProjectIds,
+      hasLocks,
+      lockedPersonIds,
+    ]
+  );
+
   function applyProjectFilter(ids: ScheduleProjectIds) {
     const next: Parameters<typeof hrefFor>[0] = {
       project: ids,
       axis,
     };
 
-    // 仅选中一个项目且当前为自定义周期时，按该项目起止拉长区间
-    if (ids.length === 1 && period.mode === "custom") {
+    // 选中单个项目时，自动拉长到计划/排班全跨度，避免按月只看到当前重叠的少数人
+    if (ids.length === 1) {
       const project = data.projects.find((p) => p.id === ids[0]);
-      const span = project
-        ? customRangeFromProjectDates({
-            plannedStartAt: project.plannedStartAt,
-            plannedEndAt: project.plannedEndAt,
-            actualStartAt: project.actualStartAt,
-            actualEndAt: project.actualEndAt,
-          })
-        : null;
+      const span = project ? projectCustomSpan(project) : null;
       if (span) {
         next.range = "custom";
         next.start = span.start;
@@ -314,25 +428,13 @@ export function ScheduleModule({
       view: extras.view ?? "detail",
     };
 
-    const useCustom =
-      (extras.range ?? period.mode) === "custom" || extras.view === "detail";
-
-    if (useCustom) {
-      const project = data.projects.find((p) => p.id === projectId);
-      const span = project
-        ? customRangeFromProjectDates({
-            plannedStartAt: project.plannedStartAt,
-            plannedEndAt: project.plannedEndAt,
-            actualStartAt: project.actualStartAt,
-            actualEndAt: project.actualEndAt,
-          })
-        : null;
-      if (span) {
-        next.range = "custom";
-        next.start = span.start;
-        next.end = span.end;
-        setError(null);
-      }
+    const project = data.projects.find((p) => p.id === projectId);
+    const span = project ? projectCustomSpan(project) : null;
+    if (span) {
+      next.range = "custom";
+      next.start = span.start;
+      next.end = span.end;
+      setError(null);
     }
 
     navigate(next);
@@ -354,10 +456,12 @@ export function ScheduleModule({
         (parseDateOnlyInput(end).getTime() - parseDateOnlyInput(start).getTime()) / 86400000
       ) + 1;
     if (spanDays > SCHEDULE_CUSTOM_MAX_DAYS) {
-      const capped = parseDateOnlyInput(start);
-      capped.setDate(capped.getDate() + SCHEDULE_CUSTOM_MAX_DAYS - 1);
-      end = formatLocalDateInput(capped);
-      setError(`自定义周期最长约 3 年（${SCHEDULE_CUSTOM_MAX_DAYS} 天），已自动截断`);
+      const capped = parseDateOnlyInput(end);
+      capped.setDate(capped.getDate() - (SCHEDULE_CUSTOM_MAX_DAYS - 1));
+      start = formatLocalDateInput(capped);
+      setError(
+        `自定义周期最长约 5 年（${SCHEDULE_CUSTOM_MAX_DAYS} 天），已保留最近一段并自动截断`
+      );
     } else {
       setError(null);
     }
@@ -375,23 +479,19 @@ export function ScheduleModule({
         : String(active.id).replace("staff-", "");
 
     if (hasLocks && !lockedSet.has(userId)) {
-      setError("当前已锁定人员，请先解除锁定或只拖动已锁定人员");
+      setError("已锁定人员时，仅可拖拽已锁定人员排班");
       return;
     }
 
     const dropType = over.data.current?.type;
     let targetProjectId: string | undefined;
 
-    if (dropType === "project-add") {
+    if (
+      dropType === "project-drop" ||
+      dropType === "project-add" ||
+      dropType === "timeline-row"
+    ) {
       targetProjectId = over.data.current?.projectId as string | undefined;
-    } else if (dropType === "timeline-row") {
-      const targetUserId = over.data.current?.userId as string | undefined;
-      targetProjectId = over.data.current?.projectId as string | undefined;
-      if (!targetProjectId || !targetUserId) return;
-      if (targetUserId !== userId) {
-        setError("请拖到对应人员的时间轴行");
-        return;
-      }
     } else {
       return;
     }
@@ -447,70 +547,249 @@ export function ScheduleModule({
     );
   }
 
-  function toggleLock(personId: string) {
-    const next = new Set(lockedPersonIds);
-    if (next.has(personId)) next.delete(personId);
-    else next.add(personId);
-    navigate({ lock: [...next] });
-  }
-
   function renderProjectGantt(project: (typeof data.projects)[number]) {
     const projectBars = barsByProject.get(project.id) ?? [];
-    const staffRows = data.staff.filter((member) => {
-      if (hasLocks) {
-        // 锁定人员即使本项目尚无投入也显示空行，便于拖入
-        return lockedSet.has(member.id);
-      }
-      return projectBars.some((b) => b.userId === member.id);
-    });
+    const allocatedByUserId = new Map(
+      project.allocatedStaff.map((s) => [s.userId, s])
+    );
+    const usersWithPeriodBars = new Set(projectBars.map((b) => b.userId));
+    // 仅展示本周期有投入的人员；无投入不占行（可通过「添加投入」再排）
+    const staffRows = data.staff
+      .filter((member) => {
+        if (hasLocks && !lockedSet.has(member.id)) return false;
+        return usersWithPeriodBars.has(member.id);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+
+    const missingAllocated = project.allocatedStaff.filter(
+      (s) =>
+        usersWithPeriodBars.has(s.userId) &&
+        (!hasLocks || lockedSet.has(s.userId)) &&
+        !staffRows.some((row) => row.id === s.userId)
+    );
+
+    function isResignedMember(member: ScheduleStaff) {
+      return Boolean(member.resigned || allocatedByUserId.get(member.id)?.resigned);
+    }
+
+    const activeStaffRows = staffRows.filter((m) => !isResignedMember(m));
+    const resignedStaffRows = staffRows.filter((m) => isResignedMember(m));
+    const activeMissing = missingAllocated.filter((s) => !s.resigned);
+    const resignedMissing = missingAllocated.filter((s) => s.resigned);
+    const resignedCount = resignedStaffRows.length + resignedMissing.length;
+
+    function renderStaffTimelineRow(
+      member: ScheduleStaff,
+      keyId: string
+    ) {
+      const bars = projectBars.filter((b) => b.userId === member.id);
+      const summary =
+        bars.length > 0
+          ? formatAllocationPersonDaysSummary(bars, period)
+          : "本周期无投入";
+      const cardMember =
+        allocatedByUserId.get(member.id)?.resigned || member.resigned
+          ? { ...member, resigned: true }
+          : member;
+      return (
+        <ScheduleTimelineRow
+          key={`${project.id}-${keyId}`}
+          rowId={`project-row-${project.id}-${keyId}`}
+          periodStart={period.from}
+          days={days}
+          dayWidth={dayWidth}
+          rowLabelWidth={personLabelWidth}
+          label={member.name}
+          sublabel={summary}
+          labelContent={
+            mergeStaffIntoGantt ? (
+              <ScheduleStaffCard
+                member={cardMember}
+                summary={summary}
+                periodLabel={periodLabel}
+                canDrag={false}
+                compact
+                onActivate={
+                  bars.length > 0 ||
+                  data.allocationSegments.some(
+                    (b) =>
+                      b.userId === member.id && b.projectId === project.id
+                  )
+                    ? () =>
+                        scrollToStaffAllocationStart(member.id, project.id)
+                    : undefined
+                }
+              />
+            ) : undefined
+          }
+          bars={bars}
+          showProject={false}
+          peerRecords={peerRecordsByUser[member.id] ?? []}
+          canDrop={false}
+          rowMinHeight={mergeStaffIntoGantt ? STAFF_ROW_MIN_HEIGHT : 56}
+          onSelectBar={(bar) => {
+            setDraftSegment(null);
+            setSelectedBar(bar);
+          }}
+        />
+      );
+    }
+
+    function renderMissingTimelineRow(member: (typeof missingAllocated)[number]) {
+      const bars = projectBars.filter((b) => b.userId === member.userId);
+      const summary =
+        bars.length > 0
+          ? formatAllocationPersonDaysSummary(bars, period)
+          : "本周期无投入";
+      const syntheticMember: ScheduleStaff = {
+        id: member.userId,
+        name: member.name,
+        dailyRate: null,
+        personnelType: null,
+        weekEffectiveDays: 0,
+        parallelProjects: 0,
+        weekLoadPercent: 0,
+        resigned: member.resigned,
+        hidePeriodMetrics: member.resigned,
+        activeProjectNames: [],
+      };
+      return (
+        <ScheduleTimelineRow
+          key={`${project.id}-${member.userId}`}
+          rowId={`project-row-${project.id}-${member.userId}`}
+          periodStart={period.from}
+          days={days}
+          dayWidth={dayWidth}
+          rowLabelWidth={personLabelWidth}
+          label={member.name}
+          sublabel={summary}
+          labelContent={
+            mergeStaffIntoGantt ? (
+              <ScheduleStaffCard
+                member={syntheticMember}
+                summary={summary}
+                periodLabel={periodLabel}
+                canDrag={false}
+                compact
+                onActivate={
+                  bars.length > 0
+                    ? () =>
+                        scrollToStaffAllocationStart(
+                          member.userId,
+                          project.id
+                        )
+                    : undefined
+                }
+              />
+            ) : undefined
+          }
+          bars={bars}
+          showProject={false}
+          peerRecords={peerRecordsByUser[member.userId] ?? []}
+          canDrop={false}
+          rowMinHeight={mergeStaffIntoGantt ? STAFF_ROW_MIN_HEIGHT : 56}
+          onSelectBar={(bar) => {
+            setDraftSegment(null);
+            setSelectedBar(bar);
+          }}
+        />
+      );
+    }
 
     return (
-      <div key={project.id} className="border-b-2 border-muted">
+      <ScheduleProjectDropZone
+        key={project.id}
+        projectId={project.id}
+        canDrop={canEdit}
+        className="border-b-2 border-muted"
+      >
         {isAllProjects || selectedProjectIds.length > 1 ? (
           <div
-            className="sticky left-0 z-10 flex border-b bg-muted/50 px-4 py-2 text-sm"
-            style={{ minWidth: days.length * dayWidth + ROW_LABEL_WIDTH }}
+            className="flex border-b bg-muted/50 text-sm"
+            style={{ minWidth: days.length * dayWidth + personLabelWidth }}
           >
-            <p className="font-semibold">{project.name}</p>
-            <span className="mx-2 text-muted-foreground">·</span>
-            <p className="text-muted-foreground">{project.customerName}</p>
-            {project.periodEffectiveDays > 0 ? (
-              <span className="ml-auto text-xs text-muted-foreground">
-                {project.periodEffectiveDays} 人天
+            <div
+              className="sticky left-0 z-20 flex shrink-0 items-center gap-2 border-r bg-muted px-3 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+              style={{
+                width: personLabelWidth,
+                minWidth: personLabelWidth,
+                maxWidth: personLabelWidth,
+              }}
+            >
+              <p className="truncate font-semibold" title={project.name}>
+                {project.name}
+              </p>
+            </div>
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-muted-foreground">
+              <p className="truncate">{project.customerName}</p>
+              <span className="ml-auto shrink-0 text-xs">
+                {project.allocatedStaff.length} 人
+                {project.periodEffectiveDays > 0
+                  ? ` · 本周期 ${project.periodEffectiveDays} 人天`
+                  : ""}
               </span>
-            ) : null}
+            </div>
           </div>
         ) : null}
 
-        {staffRows.length === 0 && !canEdit ? (
-          <p className="px-4 py-3 text-xs text-muted-foreground">该时段暂无投入</p>
+        {staffRows.length === 0 && missingAllocated.length === 0 && !canEdit ? (
+          <p className="px-4 py-3 text-xs text-muted-foreground">本周期暂无人员投入</p>
         ) : (
-          staffRows.map((member) => {
-            const bars = projectBars.filter((b) => b.userId === member.id);
-            return (
-              <ScheduleTimelineRow
-                key={`${project.id}-${member.id}`}
-                rowId={`project-row-${project.id}-${member.id}`}
-                periodStart={period.from}
-                days={days}
-                dayWidth={dayWidth}
-                rowLabelWidth={ROW_LABEL_WIDTH}
-                label={member.name}
-                sublabel={formatAllocationPersonDaysSummary(bars, period)}
-                bars={bars}
-                showProject={false}
-                peerRecords={peerRecordsByUser[member.id] ?? []}
-                canDrop={canEdit}
-                highlighted={lockedSet.has(member.id)}
-                highlightUserIds={hasLocks ? lockedPersonIds : undefined}
-                onSelectBar={(bar) => {
-                  setDraftSegment(null);
-                  setSelectedBar(bar);
-                }}
-                dropTarget={{ projectId: project.id, userId: member.id }}
-              />
-            );
-          })
+          <>
+            {activeStaffRows.map((member) =>
+              renderStaffTimelineRow(member, member.id)
+            )}
+            {activeMissing.map((member) => renderMissingTimelineRow(member))}
+            {mergeStaffIntoGantt && resignedCount > 0 ? (
+              <div className="border-t border-dashed border-border/70">
+                <div
+                  className="flex border-b bg-muted/30"
+                  style={{ minWidth: days.length * dayWidth + personLabelWidth }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowResignedStaff((open) => !open)}
+                    className="sticky left-0 z-10 flex items-center gap-2 border-r bg-muted/30 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    style={{
+                      width: personLabelWidth,
+                      minWidth: personLabelWidth,
+                      maxWidth: personLabelWidth,
+                    }}
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0 transition-transform",
+                        showResignedStaff ? "rotate-0" : "-rotate-90"
+                      )}
+                    />
+                    <span>
+                      {showResignedStaff
+                        ? `收起离职人员（${resignedCount}）`
+                        : `展开离职人员（${resignedCount}）`}
+                    </span>
+                  </button>
+                  <div className="flex-1" />
+                </div>
+                {showResignedStaff ? (
+                  <>
+                    {resignedStaffRows.map((member) =>
+                      renderStaffTimelineRow(member, member.id)
+                    )}
+                    {resignedMissing.map((member) =>
+                      renderMissingTimelineRow(member)
+                    )}
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                {resignedStaffRows.map((member) =>
+                  renderStaffTimelineRow(member, member.id)
+                )}
+                {resignedMissing.map((member) => renderMissingTimelineRow(member))}
+              </>
+            )}
+          </>
         )}
 
         {canEdit ? (
@@ -519,12 +798,13 @@ export function ScheduleModule({
             projectId={project.id}
             days={days}
             dayWidth={dayWidth}
-            rowLabelWidth={ROW_LABEL_WIDTH}
+            rowLabelWidth={personLabelWidth}
             canDrop={canEdit}
-            hint=""
+            label="添加投入"
+            onAddClick={() => setAddPickerProjectId(project.id)}
           />
         ) : null}
-      </div>
+      </ScheduleProjectDropZone>
     );
   }
 
@@ -537,28 +817,39 @@ export function ScheduleModule({
     return (
       <div key={member.id} className="border-b-2 border-muted">
         <div
-          className="sticky left-0 z-10 flex border-b bg-muted/50 px-4 py-2 text-sm"
+          className="flex border-b bg-muted/50 text-sm"
           style={{ minWidth: days.length * dayWidth + PROJECT_COL_WIDTH }}
         >
-          <p className="font-semibold">{member.name}</p>
-          {userBars.length > 0 ? (
-            <span className="ml-auto text-xs text-muted-foreground">
-              {formatPersonDays(
-                userBars
-                  .filter((b) => detailProjectIdSet.has(b.projectId))
-                  .reduce((sum, bar) => sum + bar.effectiveDays, 0)
-              )}{" "}
-              人天 ·{" "}
-              {
-                new Set(
+          <div
+            className="sticky left-0 z-20 flex min-w-0 items-center border-r bg-muted px-4 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+            style={{
+              width: PROJECT_COL_WIDTH,
+              minWidth: PROJECT_COL_WIDTH,
+              maxWidth: PROJECT_COL_WIDTH,
+            }}
+          >
+            <p className="truncate font-semibold">{member.name}</p>
+          </div>
+          <div className="flex min-w-0 flex-1 items-center px-3 py-2">
+            {userBars.length > 0 ? (
+              <span className="ml-auto text-xs text-muted-foreground">
+                {formatPersonDays(
                   userBars
                     .filter((b) => detailProjectIdSet.has(b.projectId))
-                    .map((b) => b.projectId)
-                ).size
-              }{" "}
-              项目
-            </span>
-          ) : null}
+                    .reduce((sum, bar) => sum + bar.effectiveDays, 0)
+                )}{" "}
+                人天 ·{" "}
+                {
+                  new Set(
+                    userBars
+                      .filter((b) => detailProjectIdSet.has(b.projectId))
+                      .map((b) => b.projectId)
+                  ).size
+                }{" "}
+                项目
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {projectRows.length === 0 ? (
@@ -580,8 +871,6 @@ export function ScheduleModule({
                 showProject={false}
                 peerRecords={peerRecordsByUser[member.id] ?? []}
                 canDrop={false}
-                highlighted={lockedSet.has(member.id)}
-                highlightUserIds={hasLocks ? lockedPersonIds : undefined}
                 onSelectBar={(bar) => {
                   setDraftSegment(null);
                   setSelectedBar(bar);
@@ -602,27 +891,19 @@ export function ScheduleModule({
   const prevPeriod = shiftPeriod(period, -1);
   const nextPeriod = shiftPeriod(period, 1);
 
-  const lockedNames = lockedPersonIds
-    .map((id) => data.staff.find((s) => s.id === id)?.name ?? "未知")
-    .join("、");
-
-  const lockNoticeSlot = (
-    <p
-      className={cn(
-        "min-w-0 max-w-[70%] shrink text-[11px] leading-[16px] rounded border px-2 py-1 truncate",
-        hasLocks
-          ? "text-muted-foreground border-primary/20 bg-primary/5"
-          : "opacity-0 border-transparent pointer-events-none"
-      )}
-      title={hasLocks ? `已锁定 ${lockedPersonIds.length} 人：${lockedNames}，仅显示其相关排班` : undefined}
-      aria-hidden={!hasLocks}
-    >
-      {hasLocks ? `已锁定 ${lockedPersonIds.length} 人：${lockedNames}` : null}
-    </p>
-  );
+  const addProject = addPickerProjectId
+    ? data.projects.find((p) => p.id === addPickerProjectId)
+    : undefined;
 
   return (
-    <div className="flex h-full flex-col gap-2 px-3 py-2">
+    <div
+      className={cn(
+        "flex flex-col gap-2 bg-background",
+        fullscreen
+          ? "fixed inset-0 z-50 px-3 py-2"
+          : "h-full min-h-0 px-3 py-2"
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex flex-wrap items-center gap-1.5">
           <Button variant="outline" size="sm" className="h-8" asChild>
@@ -635,19 +916,19 @@ export function ScheduleModule({
             </Link>
           </Button>
           {period.mode === "custom" ? (
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <Input
                 type="date"
-                className="h-8 w-[132px]"
+                className="h-8 w-[10.5rem]"
                 value={formatLocalDateInput(period.from)}
                 onChange={(e) =>
                   applyCustomRange(e.target.value, formatLocalDateInput(period.to))
                 }
               />
-              <span className="text-xs text-muted-foreground">至</span>
+              <span className="shrink-0 text-xs text-muted-foreground">至</span>
               <Input
                 type="date"
-                className="h-8 w-[132px]"
+                className="h-8 w-[10.5rem]"
                 value={formatLocalDateInput(period.to)}
                 onChange={(e) =>
                   applyCustomRange(formatLocalDateInput(period.from), e.target.value)
@@ -673,53 +954,56 @@ export function ScheduleModule({
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
           {view === "detail" ? (
             <>
-              <div className="min-w-[160px] max-w-[280px] flex-1">
-                <ScheduleProjectMultiSelect
-                  id="schedule-project"
-                  compact
-                  options={projectOptions}
-                  value={selectedProjectIds}
-                  onChange={applyProjectFilter}
-                />
-              </div>
-              <div className="flex h-8 items-center rounded-md border p-0.5 gap-0.5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate({ axis: "project", project: selectedProjectIds })
-                  }
-                  className={cn(
-                    "rounded px-2 py-1 text-xs font-medium transition-colors",
-                    axis === "project"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  项目
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate({ axis: "person", project: selectedProjectIds })
-                  }
-                  className={cn(
-                    "rounded px-2 py-1 text-xs font-medium transition-colors",
-                    axis === "person"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  人员
-                </button>
-              </div>
-              {lockNoticeSlot}
+              {!embedded ? (
+                <>
+                  <div className="min-w-[160px] max-w-[280px] flex-1">
+                    <ScheduleProjectMultiSelect
+                      id="schedule-project"
+                      compact
+                      options={projectOptions}
+                      value={selectedProjectIds}
+                      onChange={applyProjectFilter}
+                    />
+                  </div>
+                  <div className="flex h-8 items-center rounded-md border p-0.5 gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate({ axis: "project", project: selectedProjectIds })
+                      }
+                      className={cn(
+                        "rounded px-2 py-1 text-xs font-medium transition-colors",
+                        axis === "project"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      项目
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate({ axis: "person", project: selectedProjectIds })
+                      }
+                      className={cn(
+                        "rounded px-2 py-1 text-xs font-medium transition-colors",
+                        axis === "person"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      人员
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
           ) : null}
           <div className="flex rounded-md border p-0.5 gap-0.5">
             <Link
               href={hrefFor({
                 range: "month",
-                start: periodRangeSwitchStart(period, "month"),
+                start: periodRangeSwitchStart(period, "month", focusScheduleDates),
               })}
               className={cn(
                 "rounded px-2.5 py-1 text-xs font-medium transition-colors",
@@ -733,7 +1017,7 @@ export function ScheduleModule({
             <Link
               href={hrefFor({
                 range: "week",
-                start: periodRangeSwitchStart(period, "week"),
+                start: periodRangeSwitchStart(period, "week", focusScheduleDates),
               })}
               className={cn(
                 "rounded px-2.5 py-1 text-xs font-medium transition-colors",
@@ -745,30 +1029,11 @@ export function ScheduleModule({
               按周
             </Link>
             <Link
-              href={(() => {
-                const start = periodRangeSwitchStart(period, "custom");
-                const end = periodRangeSwitchEnd(period);
-                if (selectedProjectIds.length === 1) {
-                  const project = data.projects.find((p) => p.id === selectedProjectIds[0]);
-                  const span = project
-                    ? customRangeFromProjectDates({
-                        plannedStartAt: project.plannedStartAt,
-                        plannedEndAt: project.plannedEndAt,
-                        actualStartAt: project.actualStartAt,
-                        actualEndAt: project.actualEndAt,
-                      })
-                    : null;
-                  if (span) {
-                    return hrefFor({
-                      range: "custom",
-                      start: span.start,
-                      end: span.end,
-                      project: selectedProjectIds,
-                    });
-                  }
-                }
-                return hrefFor({ range: "custom", start, end });
-              })()}
+              href={hrefFor({
+                range: "custom",
+                start: periodRangeSwitchStart(period, "custom", focusScheduleDates),
+                end: periodRangeSwitchEnd(period, focusScheduleDates),
+              })}
               className={cn(
                 "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                 period.mode === "custom"
@@ -780,35 +1045,67 @@ export function ScheduleModule({
             </Link>
           </div>
 
-          <div className="flex rounded-md border p-0.5 gap-0.5">
-            <Link
-              href={hrefFor({ view: "global", project: null })}
-              className={cn(
-                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                view === "global"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
+          {!embedded ? (
+            <div className="flex rounded-md border p-0.5 gap-0.5">
+              <Link
+                href={hrefFor({ view: "global", project: null })}
+                className={cn(
+                  "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+                  view === "global"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                全局总览
+              </Link>
+              <Link
+                href={hrefFor({ view: "detail", project: selectedProjectIds })}
+                className={cn(
+                  "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+                  view === "detail"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                资源明细
+              </Link>
+            </div>
+          ) : null}
+          {(!embedded || fullscreen) ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1"
+              onClick={toggleFullscreen}
+              title={fullscreen ? "退出全屏（Esc）" : "全屏显示"}
             >
-              全局总览
-            </Link>
-            <Link
-              href={hrefFor({ view: "detail", project: selectedProjectIds })}
-              className={cn(
-                "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                view === "detail"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
+              {fullscreen ? (
+                <>
+                  <Minimize2 className="h-3.5 w-3.5" />
+                  退出全屏
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  全屏
+                </>
               )}
-            >
-              资源明细
-            </Link>
-          </div>
+            </Button>
+          ) : null}
         </div>
       </div>
 
       {error ? <p className="text-sm text-destructive shrink-0">{error}</p> : null}
 
+      <StaffColorProvider
+        userIds={[
+          ...data.staff.map((s) => s.id),
+          ...(data.poolStaff ?? data.staff).map((s) => s.id),
+          ...data.allBars.map((b) => b.userId),
+          ...data.projects.flatMap((p) => p.allocatedStaff.map((s) => s.userId)),
+        ]}
+      >
       <DndContext
         id={dndContextId}
         sensors={sensors}
@@ -820,29 +1117,53 @@ export function ScheduleModule({
         onDragCancel={() => setActiveStaff(null)}
       >
         <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border bg-card shadow-sm">
-          <div className="w-80 shrink-0">
-            <ScheduleStaffPanel
-              staff={data.staff}
-              lockedPersonIds={lockedPersonIds}
-              onToggleLock={toggleLock}
-              onClearLocks={() => navigate({ lock: [] })}
-              canDrag={
-                canEdit &&
-                view === "detail" &&
-                axis === "project" &&
-                detailProjects.length > 0
-              }
-              periodLabel={periodLabel}
-            />
-          </div>
+          {!mergeStaffIntoGantt ? (
+            <div className="w-80 shrink-0">
+              <ScheduleStaffPanel
+                staff={data.staff}
+                canDrag={
+                  canEdit &&
+                  view === "detail" &&
+                  axis === "project" &&
+                  detailProjects.length > 0
+                }
+                periodLabel={periodLabel}
+                lockedPersonIds={lockEnabled ? lockedPersonIds : undefined}
+                onToggleLock={lockEnabled ? toggleLock : undefined}
+                onClearLocks={lockEnabled ? clearLocks : undefined}
+              />
+            </div>
+          ) : null}
 
           <div className="flex min-w-0 flex-1 flex-col">
             {view === "global" ? (
-              <div className="min-h-0 flex-1 overflow-auto">
+              <div
+                ref={globalWheelChainRef}
+                className="min-h-0 flex-1 overflow-auto"
+              >
                 <div className="sticky top-0 z-10 border-b bg-card px-4 py-3">
                   <div className="flex h-[34px] items-center justify-between gap-3">
-                    <p className="shrink-0 text-sm font-medium">项目总览</p>
-                    {lockNoticeSlot}
+                    <p className="shrink-0 text-sm font-medium">{periodLabel}项目总览</p>
+                    {lockEnabled && hasLocks ? (
+                      <p
+                        className="min-w-0 max-w-[75%] shrink truncate rounded-md border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs leading-[18px] text-muted-foreground"
+                        title={`已锁定 ${lockedPersonIds.length} 人：${lockedPersonIds
+                          .map(
+                            (id) =>
+                              data.staff.find((s) => s.id === id)?.name ?? "未知"
+                          )
+                          .join("、")}，仅显示其相关排班`}
+                      >
+                        已锁定 {lockedPersonIds.length} 人：
+                        {lockedPersonIds
+                          .map(
+                            (id) =>
+                              data.staff.find((s) => s.id === id)?.name ?? "未知"
+                          )
+                          .join("、")}
+                        ，仅显示其相关排班
+                      </p>
+                    ) : null}
                   </div>
                   <p className="mt-1 text-xs leading-4 text-muted-foreground">
                     点击项目卡片进入资源明细；{periodLabel}投入与人员统计见卡片内
@@ -857,7 +1178,14 @@ export function ScheduleModule({
                 />
               </div>
             ) : (
-              <div ref={timelinePaneRef} className="min-h-0 flex-1 overflow-auto">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div
+                  ref={(el) => {
+                    timelinePaneRef.current = el;
+                    timelineWheelChainRef(el);
+                  }}
+                  className="min-h-0 flex-1 overflow-auto"
+                >
                   {axis === "project" ? (
                     detailProjects.length === 0 ? (
                       <p className="p-8 text-center text-sm text-muted-foreground">
@@ -869,7 +1197,7 @@ export function ScheduleModule({
                           days={days}
                           rowLabel="人员"
                           dayWidth={dayWidth}
-                          rowLabelWidth={ROW_LABEL_WIDTH}
+                          rowLabelWidth={personLabelWidth}
                         />
                         {detailProjects.map((project) => renderProjectGantt(project))}
                       </>
@@ -880,7 +1208,7 @@ export function ScheduleModule({
                     </p>
                   ) : detailPeople.length === 0 ? (
                     <p className="p-8 text-center text-sm text-muted-foreground">
-                      暂无可见人员（可用左侧锁定筛选）
+                      暂无可见人员
                     </p>
                   ) : (
                     <>
@@ -893,6 +1221,7 @@ export function ScheduleModule({
                       {detailPeople.map((member) => renderPersonGantt(member))}
                     </>
                   )}
+                </div>
               </div>
             )}
           </div>
@@ -906,6 +1235,7 @@ export function ScheduleModule({
           ) : null}
         </DragOverlay>
       </DndContext>
+      </StaffColorProvider>
 
       {selectedBar ? (
         <AllocationEditDialog
@@ -925,6 +1255,39 @@ export function ScheduleModule({
             setSelectedBar(null);
           }}
           onSaved={() => router.refresh()}
+        />
+      ) : null}
+
+      {addPickerProjectId ? (
+        <AddAllocationPickerDialog
+          open={Boolean(addPickerProjectId)}
+          projectName={addProject?.name ?? ""}
+          poolStaff={data.poolStaff ?? data.staff}
+          existingUserIds={addProject?.allocatedStaff.map((s) => s.userId) ?? []}
+          onClose={() => setAddPickerProjectId(null)}
+          onSelect={(staff) => {
+            const project = data.projects.find((p) => p.id === addPickerProjectId);
+            if (!project) return;
+            setAddPickerProjectId(null);
+            const { startDate, endDate } = defaultAllocationDates({
+              plannedStartAt: project.plannedStartAt,
+              plannedEndAt: project.plannedEndAt,
+              actualStartAt: project.actualStartAt,
+              actualEndAt: project.actualEndAt,
+            });
+            setDraftSegment({ startDate, endDate });
+            setSelectedBar(
+              buildDraftScheduleBar({
+                userId: staff.id,
+                userName: staff.name,
+                projectId: project.id,
+                projectName: project.name,
+                startDate,
+                endDate,
+                dailyRate: staff.dailyRate,
+              })
+            );
+          }}
         />
       ) : null}
     </div>

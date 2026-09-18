@@ -49,6 +49,7 @@ export function ToneSelect({
   size = "default",
   required,
   onValueChange,
+  triggerClassName,
 }: {
   id?: string;
   name?: string;
@@ -58,6 +59,8 @@ export function ToneSelect({
   size?: "default" | "sm";
   required?: boolean;
   onValueChange: (value: string) => void;
+  /** 覆盖触发按钮样式（如按状态着色） */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((opt) => opt.value === value);
@@ -77,7 +80,8 @@ export function ToneSelect({
             disabled
               ? "cursor-not-allowed bg-muted text-muted-foreground"
               : "bg-background hover:bg-muted/30",
-            selected?.tone ? TONE_OPTION_CLASS[selected.tone] : "text-foreground"
+            selected?.tone ? TONE_OPTION_CLASS[selected.tone] : "text-foreground",
+            triggerClassName
           )}
         >
           <span className="truncate text-left">{selected?.label ?? "请选择"}</span>

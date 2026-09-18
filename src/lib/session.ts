@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { authOptions } from "./auth";
+import { preloadRolePermissions } from "@/lib/rbac/has-permission";
 
 export async function getSession() {
   return getServerSession(authOptions);
@@ -10,6 +11,7 @@ export async function getSession() {
 export async function requireSession() {
   const session = await getSession();
   if (!session?.user) redirect("/login");
+  await preloadRolePermissions(session.user.role);
   return session;
 }
 

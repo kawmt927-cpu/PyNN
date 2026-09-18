@@ -1,13 +1,27 @@
 import type { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 
 export const NOTIFICATION_TYPES = {
   CHECK_IN_LOCATION_IP_MISMATCH: "CHECK_IN_LOCATION_IP_MISMATCH",
   GENERAL_ASSIGNMENT_PENDING_CONFIRM: "GENERAL_ASSIGNMENT_PENDING_CONFIRM",
   WEEKLY_ASSIGNMENT_ASSIGNED: "WEEKLY_ASSIGNMENT_ASSIGNED",
+  FOLLOW_UP_PENDING_CONFIRM: "FOLLOW_UP_PENDING_CONFIRM",
+  FOLLOW_UP_CONFIRM_RESULT: "FOLLOW_UP_CONFIRM_RESULT",
+  CONTACT_PENDING_CONFIRM: "CONTACT_PENDING_CONFIRM",
+  CONTACT_CONFIRM_RESULT: "CONTACT_CONFIRM_RESULT",
+  OPPORTUNITY_PENDING_CONFIRM: "OPPORTUNITY_PENDING_CONFIRM",
+  OPPORTUNITY_CONFIRM_RESULT: "OPPORTUNITY_CONFIRM_RESULT",
   CONTRACT_REJECTED: "CONTRACT_REJECTED",
   DAILY_REPORT_REMIND: "DAILY_REPORT_REMIND",
   DAILY_REPORT_LATE: "DAILY_REPORT_LATE",
+  /** 项目阶段完成且分期升为可催款 */
+  PHASE_COLLECTION_READY: "PHASE_COLLECTION_READY",
+  /** 项目阶段完成但未绑分期 / 无可提升分期，提醒准备沟通 */
+  PHASE_COLLECTION_PREPARE: "PHASE_COLLECTION_PREPARE",
+  /** 公司日历（法定假/调休）年度同步结果 */
+  COMPANY_CALENDAR_SYNC: "COMPANY_CALENDAR_SYNC",
+  HR_DOCUMENT_EXPIRY: "HR_DOCUMENT_EXPIRY",
 } as const;
 
 /** 可进入「通知」页的角色（按业务线分别接收；销售可收合同驳回等个人通知） */
@@ -16,6 +30,7 @@ export const NOTIFICATION_ACCESS_ROLES: UserRole[] = [
   "SALES_MANAGER",
   "PROJECT_ADMIN",
   "ADMIN",
+  "HR",
 ];
 
 /** @deprecated 使用 NOTIFICATION_ACCESS_ROLES */
@@ -29,7 +44,7 @@ const PROJECT_LINE_ROLES: UserRole[] = [
 ];
 
 export function canAccessNotifications(role: UserRole) {
-  return NOTIFICATION_ACCESS_ROLES.includes(role);
+  return hasPermissionSync(role, "nav.notifications");
 }
 
 /**
@@ -165,6 +180,109 @@ export async function markAllNotificationsRead(userId: string) {
     where: { userId, readAt: null },
     data: { readAt: new Date() },
   });
+}
+
+function parseAssignmentIdFromMeta(metaJson: string | null | undefined): string | null {
+  if (!metaJson) return null;
+  try {
+    const meta = JSON.parse(metaJson) as { assignmentId?: unknown };
+    return typeof meta.assignmentId === "string" ? meta.assignmentId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 普通任务确认/驳回后：更新通知文案并标为已读 */
+export async function resolveGeneralAssignmentConfirmNotifications(input: {
+  assignmentId: string;
+  outcome: "confirmed" | "rejected";
+  assignmentTitle?: string;
+}) {
+  const candidates = await prisma.appNotification.findMany({
+    where: {
+      type: NOTIFICATION_TYPES.GENERAL_ASSIGNMENT_PENDING_CONFIRM,
+      metaJson: { contains: input.assignmentId },
+    },
+    select: { id: true, metaJson: true, body: true },
+  });
+
+  const matchedIds = candidates
+    .filter((row) => parseAssignmentIdFromMeta(row.metaJson) === input.assignmentId)
+    .map((row) => row.id);
+  if (matchedIds.length === 0) return;
+
+  const title =
+    input.outcome === "confirmed" ? "普通任务已确认" : "普通任务已驳回";
+  const titleLabel = input.assignmentTitle?.trim();
+  const body =
+    input.outcome === "confirmed"
+      ? titleLabel
+        ? `「${titleLabel}」已确认完成。`
+        : "该任务已确认完成。"
+      : titleLabel
+        ? `「${titleLabel}」已驳回，已退回执行人待完成。`
+        : "该任务已驳回，已退回执行人待完成。";
+
+  await prisma.$transaction([
+    prisma.appNotification.updateMany({
+      where: { id: { in: matchedIds } },
+      data: { title, body },
+    }),
+    prisma.appNotificationReceipt.updateMany({
+      where: { notificationId: { in: matchedIds }, readAt: null },
+      data: { readAt: new Date() },
+    }),
+  ]);
+}
+
+/**
+ * 打开通知页时：若任务已不在「待确认」，同步通知文案并标已读（兼容在计划与任务里先处理的情况）
+ */
+export async function syncGeneralAssignmentConfirmNotificationsForUser(userId: string) {
+  const receipts = await prisma.appNotificationReceipt.findMany({
+    where: {
+      userId,
+      notification: { type: NOTIFICATION_TYPES.GENERAL_ASSIGNMENT_PENDING_CONFIRM },
+    },
+    select: {
+      readAt: true,
+      notification: { select: { metaJson: true, title: true } },
+    },
+    take: 100,
+  });
+  if (receipts.length === 0) return;
+
+  const assignmentIds = [
+    ...new Set(
+      receipts
+        .map((row) => parseAssignmentIdFromMeta(row.notification.metaJson))
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  if (assignmentIds.length === 0) return;
+
+  const assignments = await prisma.salesWeeklyAssignment.findMany({
+    where: { id: { in: assignmentIds } },
+    select: { id: true, title: true, status: true },
+  });
+
+  for (const assignment of assignments) {
+    if (assignment.status === "PENDING_CONFIRM") continue;
+    const stillPendingUi = receipts.some((row) => {
+      const id = parseAssignmentIdFromMeta(row.notification.metaJson);
+      return (
+        id === assignment.id &&
+        (row.notification.title === "普通任务待确认" || !row.readAt)
+      );
+    });
+    if (!stillPendingUi) continue;
+
+    await resolveGeneralAssignmentConfirmNotifications({
+      assignmentId: assignment.id,
+      outcome: assignment.status === "COMPLETED" ? "confirmed" : "rejected",
+      assignmentTitle: assignment.title,
+    });
+  }
 }
 
 /**

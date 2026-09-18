@@ -54,14 +54,13 @@ export default async function SchedulePage({ searchParams }: Props) {
     period
   );
 
-  const lockedPersonIds = parseScheduleLocks(
-    params.lock,
-    data.staff.map((s) => s.id)
-  );
-
   const selectedProjectIds = parseScheduleProjectIds(
     params.project,
     data.projects.map((p) => p.id)
+  );
+  const lockedPersonIds = parseScheduleLocks(
+    params.lock,
+    data.staff.map((s) => s.id)
   );
 
   const userIds = data.staff.map((s) => s.id);
@@ -90,16 +89,12 @@ export default async function SchedulePage({ searchParams }: Props) {
   const returnTaskId = params.returnTask?.trim() || null;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden overscroll-none">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-3 py-1.5">
         <div className="flex items-center gap-4">
           {planProjectId ? (
             <SchedulePlanBackLink projectId={planProjectId} returnTaskFromUrl={returnTaskId} />
-          ) : (
-            <Button variant="outline" size="sm" className="h-8" asChild>
-              <Link href="/projects">返回项目列表</Link>
-            </Button>
-          )}
+          ) : null}
           <h1 className="text-base font-semibold">资源排班</h1>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -119,8 +114,8 @@ export default async function SchedulePage({ searchParams }: Props) {
             view={view}
             axis={axis}
             selectedProjectIds={selectedProjectIds}
-            lockedPersonIds={lockedPersonIds}
             peerRecordsByUser={peerRecordsByUser}
+            lockedPersonIds={lockedPersonIds}
           />
         </Suspense>
       </div>

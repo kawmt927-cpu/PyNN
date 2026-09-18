@@ -11,7 +11,12 @@ export { CheckInForm };
 export function ManualLogForm({
   formOptions,
 }: {
-  formOptions: { stageOptions: ConfigOptionItem[]; gradeOptions: ConfigOptionItem[] };
+  formOptions: {
+    stageOptions: ConfigOptionItem[];
+    gradeOptions: ConfigOptionItem[];
+    channelGradeOptions?: ConfigOptionItem[];
+    typeOptions?: ConfigOptionItem[];
+  };
 }) {
   return <InteractionLogForm formOptions={formOptions} />;
 }

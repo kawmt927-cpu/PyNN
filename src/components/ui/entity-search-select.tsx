@@ -11,7 +11,10 @@ export type SearchSelectOption = {
   id: string;
   label: string;
   description?: string;
+  customerType?: string | null;
   customerGrade?: string | null;
+  /** 是否可直接编辑该客户（负责人/协助）；往来录入时非负责人也可选 */
+  writable?: boolean;
   disabled?: boolean;
 };
 

@@ -1,5 +1,12 @@
 import { UserRole } from "@prisma/client";
-import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
+import {
+  getDefaultHomeFromPrimary,
+  resolvePrimaryNav,
+  toNavItems,
+  type NavItem,
+} from "@/lib/nav/primary-nav";
+
+export type { NavItem };
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   SALES: "销售",
@@ -9,6 +16,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   PROJECT_STAFF: "项目人员",
   ADMIN: "管理员",
   HR: "行政人事",
+  OTHER: "其他",
 };
 
 /** 管理权限由高到低（数值越小权限越高），用于用户列表等排序 */
@@ -20,19 +28,24 @@ export const ROLE_PRIVILEGE_RANK: Record<UserRole, number> = {
   SALES: 4,
   PROJECT_STAFF: 5,
   HR: 6,
+  OTHER: 7,
 };
 
 /** 编辑用户 / 开通审批时展示的角色说明 */
 export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   SALES:
-    "今日工作、日报、计划与任务、客户、商机、待跟进、合同（本人数据；可提审合同）、报销。",
+    "今日工作、日报、计划与任务、客户、商机、待跟进、合同（本人数据；可提审合同）。",
   SALES_MANAGER:
-    "销售侧全部数据与审批、销售人员、销售成本、报销；可编辑/审批合同；系统配置中的销售相关项。",
-  PROJECT_ADMIN: "项目、资源排班、实施人员类型、报销；系统配置中的项目相关项。",
-  PROJECT_MANAGER: "项目与排班、我的任务、报销；合同只读查阅；系统配置中的项目相关项。",
-  PROJECT_STAFF: "项目、我的任务、报销。",
-  ADMIN: "全部模块，含运营看板、用户管理、功能开关、人员成本与报销终审打款。",
-  HR: "行政人事：工作台、人员成本维护、报销发起与终审打款，以及差旅住宿标准配置。",
+    "销售侧全部数据与销售类审批（认领/代录确认/合同审核）、销售人员与成本、报销入口与上级审批；系统配置中的销售相关项。",
+  PROJECT_ADMIN:
+    "项目全局管理与项目类审批、资源排班、实施人员类型、报销入口与上级审批；系统配置中的项目相关项。",
+  PROJECT_MANAGER:
+    "暂与项目人员同权：项目、计划与任务（项目任务）。后续可再单独放开排班/合同/报销等。",
+  PROJECT_STAFF: "项目、计划与任务（项目任务）。",
+  ADMIN:
+    "全部模块；销售/项目类审批；报销入口与终审打款；用户与角色权限、功能开关等系统配置。",
+  HR: "行政人事：员工档案与证件、人员成本、报销行政确认（无报销入口时仍可在审批中心处理）、差旅住宿标准配置。",
+  OTHER: "无业务模块权限；仅纳入人员成本（日单价/月成本）核算，可登录查看账号说明。",
 };
 
 export const CUSTOMER_CATEGORY_LABELS = {
@@ -106,78 +119,37 @@ export const CONTRACT_BUSINESS_TYPE_LABELS = {
   MAINTENANCE: "维保项目",
 } as const;
 
-export type NavItem = {
-  href: string;
-  label: string;
-  roles: UserRole[];
-};
-
-export const NAV_ITEMS: NavItem[] = [
-  { href: "/admin/ops", label: "运营看板", roles: ["ADMIN", "SALES_MANAGER"] },
-  { href: "/admin/map", label: "地图看板", roles: ["ADMIN", "SALES_MANAGER"] },
-  { href: "/admin/stats", label: "统计管理", roles: ["ADMIN", "SALES_MANAGER"] },
-  { href: "/today-work", label: "今日工作", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/daily-reports", label: "日报管理", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/plans-tasks", label: "计划与任务", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/customers", label: "客户", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/opportunities", label: "商机", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  {
-    href: "/approvals",
-    label: "审批",
-    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN", "HR"],
-  },
-  {
-    href: "/notifications",
-    label: "通知",
-    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "ADMIN"],
-  },
-  { href: "/follow-ups", label: "待跟进", roles: ["SALES", "SALES_MANAGER", "ADMIN"] },
-  { href: "/contracts", label: "合同", roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"] },
-  {
-    href: "/contracts/external-costs",
-    label: "外部成本",
-    roles: ["SALES", "SALES_MANAGER", "PROJECT_MANAGER", "ADMIN"],
-  },
-  {
-    href: "/expenses",
-    label: "报销",
-    roles: ["SALES", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN", "HR"],
-  },
-  { href: "/projects", label: "项目", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
-  { href: "/projects/schedule", label: "资源排班", roles: ["PROJECT_ADMIN", "PROJECT_MANAGER", "ADMIN"] },
-  { href: "/my-tasks", label: "我的任务", roles: ["PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"] },
-  { href: "/personnel", label: "实施人员", roles: ["PROJECT_ADMIN", "ADMIN"] },
-  { href: "/personnel", label: "人员成本", roles: ["HR"] },
-  { href: "/sales-personnel", label: "销售人员", roles: ["SALES_MANAGER", "ADMIN"] },
-  { href: "/sales-costs", label: "销售成本", roles: ["SALES_MANAGER", "ADMIN"] },
-  { href: "/admin/users", label: "用户管理", roles: ["ADMIN"] },
-  { href: "/admin/settings", label: "系统配置", roles: ["ADMIN", "SALES_MANAGER", "PROJECT_ADMIN", "PROJECT_MANAGER", "HR"] },
-  { href: "/hr", label: "工作台", roles: ["HR"] },
-];
-
+/**
+ * 侧栏导航（同步）：默认矩阵；Edge/middleware 可用。
+ * Dashboard 布局请用 getNavForRoleAsync，以读取库中配置。
+ */
 export function getNavForRole(role: UserRole): NavItem[] {
-  const expenseOn = isExpenseFeatureEnabled();
-  return NAV_ITEMS.filter((item) => {
-    if (!expenseOn && item.href === "/expenses") return false;
-    return item.roles.includes(role);
-  });
+  return toNavItems(resolvePrimaryNav(role));
 }
 
-/** 登录后默认首页：该角色侧栏第一项 */
+/** 登录后默认首页：该角色侧栏第一项（默认矩阵，供 middleware 等） */
 export function getDefaultHomeForRole(role: UserRole): string {
-  return getNavForRole(role)[0]?.href ?? "/login";
+  return getDefaultHomeFromPrimary(role);
 }
 
+/** @deprecated 请用 RolePermission / hasPermission */
 export function canAccess(role: UserRole, resource: string, action: string): boolean {
   if (role === "ADMIN") return true;
-  // MVP: coarse role-based; full PermissionRule table later
   const matrix: Partial<Record<UserRole, string[]>> = {
     SALES: ["customers:own", "followups:own", "opportunities:own", "contracts:own", "mobile-log:own"],
-    SALES_MANAGER: ["customers:all", "followups:all", "opportunities:all", "contracts:all", "sales-costs:all", "sales-personnel:all", "settings:sales"],
+    SALES_MANAGER: [
+      "customers:all",
+      "followups:all",
+      "opportunities:all",
+      "contracts:all",
+      "sales-costs:all",
+      "sales-personnel:all",
+      "settings:sales",
+    ],
     PROJECT_ADMIN: ["projects:all", "personnel:info", "presales-assignments:all", "settings:project"],
     PROJECT_MANAGER: ["projects:assigned", "tasks:assigned", "contracts:read", "settings:project"],
     PROJECT_STAFF: ["tasks:own", "projects:assigned"],
-    HR: ["hr:home", "personnel:costs", "expenses:finance"],
+    HR: ["hr:home", "hr:employees", "personnel:costs", "expenses:finance"],
   };
   const perms = matrix[role] ?? [];
   const key = `${resource}:${action}`;

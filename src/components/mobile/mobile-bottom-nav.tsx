@@ -1,15 +1,12 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
-  BarChart3,
-  ClipboardList,
+  Building2,
   Home,
   MapPinned,
   MoreHorizontal,
   NotebookPen,
 } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -17,7 +14,6 @@ type NavItem = {
   label: string;
   icon: typeof Home;
   match: (p: string) => boolean;
-  /** 右上角红点（如待审批） */
   badge?: boolean;
 };
 
@@ -30,16 +26,16 @@ const SALES_ITEMS: NavItem[] = [
     match: (p) => p.startsWith("/mobile/check-in"),
   },
   {
+    href: "/mobile/customers",
+    label: "客户",
+    icon: Building2,
+    match: (p) => p.startsWith("/mobile/customers"),
+  },
+  {
     href: "/mobile/log",
     label: "日报",
     icon: NotebookPen,
     match: (p) => p.startsWith("/mobile/log"),
-  },
-  {
-    href: "/mobile/metrics",
-    label: "指标",
-    icon: BarChart3,
-    match: (p) => p.startsWith("/mobile/metrics"),
   },
   {
     href: "/mobile/more",
@@ -48,11 +44,13 @@ const SALES_ITEMS: NavItem[] = [
     match: (p) =>
       p.startsWith("/mobile/more") ||
       p.startsWith("/mobile/inbox") ||
-      p.startsWith("/mobile/customers") ||
       p.startsWith("/mobile/opportunities") ||
       p.startsWith("/mobile/contracts") ||
       p.startsWith("/mobile/follow-ups") ||
-      p.startsWith("/mobile/tasks"),
+      p.startsWith("/mobile/due-follow-ups") ||
+      p.startsWith("/mobile/tasks") ||
+      p.startsWith("/mobile/metrics") ||
+      p.startsWith("/mobile/expenses"),
   },
 ];
 
@@ -65,16 +63,16 @@ const MANAGER_ITEMS: NavItem[] = [
     match: (p) => p.startsWith("/mobile/check-in"),
   },
   {
+    href: "/mobile/customers",
+    label: "客户",
+    icon: Building2,
+    match: (p) => p.startsWith("/mobile/customers"),
+  },
+  {
     href: "/mobile/reports",
     label: "日报",
     icon: NotebookPen,
-    match: (p) => p.startsWith("/mobile/reports"),
-  },
-  {
-    href: "/mobile/metrics",
-    label: "指标",
-    icon: BarChart3,
-    match: (p) => p.startsWith("/mobile/metrics"),
+    match: (p) => p.startsWith("/mobile/reports") || p.startsWith("/mobile/log"),
   },
   {
     href: "/mobile/more",
@@ -83,19 +81,20 @@ const MANAGER_ITEMS: NavItem[] = [
     match: (p) =>
       p.startsWith("/mobile/more") ||
       p.startsWith("/mobile/inbox") ||
-      p.startsWith("/mobile/customers") ||
       p.startsWith("/mobile/opportunities") ||
       p.startsWith("/mobile/contracts") ||
       p.startsWith("/mobile/follow-ups") ||
+      p.startsWith("/mobile/due-follow-ups") ||
       p.startsWith("/mobile/plans") ||
       p.startsWith("/mobile/tasks") ||
-      p.startsWith("/mobile/approvals"),
+      p.startsWith("/mobile/approvals") ||
+      p.startsWith("/mobile/metrics") ||
+      p.startsWith("/mobile/expenses"),
   },
 ];
 
 type Props = {
   variant: "sales" | "manager";
-  /** 更多入口是否显示红点（如有待审批） */
   moreBadge?: boolean;
 };
 

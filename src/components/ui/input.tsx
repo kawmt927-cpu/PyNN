@@ -14,7 +14,12 @@ const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLI
           type === "number" &&
             "[appearance:textfield] [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
           type === "date" &&
-            "[&::-webkit-date-and-time-value]:min-h-0 [&::-webkit-datetime-edit]:leading-10",
+            [
+              "min-w-[10.5rem] shrink-0 px-2",
+              "[&::-webkit-date-and-time-value]:min-h-[1.25rem]",
+              "[&::-webkit-datetime-edit]:min-w-0 [&::-webkit-datetime-edit]:p-0 [&::-webkit-datetime-edit]:leading-normal",
+              "[&::-webkit-calendar-picker-indicator]:ml-0.5 [&::-webkit-calendar-picker-indicator]:shrink-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer",
+            ].join(" "),
           className
         )}
         ref={ref}

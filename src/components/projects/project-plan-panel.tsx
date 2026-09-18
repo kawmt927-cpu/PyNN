@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PhaseStatus, ProjectTaskStatus } from "@prisma/client";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { SelectField, ToneSelect } from "@/components/ui/select-field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
+import { FormSuccessMessage } from "@/components/ui/form-success-message";
+import { useProjectPlannedWindowGate } from "@/components/projects/project-planned-window-gate";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +24,13 @@ import {
 import { cn } from "@/lib/utils";
 import { PHASE_STATUS_LABELS, PROJECT_TASK_STATUS_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
-import { addCalendarDays, countCalendarDays, eachCalendarDay, toDateOnly } from "@/lib/projects/workdays";
+import { addCalendarDays } from "@/lib/projects/workdays";
+import {
+  computeExtendedProjectWindow,
+  formatProjectWindowExtendMessage,
+  phaseExceedsProjectWindow,
+  toProjectWindowDateKey,
+} from "@/lib/projects/project-window";
 import {
   clearScheduleReturn,
   clearTaskFormDraft,
@@ -44,10 +52,18 @@ import {
   updateProjectPhasePlan,
   updateProjectTask,
 } from "@/app/(dashboard)/projects/project-plan-actions";
+import { ProjectPlanCollapsibleSection } from "@/components/projects/project-plan-collapsible-section";
+import { ProjectPlanGanttBoard } from "@/components/projects/project-plan-gantt-board";
+import { ProjectMemoPanel } from "@/components/projects/project-memo-panel";
+import { ProjectPlanTaskTable } from "@/components/projects/project-plan-task-table";
+import type {
+  PlanMemo,
+  PlanPhase,
+  PlanTask,
+  ProjectModelOption,
+} from "@/components/projects/project-plan-types";
 
-const GANTT_LABEL_WIDTH = 160;
-/** 固定日宽，保证长工期可横向滚动看全 */
-const DAY_WIDTH = 14;
+export type { PlanMemo, PlanPhase, PlanTask, ProjectModelOption };
 
 const PHASE_STATUS_OPTIONS = (Object.keys(PHASE_STATUS_LABELS) as PhaseStatus[]).map((status) => ({
   value: status,
@@ -61,45 +77,15 @@ const TASK_STATUS_OPTIONS = (Object.keys(PROJECT_TASK_STATUS_LABELS) as ProjectT
   })
 );
 
-export type PlanPhase = {
-  id: string;
-  name: string;
-  sortOrder: number;
-  progressWeight: number;
-  status: PhaseStatus;
-  plannedStartAt: Date | null;
-  plannedEndAt: Date | null;
-  sourceModelPhaseId: string | null;
-  tasks: PlanTask[];
-};
-
-export type PlanTask = {
-  id: string;
-  name: string;
-  description: string | null;
-  status: ProjectTaskStatus;
-  plannedStartAt: Date;
-  plannedEndAt: Date;
-  actualCompletedAt: Date | null;
-  cancelledNote: string | null;
-  sortOrder: number;
-  assigneeId: string | null;
-  assigneeName: string | null;
-};
-
-export type ProjectModelOption = {
-  id: string;
-  name: string;
-  phaseCount: number;
-  totalDurationDays: number;
-};
-
 type Props = {
   projectId: string;
   canEdit: boolean;
   plannedStartAt: Date | null;
   plannedEndAt: Date | null;
+  /** 资源投入最晚结束日，供甘特日/周/月定位 */
+  allocationSpanEnd?: Date | string | null;
   phases: PlanPhase[];
+  memos?: PlanMemo[];
   projectModels: ProjectModelOption[];
   assignees: Array<{ id: string; name: string }>;
   templateTasksByPhaseId: Record<string, Array<{ id: string; name: string; durationDays: number }>>;
@@ -107,68 +93,6 @@ type Props = {
   /** 从资源排班返回时带上，用于重新打开任务详情并恢复草稿 */
   initialTaskId?: string | null;
 };
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-/** 相对项目计划开始的 1-based 自然日序号（起始日当天为 1，早于起始日则为 0 或负数） */
-function dayIndex(date: Date, projectStart: Date): number {
-  const diffDays = Math.round(
-    (toDateOnly(date).getTime() - toDateOnly(projectStart).getTime()) / 86_400_000
-  );
-  return diffDays + 1;
-}
-
-function ganttBarStyle(
-  startDay: number,
-  endDay: number,
-  totalDays: number,
-  dayWidth = DAY_WIDTH
-) {
-  const start = clamp(startDay, 1, totalDays);
-  const end = clamp(Math.max(endDay, start), 1, totalDays);
-  return {
-    left: (start - 1) * dayWidth,
-    width: Math.max(end - start + 1, 1) * dayWidth,
-  };
-}
-
-type GanttMonthBand = {
-  key: string;
-  label: string;
-  startIndex: number;
-  dayCount: number;
-  year: number;
-  month: number;
-};
-
-/** 按连续月份合并表头色带，跨年时带年份以免歧义 */
-function buildGanttMonthBands(days: Date[]): GanttMonthBand[] {
-  const bands: GanttMonthBand[] = [];
-  const years = new Set(days.map((d) => d.getFullYear()));
-  const multiYear = years.size > 1;
-
-  for (let i = 0; i < days.length; i++) {
-    const date = days[i];
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    const last = bands[bands.length - 1];
-    if (last && last.year === year && last.month === month) {
-      last.dayCount += 1;
-    } else {
-      bands.push({
-        key: `${year}-${month}-${i}`,
-        label: multiYear ? `${year}年${month}月` : `${month}月`,
-        startIndex: i,
-        dayCount: 1,
-        year,
-        month,
-      });
-    }
-  }
-  return bands;
-}
 
 function sortByOrder<T extends { sortOrder: number; name: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "zh-CN"));
@@ -269,7 +193,9 @@ export function ProjectPlanPanel({
   canEdit,
   plannedStartAt,
   plannedEndAt,
+  allocationSpanEnd = null,
   phases,
+  memos = [],
   projectModels,
   assignees,
   templateTasksByPhaseId,
@@ -280,10 +206,13 @@ export function ProjectPlanPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(() => new Set());
   const [showAddPhase, setShowAddPhase] = useState(false);
+  const [showEditPhase, setShowEditPhase] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [applyModelId, setApplyModelId] = useState("");
@@ -291,7 +220,74 @@ export function ProjectPlanPanel({
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
   const [confirmDeletePhase, setConfirmDeletePhase] = useState<PlanPhase | null>(null);
   const [confirmDeleteTask, setConfirmDeleteTask] = useState<PlanTask | null>(null);
+  const [pendingExtendPhase, setPendingExtendPhase] = useState<{
+    kind: "create" | "update";
+    phaseId?: string;
+    input: {
+      name: string;
+      status: PhaseStatus;
+      plannedStartAt: string;
+      plannedEndAt: string;
+    };
+    message: string;
+  } | null>(null);
+  /** 打开「延长计划」确认时暂存添加阶段表单，取消后可还原 */
+  const [addPhaseDraft, setAddPhaseDraft] = useState<{
+    name: string;
+    status: PhaseStatus;
+    plannedStartAt: string;
+    plannedEndAt: string;
+  } | null>(null);
+  /** 嵌套「延长计划」确认关闭时，阻止连带关掉添加/编辑阶段弹窗 */
+  const suppressPhaseDialogCloseRef = useRef(false);
   const restoredTaskRef = useRef(false);
+
+  // 导入覆盖等刷新后，清理已不存在的选中项
+  useEffect(() => {
+    if (selectedTaskId) {
+      const stillThere = phases.some((p) => p.tasks.some((t) => t.id === selectedTaskId));
+      if (!stillThere) setSelectedTaskId(null);
+    }
+    if (selectedPhaseId) {
+      const stillThere = phases.some((p) => p.id === selectedPhaseId);
+      if (!stillThere) setSelectedPhaseId(null);
+    }
+  }, [phases, selectedTaskId, selectedPhaseId]);
+
+  const sectionStorageKey = `project-plan-sections:${projectId}`;
+  const [sectionOpen, setSectionOpen] = useState({
+    gantt: true,
+    memo: true,
+    table: true,
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(sectionStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<typeof sectionOpen>;
+      setSectionOpen((prev) => ({
+        gantt: parsed.gantt ?? prev.gantt,
+        memo: parsed.memo ?? prev.memo,
+        table: parsed.table ?? prev.table,
+      }));
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅按项目恢复一次
+  }, [sectionStorageKey]);
+
+  function updateSectionOpen(key: keyof typeof sectionOpen, open: boolean) {
+    setSectionOpen((prev) => {
+      const next = { ...prev, [key]: open };
+      try {
+        localStorage.setItem(sectionStorageKey, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   // 从排班返回：URL taskId 或 sessionStorage（排班内操作可能丢掉 URL 参数）
   useEffect(() => {
@@ -304,6 +300,7 @@ export function ProjectPlanPanel({
       setSelectedPhaseId(phase.id);
       setExpandedPhaseIds((prev) => new Set(prev).add(phase.id));
     }
+    setSelectedTaskId(taskId);
     setEditingTaskId(taskId);
     clearScheduleReturn(projectId);
     // 勿立刻 replace 清掉 taskId：部分导航下会 remount 客户端，弹窗状态会被冲掉
@@ -332,11 +329,10 @@ export function ProjectPlanPanel({
       : null;
 
   const hasPlannedWindow = Boolean(plannedStartAt && plannedEndAt);
-  const projectStart = plannedStartAt ? toDateOnly(plannedStartAt) : null;
-  const projectEnd = plannedEndAt ? toDateOnly(plannedEndAt) : null;
+  const { runWithPlannedWindow, dialog: plannedWindowGateDialog } =
+    useProjectPlannedWindowGate(hasPlannedWindow, projectId);
   const projectStartKey = plannedStartAt ? formatLocalDateInput(plannedStartAt) : null;
   const projectEndKey = plannedEndAt ? formatLocalDateInput(plannedEndAt) : null;
-  const totalDays = projectStart && projectEnd ? countCalendarDays(projectStart, projectEnd) : 0;
   const nextPhaseSortOrder =
     sortedPhases.length === 0 ? 0 : Math.max(...sortedPhases.map((p) => p.sortOrder)) + 1;
   const selectedModel = projectModels.find((m) => m.id === applyModelId);
@@ -352,24 +348,41 @@ export function ProjectPlanPanel({
 
   function selectPhase(phaseId: string) {
     setSelectedPhaseId(phaseId);
-    setShowAddTask(false);
-    setEditingTaskId(null);
   }
 
-  function reportResult(result: AnyResult): boolean {
+  function selectTask(taskId: string | null) {
+    setSelectedTaskId(taskId);
+    if (taskId) {
+      const phase = sortedPhases.find((p) => p.tasks.some((t) => t.id === taskId));
+      if (phase) {
+        setSelectedPhaseId(phase.id);
+        setExpandedPhaseIds((prev) => new Set(prev).add(phase.id));
+      }
+    }
+  }
+
+  function reportResult(result: AnyResult, successMsg?: string): boolean {
     if (result.error) {
       setError(result.error);
+      setSuccess(null);
       return false;
     }
     const msg = result.warning ?? result.phaseOutOfSyncWarning;
     setWarning(msg ?? null);
+    setError(null);
+    setSuccess(successMsg ?? null);
     return true;
+  }
+
+  function clearFeedback() {
+    setError(null);
+    setWarning(null);
+    setSuccess(null);
   }
 
   function handleApplyModel() {
     if (!applyModelId) return;
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     const fd = new FormData();
     fd.set("projectId", projectId);
     fd.set("modelId", applyModelId);
@@ -377,7 +390,7 @@ export function ProjectPlanPanel({
       const result = await applyProjectModelToProject(fd);
       setConfirmApplyOpen(false);
       setApplyDialogOpen(false);
-      if (!reportResult(result)) return;
+      if (!reportResult(result, "已套用项目模型")) return;
       setApplyModelId("");
       router.refresh();
     });
@@ -389,8 +402,53 @@ export function ProjectPlanPanel({
     plannedStartAt: string;
     plannedEndAt: string;
   }) {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
+    if (
+      projectStartKey &&
+      projectEndKey &&
+      input.plannedStartAt &&
+      input.plannedEndAt &&
+      phaseExceedsProjectWindow({
+        projectStart: projectStartKey,
+        projectEnd: projectEndKey,
+        phaseStart: input.plannedStartAt,
+        phaseEnd: input.plannedEndAt,
+      })
+    ) {
+      const extended = computeExtendedProjectWindow({
+        projectStart: projectStartKey,
+        projectEnd: projectEndKey,
+        phaseStart: input.plannedStartAt,
+        phaseEnd: input.plannedEndAt,
+      });
+      if (extended) {
+        suppressPhaseDialogCloseRef.current = true;
+        setAddPhaseDraft(input);
+        setPendingExtendPhase({
+          kind: "create",
+          input,
+          message: formatProjectWindowExtendMessage({
+            projectStart: projectStartKey,
+            projectEnd: projectEndKey,
+            nextStart: toProjectWindowDateKey(extended.plannedStartAt),
+            nextEnd: toProjectWindowDateKey(extended.plannedEndAt),
+          }),
+        });
+        return;
+      }
+    }
+    void submitCreatePhase(input, false);
+  }
+
+  function submitCreatePhase(
+    input: {
+      name: string;
+      status: PhaseStatus;
+      plannedStartAt: string;
+      plannedEndAt: string;
+    },
+    extendProjectWindow: boolean
+  ) {
     const fd = new FormData();
     fd.set("projectId", projectId);
     fd.set("name", input.name);
@@ -398,9 +456,12 @@ export function ProjectPlanPanel({
     fd.set("sortOrder", String(nextPhaseSortOrder));
     if (input.plannedStartAt) fd.set("plannedStartAt", input.plannedStartAt);
     if (input.plannedEndAt) fd.set("plannedEndAt", input.plannedEndAt);
+    if (extendProjectWindow) fd.set("extendProjectWindow", "1");
     startTransition(async () => {
       const result = await createProjectPhase(fd);
-      if (!reportResult(result)) return;
+      setPendingExtendPhase(null);
+      if (!reportResult(result, "阶段已创建")) return;
+      setAddPhaseDraft(null);
       setShowAddPhase(false);
       router.refresh();
     });
@@ -410,8 +471,49 @@ export function ProjectPlanPanel({
     phaseId: string,
     input: { name: string; status: PhaseStatus; plannedStartAt: string; plannedEndAt: string }
   ) {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
+    if (
+      projectStartKey &&
+      projectEndKey &&
+      input.plannedStartAt &&
+      input.plannedEndAt &&
+      phaseExceedsProjectWindow({
+        projectStart: projectStartKey,
+        projectEnd: projectEndKey,
+        phaseStart: input.plannedStartAt,
+        phaseEnd: input.plannedEndAt,
+      })
+    ) {
+      const extended = computeExtendedProjectWindow({
+        projectStart: projectStartKey,
+        projectEnd: projectEndKey,
+        phaseStart: input.plannedStartAt,
+        phaseEnd: input.plannedEndAt,
+      });
+      if (extended) {
+        suppressPhaseDialogCloseRef.current = true;
+        setPendingExtendPhase({
+          kind: "update",
+          phaseId,
+          input,
+          message: formatProjectWindowExtendMessage({
+            projectStart: projectStartKey,
+            projectEnd: projectEndKey,
+            nextStart: toProjectWindowDateKey(extended.plannedStartAt),
+            nextEnd: toProjectWindowDateKey(extended.plannedEndAt),
+          }),
+        });
+        return;
+      }
+    }
+    void submitUpdatePhase(phaseId, input, false);
+  }
+
+  function submitUpdatePhase(
+    phaseId: string,
+    input: { name: string; status: PhaseStatus; plannedStartAt: string; plannedEndAt: string },
+    extendProjectWindow: boolean
+  ) {
     startTransition(async () => {
       const result = await updateProjectPhasePlan({
         projectId,
@@ -420,22 +522,24 @@ export function ProjectPlanPanel({
         plannedEndAt: input.plannedEndAt,
         name: input.name,
         status: input.status,
+        extendProjectWindow,
       });
-      if (!reportResult(result)) return;
+      setPendingExtendPhase(null);
+      if (!reportResult(result, "阶段已保存")) return;
+      setShowEditPhase(false);
       router.refresh();
     });
   }
 
   function handleDeletePhase(phase: PlanPhase) {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     const fd = new FormData();
     fd.set("projectId", projectId);
     fd.set("phaseId", phase.id);
     startTransition(async () => {
       const result = await deleteProjectPhase(fd);
       setConfirmDeletePhase(null);
-      if (!reportResult(result)) return;
+      if (!reportResult(result, "阶段已删除")) return;
       if (selectedPhaseId === phase.id) setSelectedPhaseId(null);
       router.refresh();
     });
@@ -455,8 +559,7 @@ export function ProjectPlanPanel({
       cancelledNote?: string;
     }
   ): Promise<TaskFormResult> {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     return new Promise((resolve) => {
       startTransition(async () => {
         const result = await createProjectTask({
@@ -477,6 +580,7 @@ export function ProjectPlanPanel({
           return;
         }
         if (result.warning) setWarning(result.warning);
+        setSuccess("任务已创建");
         setShowAddTask(false);
         resolve({});
         router.refresh();
@@ -495,8 +599,7 @@ export function ProjectPlanPanel({
       assigneeId?: string;
     }>
   ): Promise<TaskFormResult> {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     return new Promise((resolve) => {
       startTransition(async () => {
         const result = await createProjectTasksBatch({
@@ -509,6 +612,7 @@ export function ProjectPlanPanel({
           return;
         }
         if (result.warning) setWarning(result.warning);
+        setSuccess(tasks.length > 1 ? `已添加 ${tasks.length} 条任务` : "任务已创建");
         setShowAddTask(false);
         resolve({});
         router.refresh();
@@ -529,8 +633,7 @@ export function ProjectPlanPanel({
       cancelledNote?: string;
     }
   ): Promise<TaskFormResult> {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     return new Promise((resolve) => {
       startTransition(async () => {
         const result = await updateProjectTask({
@@ -550,6 +653,7 @@ export function ProjectPlanPanel({
           return;
         }
         if (result.warning) setWarning(result.warning);
+        setSuccess("任务已保存");
         clearTaskFormDraft(projectId, task.id);
         clearScheduleReturn(projectId);
         setEditingTaskId(null);
@@ -563,11 +667,10 @@ export function ProjectPlanPanel({
   }
 
   function handleDeleteTask(task: PlanTask) {
-    setError(null);
-    setWarning(null);
+    clearFeedback();
     startTransition(async () => {
       const result = await deleteProjectTask({ projectId, taskId: task.id });
-      if (!reportResult(result)) return;
+      if (!reportResult(result, "任务已删除")) return;
       clearTaskFormDraft(projectId, task.id);
       clearScheduleReturn(projectId);
       setConfirmDeleteTask(null);
@@ -583,7 +686,7 @@ export function ProjectPlanPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {!hasPlannedWindow ? (
         <div className="shrink-0 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-          请先在「概览」标签中填写项目计划开始与计划结束日期，随后即可套用项目模型或手动添加阶段与任务。
+          请先在「概览」标签中填写项目计划开始与计划结束日期；未填写前，计划相关操作将被拦截并引导前往填写。
         </div>
       ) : null}
       {error ? (
@@ -596,199 +699,232 @@ export function ProjectPlanPanel({
           {warning}
         </p>
       ) : null}
+      {success ? (
+        <FormSuccessMessage
+          message={success}
+          onClear={() => setSuccess(null)}
+          className="shrink-0 rounded-md border border-green-200 bg-green-50 px-3 py-2 dark:border-green-900/50 dark:bg-green-950/30"
+        />
+      ) : null}
 
-      <div className="grid shrink-0 gap-3 lg:grid-cols-[minmax(220px,300px)_minmax(0,1fr)]">
-          <div className="flex max-h-[300px] flex-col gap-2 overflow-hidden rounded-md border p-2.5">
-            <div className="flex shrink-0 items-center justify-between gap-2">
-              <p className="text-sm font-medium">阶段</p>
-              {canEdit ? (
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2"
-                    disabled={!hasPlannedWindow || projectModels.length === 0}
-                    title={
-                      !hasPlannedWindow
-                        ? "需先设置项目计划起止日期"
-                        : projectModels.length === 0
-                          ? "暂无可用项目模型"
-                          : "套用项目模型"
-                    }
-                    onClick={() => {
-                      setApplyModelId("");
+      <div className="flex flex-col gap-3">
+        <ProjectPlanCollapsibleSection
+          title="阶段任务甘特"
+          description="日 / 周 / 月 / 自定义；拖条改期"
+          open={sectionOpen.gantt}
+          onOpenChange={(open) => updateSectionOpen("gantt", open)}
+          bodyClassName="pt-2"
+          actions={
+            canEdit ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 text-xs"
+                  disabled={pending}
+                  title="用系统配置中的项目模型替换本项目阶段"
+                  onClick={() => {
+                    runWithPlannedWindow(() => {
+                      clearFeedback();
                       setApplyDialogOpen(true);
-                    }}
-                  >
-                    套用模型
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2"
-                    onClick={() => setShowAddPhase(true)}
-                  >
-                    <Plus className="mr-1 h-3.5 w-3.5" />
-                    添加
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-              {sortedPhases.length === 0 ? (
-                <p className="py-4 text-center text-xs text-muted-foreground">
-                  暂无阶段。可套用项目模型快速生成，或点击「添加」手动创建。
-                </p>
-              ) : (
-                <div className="space-y-0.5">
-                  {sortedPhases.map((phase) => {
-                    const active = selectedPhase?.id === phase.id;
-                    const expanded = expandedPhaseIds.has(phase.id);
-                    return (
-                      <div key={phase.id} className="flex items-center gap-0.5">
-                        <button
-                          type="button"
-                          className="shrink-0 rounded p-0.5 hover:bg-muted disabled:opacity-30"
-                          disabled={phase.tasks.length === 0}
-                          onClick={() => togglePhaseExpanded(phase.id)}
-                          title={expanded ? "在甘特中收起任务" : "在甘特中展开任务"}
-                        >
-                          {phase.tasks.length === 0 ? (
-                            <span className="inline-block w-3.5" />
-                          ) : expanded ? (
-                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(
-                            "min-w-0 flex-1 rounded px-2 py-1.5 text-left text-sm hover:bg-muted",
-                            active && "bg-primary/10 font-medium text-primary"
-                          )}
-                          onClick={() => selectPhase(phase.id)}
-                        >
-                          <span className="block truncate">{phase.name}</span>
-                          <span className="block truncate text-[11px] text-muted-foreground">
-                            {PHASE_STATUS_LABELS[phase.status]}
-                            {phase.plannedStartAt && phase.plannedEndAt
-                              ? ` · ${formatLocalDateInput(phase.plannedStartAt)} ~ ${formatLocalDateInput(phase.plannedEndAt)}`
-                              : " · 未设置日期"}
-                            {phase.tasks.length > 0 ? ` · ${phase.tasks.length} 项任务` : ""}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {selectedPhase ? (
-            <div className="grid max-h-[300px] gap-3 md:grid-cols-[minmax(240px,340px)_minmax(0,1fr)]">
-              <div className="min-h-0 overflow-y-auto overscroll-contain rounded-md border p-2.5">
-                <PhaseDetailForm
-                  key={selectedPhase.id}
-                  phase={selectedPhase}
-                  canEdit={canEdit}
-                  pending={pending}
-                  onSave={(input) => handleUpdatePhase(selectedPhase.id, input)}
-                  onDelete={() => setConfirmDeletePhase(selectedPhase)}
-                />
-              </div>
-
-              <div className="flex min-h-0 flex-col overflow-hidden rounded-md border p-2.5">
-                <div className="mb-2 flex shrink-0 items-center justify-between">
-                  <p className="text-sm font-medium">任务</p>
-                  {canEdit ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2"
-                      onClick={() => {
-                        setEditingTaskId(null);
-                        setShowAddTask(true);
-                      }}
-                    >
-                      <Plus className="mr-1 h-3.5 w-3.5" />
-                      添加任务
-                    </Button>
-                  ) : null}
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-                  {selectedPhase.tasks.length === 0 ? (
-                    <p className="py-3 text-center text-xs text-muted-foreground">该阶段暂无任务</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {sortByOrder(selectedPhase.tasks).map((task) => (
-                        <TaskRow
-                          key={task.id}
-                          task={task}
-                          projectEndKey={projectEndKey}
-                          phaseStartKey={
-                            selectedPhase.plannedStartAt
-                              ? formatLocalDateInput(selectedPhase.plannedStartAt)
-                              : null
-                          }
-                          phaseEndKey={
-                            selectedPhase.plannedEndAt
-                              ? formatLocalDateInput(selectedPhase.plannedEndAt)
-                              : null
-                          }
-                          onOpen={() => {
-                            setShowAddTask(false);
-                            setEditingTaskId(task.id);
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex max-h-[300px] items-center justify-center rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-              选择阶段后可在此编辑基本信息与任务
-            </div>
-          )}
-        </div>
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <ProjectPlanGantt
-            projectStart={projectStart}
-            totalDays={totalDays}
+                    });
+                  }}
+                >
+                  套用项目模型
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1 text-xs"
+                  disabled={pending}
+                  onClick={() => {
+                    runWithPlannedWindow(() => {
+                      clearFeedback();
+                      setShowAddPhase(true);
+                    });
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加阶段
+                </Button>
+              </>
+            ) : null
+          }
+        >
+          <ProjectPlanGanttBoard
+            projectId={projectId}
+            canEdit={canEdit}
+            plannedStartAt={plannedStartAt}
+            plannedEndAt={plannedEndAt}
+            allocationSpanEnd={allocationSpanEnd}
             phases={sortedPhases}
             expandedPhaseIds={expandedPhaseIds}
             selectedPhaseId={selectedPhase?.id ?? null}
+            selectedTaskId={selectedTaskId}
             onSelectPhase={selectPhase}
+            onSelectTask={selectTask}
+            onTogglePhaseExpanded={togglePhaseExpanded}
+            onError={setError}
+            onWarning={setWarning}
+            runWithPlannedWindow={runWithPlannedWindow}
+            onRefresh={() => {
+              setSuccess("计划已更新");
+              router.refresh();
+            }}
           />
-        </div>
+        </ProjectPlanCollapsibleSection>
+
+        <ProjectPlanCollapsibleSection
+          title="项目备忘录"
+          description="风险 / 反馈 / @任务 / 待跟进"
+          open={sectionOpen.memo}
+          onOpenChange={(open) => updateSectionOpen("memo", open)}
+        >
+          <ProjectMemoPanel
+            projectId={projectId}
+            canEdit={canEdit}
+            memos={memos}
+            phases={sortedPhases}
+            onSelectTask={selectTask}
+            onError={(msg) => {
+              setError(msg);
+              if (msg) setSuccess(null);
+            }}
+            onSuccess={setSuccess}
+            runWithPlannedWindow={runWithPlannedWindow}
+            onRefresh={() => router.refresh()}
+          />
+        </ProjectPlanCollapsibleSection>
+
+        <ProjectPlanCollapsibleSection
+          title="阶段任务明细"
+          description="筛选、批量编辑、Excel 导入导出"
+          open={sectionOpen.table}
+          onOpenChange={(open) => updateSectionOpen("table", open)}
+          bodyClassName="pt-2"
+        >
+          <ProjectPlanTaskTable
+            projectId={projectId}
+            canEdit={canEdit}
+            phases={sortedPhases}
+            assignees={assignees}
+            selectedTaskId={selectedTaskId}
+            selectedPhaseId={selectedPhase?.id ?? null}
+            onSelectTask={selectTask}
+            onSelectPhase={selectPhase}
+            onEditTask={(taskId) => {
+              runWithPlannedWindow(() => {
+                selectTask(taskId);
+                setShowAddTask(false);
+                setEditingTaskId(taskId);
+              });
+            }}
+            onAddTask={(phaseId) => {
+              runWithPlannedWindow(() => {
+                selectPhase(phaseId);
+                setEditingTaskId(null);
+                setShowAddTask(true);
+              });
+            }}
+            onDeletePhase={(phase) => {
+              runWithPlannedWindow(() => setConfirmDeletePhase(phase));
+            }}
+            runWithPlannedWindow={runWithPlannedWindow}
+            onError={setError}
+            onWarning={setWarning}
+            onRefresh={() => {
+              setSuccess("计划已更新");
+              router.refresh();
+            }}
+          />
+        </ProjectPlanCollapsibleSection>
+      </div>
+
+      {plannedWindowGateDialog}
 
       <Dialog
         open={showAddPhase}
         onOpenChange={(open) => {
           if (pending) return;
+          if (!open) {
+            if (pendingExtendPhase?.kind === "create" || suppressPhaseDialogCloseRef.current) {
+              suppressPhaseDialogCloseRef.current = false;
+              return;
+            }
+            setAddPhaseDraft(null);
+          }
           setShowAddPhase(open);
         }}
       >
-        <DialogContent className="max-w-md" showCloseButton={!pending} closeOnOutsideClick={!pending}>
+        <DialogContent
+          className="max-w-md"
+          showCloseButton={!pending && pendingExtendPhase == null}
+          closeOnOutsideClick={!pending && pendingExtendPhase == null}
+          closeOnEscape={!pending && pendingExtendPhase == null}
+        >
           <DialogHeader>
             <DialogTitle>添加阶段</DialogTitle>
-            <DialogDescription>填写阶段名称与计划日期，保存后会出现在左侧列表中。</DialogDescription>
+            <DialogDescription>填写阶段名称与计划日期，保存后会出现在甘特与明细表中。</DialogDescription>
           </DialogHeader>
           <AddPhaseForm
-            key={showAddPhase ? "open" : "closed"}
-            disabled={pending}
-            onCancel={() => setShowAddPhase(false)}
+            key={
+              showAddPhase
+                ? `open-${addPhaseDraft?.name ?? ""}-${addPhaseDraft?.plannedStartAt ?? ""}-${addPhaseDraft?.plannedEndAt ?? ""}`
+                : "closed"
+            }
+            disabled={pending || pendingExtendPhase != null}
+            initialValues={addPhaseDraft ?? undefined}
+            onCancel={() => {
+              setAddPhaseDraft(null);
+              setShowAddPhase(false);
+            }}
             onSubmit={handleCreatePhase}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showEditPhase && selectedPhase != null}
+        onOpenChange={(open) => {
+          if (pending) return;
+          if (!open) {
+            if (pendingExtendPhase?.kind === "update" || suppressPhaseDialogCloseRef.current) {
+              suppressPhaseDialogCloseRef.current = false;
+              return;
+            }
+          }
+          setShowEditPhase(open);
+        }}
+      >
+        <DialogContent
+          className="max-w-md"
+          showCloseButton={!pending && pendingExtendPhase == null}
+          closeOnOutsideClick={!pending && pendingExtendPhase == null}
+          closeOnEscape={!pending && pendingExtendPhase == null}
+        >
+          <DialogHeader>
+            <DialogTitle>编辑阶段</DialogTitle>
+            <DialogDescription>
+              {selectedPhase ? `阶段「${selectedPhase.name}」` : "编辑阶段信息"}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedPhase ? (
+            <PhaseDetailForm
+              key={selectedPhase.id}
+              phase={selectedPhase}
+              canEdit={canEdit}
+              pending={pending || pendingExtendPhase != null}
+              onSave={(input) => {
+                handleUpdatePhase(selectedPhase.id, input);
+              }}
+              onDelete={() => {
+                setShowEditPhase(false);
+                setConfirmDeletePhase(selectedPhase);
+              }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -951,6 +1087,32 @@ export function ProjectPlanPanel({
       />
 
       <ConfirmDestructiveDialog
+        open={pendingExtendPhase != null}
+        title="延长项目计划时间"
+        message={pendingExtendPhase?.message ?? ""}
+        confirmLabel="确认延长并保存"
+        variant="default"
+        pending={pending}
+        onCancel={() => {
+          const kind = pendingExtendPhase?.kind;
+          suppressPhaseDialogCloseRef.current = true;
+          setPendingExtendPhase(null);
+          if (kind === "create") setShowAddPhase(true);
+          if (kind === "update") setShowEditPhase(true);
+        }}
+        onConfirm={() => {
+          if (!pendingExtendPhase) return;
+          if (pendingExtendPhase.kind === "create") {
+            submitCreatePhase(pendingExtendPhase.input, true);
+            return;
+          }
+          if (pendingExtendPhase.phaseId) {
+            submitUpdatePhase(pendingExtendPhase.phaseId, pendingExtendPhase.input, true);
+          }
+        }}
+      />
+
+      <ConfirmDestructiveDialog
         open={confirmDeletePhase != null}
         title="删除阶段"
         message={
@@ -979,17 +1141,24 @@ export function ProjectPlanPanel({
 
 function AddPhaseForm({
   disabled,
+  initialValues,
   onCancel,
   onSubmit,
 }: {
   disabled?: boolean;
+  initialValues?: {
+    name: string;
+    status: PhaseStatus;
+    plannedStartAt: string;
+    plannedEndAt: string;
+  };
   onCancel: () => void;
   onSubmit: (input: { name: string; status: PhaseStatus; plannedStartAt: string; plannedEndAt: string }) => void;
 }) {
-  const [name, setName] = useState("");
-  const [status, setStatus] = useState<PhaseStatus>("NOT_STARTED");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [status, setStatus] = useState<PhaseStatus>(initialValues?.status ?? "NOT_STARTED");
+  const [startAt, setStartAt] = useState(initialValues?.plannedStartAt ?? "");
+  const [endAt, setEndAt] = useState(initialValues?.plannedEndAt ?? "");
 
   return (
     <div className="space-y-3">
@@ -1712,7 +1881,7 @@ function TemplateTaskPicker({
           className="h-7 px-2 text-xs"
           disabled={disabled}
         >
-          从模板选择
+          从模板选择任务
           <ChevronDown className="ml-1 h-3.5 w-3.5" />
         </Button>
       </PopoverTrigger>
@@ -2176,237 +2345,3 @@ function EditTaskForm({
   );
 }
 
-function TaskRow({
-  task,
-  projectEndKey,
-  phaseStartKey,
-  phaseEndKey,
-  onOpen,
-}: {
-  task: PlanTask;
-  projectEndKey: string | null;
-  phaseStartKey: string | null;
-  phaseEndKey: string | null;
-  onOpen: () => void;
-}) {
-  const startKey = formatLocalDateInput(task.plannedStartAt);
-  const endKey = formatLocalDateInput(task.plannedEndAt);
-  const bounds = { projectEndKey, phaseStartKey, phaseEndKey };
-  const flags = resolveTaskOverdueFlags({ startKey, endKey, ...bounds });
-  const startLevel = resolveDateOverdueLevel(startKey, bounds);
-  const endLevel = resolveDateOverdueLevel(endKey, bounds);
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex w-full flex-col gap-0.5 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-muted/50"
-    >
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium">{task.name}</span>
-        <span className="flex shrink-0 items-center gap-1">
-          {flags.project ? (
-            <span className={OVERDUE_BADGE_CLASS.project}>{OVERDUE_LABEL.project}</span>
-          ) : null}
-          {flags.phase ? (
-            <span className={OVERDUE_BADGE_CLASS.phase}>{OVERDUE_LABEL.phase}</span>
-          ) : null}
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            {PROJECT_TASK_STATUS_LABELS[task.status]}
-          </span>
-        </span>
-      </div>
-      <p className="truncate text-[11px] text-muted-foreground">
-        <span className={startLevel ? OVERDUE_DATE_CLASS[startLevel] : undefined}>{startKey}</span>
-        <span className="text-muted-foreground"> ~ </span>
-        <span className={endLevel ? OVERDUE_DATE_CLASS[endLevel] : undefined}>{endKey}</span>
-        {task.assigneeName ? ` · ${task.assigneeName}` : " · 未指定负责人"}
-      </p>
-    </button>
-  );
-}
-
-function ProjectPlanGantt({
-  projectStart,
-  totalDays,
-  phases,
-  expandedPhaseIds,
-  selectedPhaseId,
-  onSelectPhase,
-}: {
-  projectStart: Date | null;
-  totalDays: number;
-  phases: PlanPhase[];
-  expandedPhaseIds: Set<string>;
-  selectedPhaseId: string | null;
-  onSelectPhase: (id: string) => void;
-}) {
-  const paneRef = useRef<HTMLDivElement>(null);
-  const [paneWidth, setPaneWidth] = useState(0);
-
-  useEffect(() => {
-    const el = paneRef.current;
-    if (!el) return;
-    const update = () => setPaneWidth(el.clientWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [projectStart, totalDays]);
-
-  if (!projectStart || totalDays <= 0) {
-    return (
-      <div className="flex h-full min-h-[280px] items-center justify-center rounded-md border bg-muted/10 p-6 text-center text-sm text-muted-foreground">
-        请先在「概览」中设置项目计划开始与计划结束日期，甘特图将在此显示。
-      </div>
-    );
-  }
-
-  const available = Math.max(0, paneWidth - GANTT_LABEL_WIDTH);
-  const natural = totalDays * DAY_WIDTH;
-  const dayWidth =
-    paneWidth > 0 && available > natural
-      ? Math.max(DAY_WIDTH, Math.floor(available / totalDays))
-      : DAY_WIDTH;
-
-  const days = eachCalendarDay(projectStart, addCalendarDays(projectStart, totalDays));
-  const timelineWidth = totalDays * dayWidth;
-  const monthBands = buildGanttMonthBands(days);
-
-  return (
-    <div
-      ref={paneRef}
-      className="flex h-full min-h-[320px] flex-col overflow-hidden rounded-md border"
-    >
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div style={{ width: GANTT_LABEL_WIDTH + timelineWidth, minWidth: "100%" }}>
-          <div className="sticky top-0 z-10 flex border-b bg-muted/40 text-[10px] text-muted-foreground">
-            <div
-              className="sticky left-0 z-20 flex shrink-0 items-center border-r bg-muted/40 px-2 text-xs"
-              style={{ width: GANTT_LABEL_WIDTH }}
-            >
-              阶段 / 任务
-            </div>
-            <div className="flex shrink-0 flex-col" style={{ width: timelineWidth }}>
-              <div className="flex h-5 border-b border-border/50">
-                {monthBands.map((band) => (
-                  <div
-                    key={band.key}
-                    className="box-border flex shrink-0 items-center overflow-hidden border-r border-border/40 px-1 font-medium text-foreground/80"
-                    style={{ width: band.dayCount * dayWidth }}
-                    title={band.label}
-                  >
-                    <span className="whitespace-nowrap">{band.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex h-5 text-[9px]">
-                {days.map((date, i) => (
-                  <div
-                    key={i}
-                    className="box-border flex shrink-0 items-center justify-center overflow-hidden border-r border-border/30 leading-none"
-                    style={{ width: dayWidth }}
-                    title={formatLocalDateInput(date)}
-                  >
-                    <span className="tabular-nums">{date.getDate()}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            {phases.map((phase) => {
-              const expanded = expandedPhaseIds.has(phase.id);
-              const hasDates = Boolean(phase.plannedStartAt && phase.plannedEndAt);
-              const startDay = hasDates ? dayIndex(toDateOnly(phase.plannedStartAt as Date), projectStart) : null;
-              const endDay = hasDates ? dayIndex(toDateOnly(phase.plannedEndAt as Date), projectStart) : null;
-              const orderedTasks = sortByOrder(phase.tasks);
-              const phaseBar = hasDates && startDay != null && endDay != null
-                ? ganttBarStyle(startDay, endDay, totalDays, dayWidth)
-                : null;
-              return (
-                <div key={phase.id}>
-                  <div
-                    className={cn(
-                      "flex min-h-[40px] w-full border-b",
-                      selectedPhaseId === phase.id && "bg-primary/5"
-                    )}
-                  >
-                    <div
-                      className="sticky left-0 z-[2] shrink-0 truncate border-r bg-card px-2 py-2 text-xs"
-                      style={{ width: GANTT_LABEL_WIDTH }}
-                      title={phase.name}
-                    >
-                      {phase.name}
-                    </div>
-                    <div className="relative shrink-0" style={{ width: timelineWidth }}>
-                      {phaseBar ? (
-                        <button
-                          type="button"
-                          className="absolute top-2 z-[1] h-6 min-w-[8px] truncate rounded-sm bg-primary px-1.5 text-[10px] leading-6 text-primary-foreground shadow-sm transition-opacity hover:opacity-90"
-                          style={phaseBar}
-                          title={`${phase.name} · ${formatLocalDateInput(phase.plannedStartAt as Date)} ~ ${formatLocalDateInput(phase.plannedEndAt as Date)}`}
-                          onClick={() => onSelectPhase(phase.id)}
-                        >
-                          {phase.name}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="absolute left-2 top-2.5 text-[11px] text-muted-foreground hover:underline"
-                          onClick={() => onSelectPhase(phase.id)}
-                        >
-                          未设置日期
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {expanded
-                    ? orderedTasks.map((task) => {
-                        const tStartDay = dayIndex(toDateOnly(task.plannedStartAt), projectStart);
-                        const tEndDay = dayIndex(toDateOnly(task.plannedEndAt), projectStart);
-                        const outOfPhaseWindow =
-                          hasDates && startDay != null && endDay != null
-                            ? tStartDay < startDay || tEndDay > endDay
-                            : false;
-                        const taskBar = ganttBarStyle(tStartDay, tEndDay, totalDays, dayWidth);
-                        return (
-                          <div key={task.id} className="flex min-h-[32px] w-full border-b bg-muted/5">
-                            <div
-                              className="sticky left-0 z-[2] shrink-0 truncate border-r bg-muted/5 px-2 py-1.5 pl-6 text-[11px] text-muted-foreground"
-                              style={{ width: GANTT_LABEL_WIDTH }}
-                              title={task.name}
-                            >
-                              {task.name}
-                            </div>
-                            <div className="relative shrink-0" style={{ width: timelineWidth }}>
-                              <div
-                                className={cn(
-                                  "absolute top-1.5 h-4 min-w-[6px] truncate rounded-sm px-1 text-[9px] leading-4",
-                                  outOfPhaseWindow
-                                    ? "border border-amber-500 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                                    : "bg-sky-500 text-white"
-                                )}
-                                style={taskBar}
-                                title={`${task.name} · ${formatLocalDateInput(task.plannedStartAt)} ~ ${formatLocalDateInput(task.plannedEndAt)}${
-                                  outOfPhaseWindow ? " · 超出阶段计划窗口" : ""
-                                }`}
-                              >
-                                {task.name}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

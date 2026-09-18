@@ -9,6 +9,7 @@ import {
   canEditCustomerContent,
   listCustomerAssignableUsers,
 } from "@/lib/customers/access";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 import {
   HOSPITAL_LEVEL_LABELS,
 } from "@/lib/permissions";
@@ -35,7 +36,10 @@ import { CustomerOpportunitiesList } from "@/components/customers/customer-oppor
 import { CustomerContractsList } from "@/components/customers/customer-contracts-list";
 import { CustomerOwnerPanel } from "@/components/customers/customer-owner-panel";
 import { CustomerApplyPanel } from "@/components/customers/customer-apply-panel";
+import { CustomerPresalesRequestForm } from "@/components/customers/customer-presales-request-form";
 import { BackLink } from "@/components/navigation/back-link";
+import { EntityDeleteButton } from "@/components/navigation/entity-delete-button";
+import { deleteCustomer } from "@/app/(dashboard)/customers/actions";
 import { CustomerMetaLine, CustomerGradeMetaBadge } from "@/components/customers/customer-meta-line";
 import { CustomerGradeIcon } from "@/components/customers/customer-grade-icon";
 import { CustomerGradeFollowUpRemaining } from "@/components/customers/customer-grade-follow-up-remaining";
@@ -78,10 +82,10 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
 
   const canManage = canManageCustomerOwner(session.user.role);
   const inPool = customer.ownerId === null;
-  const isSales = session.user.role === "SALES";
+  const canClaim = hasPermissionSync(session.user.role, "customers.claim");
 
 
-  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, opportunities, contracts, followUps, gradeFollowUpSchedule, operationLogs] =
+  const [salesUsers, labelMaps, tagDefinitions, contactFormOptions, pendingClaimForSales, pendingClaimCount, followUpCount, opportunities, contracts, followUps, gradeFollowUpSchedule, operationLogs, presalesUsers] =
     await Promise.all([
       canManage
         ? listCustomerAssignableUsers({
@@ -98,7 +102,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
       ]),
       getCustomerTagDefinitions(),
       loadContactFormOptions(),
-      isSales && inPool
+      canClaim && inPool
         ? db.customerClaimRequest.findFirst({
             where: {
               customerId: customer.id,
@@ -123,7 +127,10 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         role: session.user.role,
         userId: session.user.id,
       }),
-      getCustomerFollowUpHistory(customer.id),
+      getCustomerFollowUpHistory(customer.id, 50, {
+        includePendingForViewer: true,
+        viewerUserId: session.user.id,
+      }),
       getCustomerGradeFollowUpSchedule({
         customerId: customer.id,
         customerGrade: customer.customerGrade,
@@ -131,6 +138,20 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         customerType: customer.customerType,
       }),
       listEntityOperationLogs(ENTITY_TYPES.CUSTOMER, customer.id),
+      db.user.findMany({
+        where: {
+          OR: [
+            { personnelProfile: { isPresales: true, enabled: true } },
+            {
+              role: { in: ["PROJECT_STAFF", "PROJECT_MANAGER", "PROJECT_ADMIN"] },
+              personnelProfile: { enabled: true },
+            },
+          ],
+        },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+        take: 100,
+      }),
     ]);
 
   const sourceLabels = labelMaps[CONFIG_CATEGORY.CUSTOMER_SOURCE] ?? {};
@@ -142,8 +163,13 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
       ? labelMaps[CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE]
       : labelMaps[CONFIG_CATEGORY.CUSTOMER_GRADE]) ?? {};
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
-  const coverageProvinceText =
-    customer.coverageProvinces?.map((r) => r.province).filter(Boolean).join("、") || "—";
+  const coverageProvinceText = [
+    ...new Set(
+      customer.contacts
+        .flatMap((c) => c.responsibleProvinces?.map((r) => r.province) ?? [])
+        .filter(Boolean)
+    ),
+  ].join("、") || "—（请在联系人中标注负责省区）";
 
   const relations = [
     ...customer.relationsFrom.map((r) => ({
@@ -215,6 +241,14 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
               <Link href={withReturnTo(`/customers/${customer.id}/edit`, selfPath)}>编辑</Link>
             </Button>
           )}
+          {canManage ? (
+            <EntityDeleteButton
+              variant="outline"
+              confirmTitle="删除客户"
+              confirmMessage={`确定删除客户「${customer.name}」？删除后不可恢复。若仍有合同、项目或商机关联将无法删除。`}
+              onDelete={deleteCustomer.bind(null, customer.id)}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -227,7 +261,14 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
         salesUsers={salesUsers}
       />
 
-      {isSales && inPool && (
+      {!inPool ? (
+        <CustomerPresalesRequestForm
+          customerId={customer.id}
+          presalesUsers={presalesUsers}
+        />
+      ) : null}
+
+      {canClaim && inPool && (
         <CustomerApplyPanel
           customerId={customer.id}
           hasPendingRequest={Boolean(pendingClaimForSales)}
@@ -267,7 +308,9 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
                 <Row label="床位数" value={customer.bedCount?.toString() ?? "—"} />
               </>
             )}
-            <Row label="现有系统" value={customer.existingSystem ?? "—"} />
+            {!isChannel ? (
+              <Row label="现有系统" value={customer.existingSystem ?? "—"} />
+            ) : null}
             <Row label="关系类型" value={labelForConfig(typeLabels, customer.customerType)} />
             {isChannel ? (
               <>
@@ -280,7 +323,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
                   value={customer.nationwideChannel ? "是" : "否"}
                 />
                 {customer.nationwideChannel ? (
-                  <Row label="覆盖省份" value={coverageProvinceText} />
+                  <Row label="联系人负责省" value={coverageProvinceText} />
                 ) : null}
               </>
             ) : null}
@@ -321,6 +364,7 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           departmentOptions={contactFormOptions.departmentOptions}
           roleOptions={contactFormOptions.roleOptions}
           showDepartment={customer.category === "HOSPITAL"}
+          showResponsibleProvinces={isChannel && customer.nationwideChannel}
         />
       </div>
 
@@ -407,7 +451,12 @@ export default async function CustomerDetailPage({ params, searchParams }: Props
           ) : null}
         </CardHeader>
         <CardContent>
-          <FollowUpHistoryList followUps={followUps} linkReturnTo={selfPath} />
+          <FollowUpHistoryList
+            followUps={followUps}
+            linkReturnTo={selfPath}
+            canDelete={canManage}
+            customerId={customer.id}
+          />
         </CardContent>
       </Card>
 

@@ -1,147 +1,82 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useDraggable } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, Lock, LockOpen } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select-field";
-import { formatAmount } from "@/lib/opportunities/funnel";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PERSONNEL_TYPE_LABELS } from "@/lib/projects/labels";
-import { personnelTypeBadgeClass, staffColorClass } from "@/lib/projects/timeline-colors";
+import { personnelTypeSwatchClass } from "@/lib/projects/timeline-colors";
 import type { ScheduleStaff } from "@/lib/projects/schedule-serialize";
 import type { PersonnelType } from "@prisma/client";
+import { ScheduleStaffCard } from "@/components/projects/schedule-staff-card";
+import { ScrollChain } from "@/components/ui/scroll-chain";
 
 type StaffFilter = "all" | "has_rate" | "overloaded" | "idle";
 
 type Props = {
   staff: ScheduleStaff[];
-  lockedPersonIds?: string[];
-  onToggleLock: (id: string) => void;
-  onClearLocks: () => void;
   canDrag: boolean;
   periodLabel?: string;
+  /** 全局排班：支持锁定筛选；项目内嵌不传 */
+  lockedPersonIds?: string[];
+  onToggleLock?: (id: string) => void;
+  onClearLocks?: () => void;
 };
-
-function DraggableStaffItem({
-  member,
-  locked,
-  disabled,
-  onToggleLock,
-  periodLabel,
-}: {
-  member: ScheduleStaff;
-  locked: boolean;
-  disabled: boolean;
-  onToggleLock: () => void;
-  periodLabel: string;
-}) {
-  // 有人锁定时：仅已锁定人员可拖；锁定本身不禁止拖入项目
-  const canDrag = !disabled;
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `staff-${member.id}`,
-    data: { type: "staff", userId: member.id },
-    disabled: !canDrag,
-  });
-
-  const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
-  const typeLabel = member.personnelType
-    ? PERSONNEL_TYPE_LABELS[member.personnelType as PersonnelType] ?? member.personnelType
-    : null;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "rounded-lg border p-3 text-sm transition-colors",
-        locked ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/50",
-        isDragging && "opacity-50",
-        canDrag && "cursor-grab active:cursor-grabbing",
-        !canDrag && "opacity-60"
-      )}
-      {...(canDrag ? { ...listeners, ...attributes } : {})}
-    >
-      <div className="flex gap-2">
-        <span
-          className={cn("mt-0.5 w-1 shrink-0 rounded-full self-stretch", staffColorClass(member.id))}
-          aria-hidden
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-              <p className="font-medium leading-tight">{member.name}</p>
-              {typeLabel ? (
-                <span
-                  className={cn(
-                    "inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                    personnelTypeBadgeClass(member.personnelType as PersonnelType)
-                  )}
-                >
-                  {typeLabel}
-                </span>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {member.weekLoadPercent > 100 ? (
-                <span className="text-[10px] text-destructive font-medium">
-                  {member.weekLoadPercent}%
-                </span>
-              ) : null}
-              <button
-                type="button"
-                title={locked ? "解除锁定" : "锁定此人"}
-                onClick={onToggleLock}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={cn(
-                  "rounded p-1 transition-colors hover:bg-muted",
-                  locked ? "text-primary" : "text-muted-foreground"
-                )}
-              >
-                {locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {member.dailyRate != null ? `${formatAmount(member.dailyRate)}/天` : "未设月成本"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {periodLabel} {member.weekEffectiveDays} 人天 · {member.parallelProjects} 项目
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function ScheduleStaffPanel({
   staff,
+  canDrag,
+  periodLabel = "本周",
   lockedPersonIds = [],
   onToggleLock,
   onClearLocks,
-  canDrag,
-  periodLabel = "本周",
 }: Props) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StaffFilter>("all");
   const [showMore, setShowMore] = useState(false);
+  const [showResigned, setShowResigned] = useState(true);
+  const lockEnabled = Boolean(onToggleLock);
   const hasLocks = lockedPersonIds.length > 0;
   const lockedSet = useMemo(() => new Set(lockedPersonIds), [lockedPersonIds]);
 
-  const filtered = useMemo(() => {
-    return staff.filter((member) => {
-      if (search.trim() && !member.name.toLowerCase().includes(search.trim().toLowerCase())) {
-        return false;
-      }
+  const { activeStaff, resignedStaff } = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const match = (member: ScheduleStaff) => {
+      if (q && !member.name.toLowerCase().includes(q)) return false;
       if (typeFilter !== "all" && member.personnelType !== typeFilter) return false;
       if (statusFilter === "has_rate" && member.dailyRate == null) return false;
       if (statusFilter === "overloaded" && member.weekLoadPercent <= 100) return false;
       if (statusFilter === "idle" && member.parallelProjects > 0) return false;
       return true;
-    });
+    };
+    const byName = (a: ScheduleStaff, b: ScheduleStaff) =>
+      a.name.localeCompare(b.name, "zh-CN");
+    return {
+      activeStaff: staff.filter((m) => !m.resigned && match(m)).sort(byName),
+      resignedStaff: staff.filter((m) => m.resigned && match(m)).sort(byName),
+    };
   }, [staff, search, typeFilter, statusFilter]);
+
+  function renderCard(member: ScheduleStaff) {
+    const isLocked = lockedSet.has(member.id);
+    const dragDisabled = !canDrag || member.resigned || (hasLocks && !isLocked);
+    return (
+      <ScheduleStaffCard
+        key={member.id}
+        member={member}
+        locked={isLocked}
+        canDrag={!dragDisabled}
+        periodLabel={periodLabel}
+        onToggleLock={
+          lockEnabled && onToggleLock ? () => onToggleLock(member.id) : undefined
+        }
+      />
+    );
+  }
 
   const typeOptions = useMemo(() => {
     const types = new Set(staff.map((s) => s.personnelType).filter(Boolean));
@@ -154,6 +89,9 @@ export function ScheduleStaffPanel({
     ];
   }, [staff]);
 
+  const selectedTypeLabel =
+    typeOptions.find((opt) => opt.value === typeFilter)?.label ?? "全部类型";
+
   const hasMoreFiltersActive =
     search.trim().length > 0 || statusFilter !== "all" || hasLocks;
 
@@ -163,26 +101,62 @@ export function ScheduleStaffPanel({
         <div className="flex h-8 items-center gap-2">
           <p className="shrink-0 text-sm font-medium">人员</p>
           <span className="inline-block w-12 shrink-0 text-xs text-muted-foreground tabular-nums">
-            {filtered.length} 人
+            {activeStaff.length} 人
           </span>
-          <select
-            id="staff-type-filter"
-            name="typeFilter"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className={cn(
-              "h-8 min-w-0 flex-1 rounded-md border px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              typeFilter === "all"
-                ? "border-input bg-background"
-                : cn("border-transparent", personnelTypeBadgeClass(typeFilter))
-            )}
-          >
-            {typeOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <Popover open={typeMenuOpen} onOpenChange={setTypeMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                id="staff-type-filter"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={typeMenuOpen}
+                className="flex h-8 min-w-0 flex-1 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="min-w-0 truncate text-left">{selectedTypeLabel}</span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[var(--radix-popover-trigger-width)] p-1"
+            >
+              <ul
+                role="listbox"
+                aria-labelledby="staff-type-filter"
+                className="max-h-64 overflow-y-auto"
+              >
+                {typeOptions.map((opt) => {
+                  const selected = opt.value === typeFilter;
+                  return (
+                    <li key={opt.value} role="option" aria-selected={selected}>
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-muted",
+                          selected && "bg-muted font-medium"
+                        )}
+                        onClick={() => {
+                          setTypeFilter(opt.value);
+                          setTypeMenuOpen(false);
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                        {opt.value !== "all" ? (
+                          <span
+                            className={cn(
+                              "h-2.5 w-2.5 shrink-0 rounded-sm",
+                              personnelTypeSwatchClass(opt.value)
+                            )}
+                            aria-hidden
+                          />
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </PopoverContent>
+          </Popover>
           <button
             type="button"
             onClick={() => setShowMore((open) => !open)}
@@ -199,7 +173,7 @@ export function ScheduleStaffPanel({
             />
           </button>
         </div>
-        {hasLocks ? (
+        {lockEnabled && hasLocks && onClearLocks ? (
           <button
             type="button"
             className="mt-1 text-xs leading-4 text-primary hover:underline"
@@ -236,26 +210,31 @@ export function ScheduleStaffPanel({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
-        {filtered.map((member) => {
-          const isLocked = lockedSet.has(member.id);
-          // 有人锁定时，未锁定人员不可拖；已锁定人员仍可拖入项目
-          const dragDisabled = !canDrag || (hasLocks && !isLocked);
-          return (
-            <DraggableStaffItem
-              key={member.id}
-              member={member}
-              locked={isLocked}
-              disabled={dragDisabled}
-              onToggleLock={() => onToggleLock(member.id)}
-              periodLabel={periodLabel}
-            />
-          );
-        })}
-        {filtered.length === 0 ? (
+      <ScrollChain className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {activeStaff.map(renderCard)}
+        {showResigned && resignedStaff.length > 0 ? (
+          <>
+            <p className="pt-2 text-xs text-muted-foreground">离职实施</p>
+            {resignedStaff.map(renderCard)}
+          </>
+        ) : null}
+        {activeStaff.length === 0 && !showResigned ? (
           <p className="py-8 text-center text-sm text-muted-foreground">无匹配人员</p>
         ) : null}
-      </div>
+      </ScrollChain>
+      {resignedStaff.length > 0 ? (
+        <div className="shrink-0 border-t bg-card px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setShowResigned((open) => !open)}
+            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {showResigned
+              ? `收起离职实施（${resignedStaff.length}）`
+              : `显示离职实施（${resignedStaff.length}）`}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

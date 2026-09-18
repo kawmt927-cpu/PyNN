@@ -1,16 +1,6 @@
-import { requireRole } from "@/lib/session";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { redirect } from "next/navigation";
 
-export default async function MyTasksPage() {
-  await requireRole(["PROJECT_MANAGER", "PROJECT_STAFF", "ADMIN"]);
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>我的任务</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-muted-foreground">模块脚手架已就绪，后续迭代中完善。</p>
-      </CardContent>
-    </Card>
-  );
+/** 兼容旧入口：并入「计划与任务 · 项目任务」 */
+export default function MyTasksRedirectPage() {
+  redirect("/plans-tasks?tab=project");
 }

@@ -1,11 +1,17 @@
-import type { TeamWorkActivityKind } from "@/lib/today-work/team-work-activity";
+import type { TeamWorkActivityKind } from "@/lib/today-work/team-work-activity-shared";
 
 export type ActivityOpenTarget = {
   kind: TeamWorkActivityKind;
   id: string;
 };
 
-const OPEN_KINDS: TeamWorkActivityKind[] = ["check_in", "follow_up", "daily_log"];
+const OPEN_KINDS: TeamWorkActivityKind[] = [
+  "check_in",
+  "follow_up",
+  "daily_log",
+  "customer_create",
+  "opportunity_create",
+];
 
 /** 解析 ?open=follow_up:xxx */
 export function parseActivityOpenParam(

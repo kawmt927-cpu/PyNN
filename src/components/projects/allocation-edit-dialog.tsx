@@ -12,10 +12,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select-field";
+import { FormSuccessMessage } from "@/components/ui/form-success-message";
 import { cn } from "@/lib/utils";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { formatLocalDateInput } from "@/lib/dates/local-date";
-import { openEndDatePickerAfterStartChange } from "@/lib/dates/open-date-picker";
 import {
   allocationDatesOutsideProjectBoundsError,
   clampAllocationDatesToProjectBounds,
@@ -96,6 +96,20 @@ function dayAfter(dateStr: string): string {
   const next = parseDateOnlyInput(dateStr);
   next.setDate(next.getDate() + 1);
   return formatLocalDateInput(next);
+}
+
+/** 取较早的 YYYY-MM-DD（忽略空值） */
+function earlierDateKey(...keys: Array<string | undefined | null>): string | undefined {
+  const valid = keys.filter((k): k is string => Boolean(k && /^\d{4}-\d{2}-\d{2}$/.test(k)));
+  if (valid.length === 0) return undefined;
+  return valid.reduce((a, b) => (a <= b ? a : b));
+}
+
+/** 取较晚的 YYYY-MM-DD（忽略空值） */
+function laterDateKey(...keys: Array<string | undefined | null>): string | undefined {
+  const valid = keys.filter((k): k is string => Boolean(k && /^\d{4}-\d{2}-\d{2}$/.test(k)));
+  if (valid.length === 0) return undefined;
+  return valid.reduce((a, b) => (a >= b ? a : b));
 }
 
 function defaultDatesAfterLastSegment(last: SegmentDraft): {
@@ -188,6 +202,7 @@ export function AllocationEditDialog({
 }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [segments, setSegments] = useState<SegmentDraft[]>(() =>
     bar ? buildInitialSegments(bar, projectSegments, draftSegment, projectDates) : []
   );
@@ -226,6 +241,13 @@ export function AllocationEditDialog({
       );
     });
   }, [projectSegments]);
+
+  // 分段列表重建后，若当前 activeKey 已失效，回落到第一段，避免「自己与自己重叠」误报
+  useEffect(() => {
+    if (segments.length === 0) return;
+    if (segments.some((s) => s.key === activeKey)) return;
+    setActiveKey(segments[0]?.key ?? "");
+  }, [segments, activeKey]);
 
   const preview = useMemo(() => {
     if (!bar || !active?.startDate || !active?.endDate) return null;
@@ -372,7 +394,9 @@ export function AllocationEditDialog({
         if (boundsError) return boundsError;
       }
       for (const segment of segments) {
-        if (segment.key === activeKey) continue;
+        // 用 active.key / id 排除自身，避免 activeKey 短暂失效时误报「与本段重叠」
+        if (segment.key === active.key) continue;
+        if (active.id && segment.id && segment.id === active.id) continue;
         if (
           dateRangesOverlap(
             active.startDate,
@@ -388,7 +412,10 @@ export function AllocationEditDialog({
     } catch {
       return "日期无效";
     }
-  }, [active, activeKey, projectDates, segments]);
+  }, [active, projectDates, segments]);
+
+  const startDateMax = earlierDateKey(active?.endDate, maxEndKey);
+  const endDateMin = laterDateKey(active?.startDate, minStartKey);
 
   const isActiveDirty = useMemo(() => {
     if (!active) return false;
@@ -457,6 +484,7 @@ export function AllocationEditDialog({
 
   function handleSave() {
     setError(null);
+    setSuccess(null);
     if (activeOverlapError) {
       setError(activeOverlapError);
       return;
@@ -488,8 +516,9 @@ export function AllocationEditDialog({
         return;
       }
 
+      setSuccess("本段已保存");
       onSaved?.();
-      onClose();
+      window.setTimeout(() => onClose(), 700);
     });
   }
 
@@ -534,21 +563,7 @@ export function AllocationEditDialog({
             </div>
             {activeOverlapError ? (
               <p className="text-xs text-destructive">{activeOverlapError}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                各分段日期不能重叠
-                {minStartKey || maxEndKey
-                  ? `；须在项目起止范围内${
-                      minStartKey && maxEndKey
-                        ? `（${minStartKey}～${maxEndKey}）`
-                        : minStartKey
-                          ? `（不早于 ${minStartKey}）`
-                          : `（不晚于 ${maxEndKey}）`
-                    }`
-                  : ""}
-                ；保存仅提交当前分段
-              </p>
-            )}
+            ) : null}
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
@@ -562,17 +577,9 @@ export function AllocationEditDialog({
                 required
                 disabled={!canEdit}
                 min={minStartKey}
-                max={active.endDate || maxEndKey}
+                max={startDateMax}
                 value={active.startDate}
-                onChange={(e) => {
-                  const startDate = e.target.value;
-                  updateActive({ startDate });
-                  if (canEdit) {
-                    openEndDatePickerAfterStartChange("edit-endDate", {
-                      min: startDate || minStartKey,
-                    });
-                  }
-                }}
+                onChange={(e) => updateActive({ startDate: e.target.value })}
               />
             </div>
             <div className="space-y-2">
@@ -584,7 +591,7 @@ export function AllocationEditDialog({
                 type="date"
                 required
                 disabled={!canEdit}
-                min={active.startDate || minStartKey}
+                min={endDateMin}
                 max={maxEndKey}
                 value={active.endDate}
                 onChange={(e) => updateActive({ endDate: e.target.value })}
@@ -683,6 +690,7 @@ export function AllocationEditDialog({
           ) : null}
 
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          <FormSuccessMessage message={success} />
 
           {canEdit ? (
             <div className="flex justify-between gap-2">

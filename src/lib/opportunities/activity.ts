@@ -43,6 +43,7 @@ export async function getOpportunityActivity(
     }),
     db.followUp.findMany({
       where: {
+        confirmStatus: "CONFIRMED",
         OR: [
           { opportunityId },
           { linkedOpportunities: { some: { opportunityId } } },

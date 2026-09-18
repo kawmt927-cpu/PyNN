@@ -1,5 +1,7 @@
 import { Suspense } from "react";
-import { requireRole } from "@/lib/session";
+import { redirect } from "next/navigation";
+import type { UserRole } from "@prisma/client";
+import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   getTargetMetricsBundle,
@@ -12,7 +14,10 @@ import { MonthlyKpiDashboard } from "@/components/plans-tasks/monthly-kpi-dashbo
 import { ManagerMetricsOverview } from "@/components/plans-tasks/manager-metrics-overview";
 import { AssignmentsTaskList } from "@/components/plans-tasks/assignments-task-list";
 import { PlansTasksTabs } from "@/components/plans-tasks/plans-tasks-tabs";
-import { parsePlansTasksTab } from "@/lib/plans-tasks/tabs";
+import {
+  getPlansTasksCapabilities,
+  parsePlansTasksTab,
+} from "@/lib/plans-tasks/tabs";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
 import {
   parseAnnualSubject,
@@ -22,7 +27,21 @@ import {
   resolveMonthlyUserId,
 } from "@/lib/plans-tasks/metrics-scope";
 import { SalesMetricsTimeSelect } from "@/components/plans-tasks/metrics-period-switch";
-import { teamPerformanceMemberWhere, monthlyAssessmentMemberWhere } from "@/lib/sales/team-performance";
+import {
+  teamPerformanceMemberWhere,
+  monthlyAssessmentMemberWhere,
+} from "@/lib/sales/team-performance";
+import { MyProjectTasksPanel } from "@/components/projects/my-project-tasks-panel";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+const PAGE_ROLES: UserRole[] = [
+  "SALES",
+  "SALES_MANAGER",
+  "PROJECT_ADMIN",
+  "PROJECT_MANAGER",
+  "PROJECT_STAFF",
+  "ADMIN",
+];
 
 type Props = {
   searchParams: Promise<{
@@ -38,29 +57,90 @@ type Props = {
 
 export default async function PlansTasksPage({ searchParams }: Props) {
   const query = await searchParams;
-  const tab = parsePlansTasksTab(query.tab);
-  const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+  const session = await requireSession();
+  const role = session.user.role as UserRole;
+  if (!PAGE_ROLES.includes(role)) {
+    redirect("/");
+  }
+
+  const capabilities = getPlansTasksCapabilities(role);
+  if (!capabilities.salesTasks && !capabilities.projectTasks && !capabilities.dashboard) {
+    redirect("/");
+  }
+
+  const tab = parsePlansTasksTab(query.tab, capabilities);
   const now = new Date();
   const nowYear = now.getFullYear();
   const nowMonth = now.getMonth() + 1;
   const year = parseMetricsYear(query, now);
   const month = parseMetricsMonth(query, year, now);
-  const canManage = canManageWeeklyAssignments(session.user.role);
+  const canManage = canManageWeeklyAssignments(role);
 
-  const [salesUsers, monthlyUsers] = canManage
-    ? await Promise.all([
-        prisma.user.findMany({
+  const [salesUsers, monthlyUsers, projectTasks] = await Promise.all([
+    capabilities.salesTasks && canManage
+      ? prisma.user.findMany({
           where: teamPerformanceMemberWhere(),
           select: { id: true, name: true, role: true },
           orderBy: { name: "asc" },
-        }),
-        prisma.user.findMany({
+        })
+      : Promise.resolve([]),
+    capabilities.salesTasks && canManage
+      ? prisma.user.findMany({
           where: monthlyAssessmentMemberWhere(),
           select: { id: true, name: true },
           orderBy: { name: "asc" },
-        }),
-      ])
-    : [[], []];
+        })
+      : Promise.resolve([]),
+    tab === "project" && capabilities.projectTasks
+      ? prisma.projectTask.findMany({
+          where: { assigneeId: session.user.id },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            status: true,
+            progressPercent: true,
+            plannedStartAt: true,
+            plannedEndAt: true,
+            projectId: true,
+            project: {
+              select: {
+                name: true,
+                projectManagerId: true,
+              },
+            },
+            phase: { select: { name: true } },
+          },
+          orderBy: [{ plannedEndAt: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const projectAccessById =
+    tab === "project" && projectTasks.length > 0
+      ? await (async () => {
+          const projectIds = [...new Set(projectTasks.map((t) => t.projectId))];
+          if (role === "ADMIN" || role === "PROJECT_ADMIN") {
+            return new Map(projectIds.map((id) => [id, true as boolean]));
+          }
+          const members = await prisma.projectMember.findMany({
+            where: {
+              userId: session.user.id,
+              projectId: { in: projectIds },
+              accessLevel: { in: ["VIEW", "EDIT"] },
+            },
+            select: { projectId: true },
+          });
+          const openable = new Set(members.map((m) => m.projectId));
+          return new Map(
+            projectIds.map((id) => {
+              const task = projectTasks.find((t) => t.projectId === id);
+              const isPm = task?.project.projectManagerId === session.user.id;
+              return [id, isPm || openable.has(id)] as const;
+            })
+          );
+        })()
+      : new Map<string, boolean>();
 
   const regularSalesUsers = salesUsers.filter((u) => u.role === "SALES");
   const otherTeamUsers = salesUsers.filter((u) => u.role !== "SALES");
@@ -86,7 +166,7 @@ export default async function PlansTasksPage({ searchParams }: Props) {
     monthlyUsers.find((u) => u.id === monthlyUserId)?.name ?? session.user.name;
 
   const dashboardData =
-    tab === "dashboard"
+    tab === "dashboard" && capabilities.dashboard
       ? await (async () => {
           if (canManage && (salesUsers.length > 0 || monthlyUsers.length > 0)) {
             const viewPersonId =
@@ -168,17 +248,21 @@ export default async function PlansTasksPage({ searchParams }: Props) {
         })()
       : null;
 
+  const subtitle = capabilities.salesTasks && capabilities.projectTasks
+    ? "销售指派任务与项目计划任务分栏查看；销售侧还可看指标概览。"
+    : capabilities.projectTasks
+      ? "查看指派给你的项目计划任务，更新工作状态。"
+      : "查看月度/年度指标完成度，追踪管理员指派的全部任务。";
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">计划与任务</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          查看月度/年度指标完成度，追踪管理员指派的全部任务。
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
       </div>
 
       <Suspense fallback={<div className="h-10 border-b" />}>
-        <PlansTasksTabs active={tab} />
+        <PlansTasksTabs active={tab} capabilities={capabilities} />
       </Suspense>
 
       {tab === "dashboard" && dashboardData?.manager ? (
@@ -227,7 +311,9 @@ export default async function PlansTasksPage({ searchParams }: Props) {
               <h2 className="text-lg font-semibold">
                 {year} 年 {month} 月 KPI
               </h2>
-              <p className="text-sm text-muted-foreground">渠道/项目/回款催收/过程规范/维护赋能五项月度指标</p>
+              <p className="text-sm text-muted-foreground">
+                渠道/项目/回款催收/过程规范/维护赋能五项月度指标
+              </p>
             </div>
             <MonthlyKpiDashboard kpi={dashboardData.sales.monthlyKpi} />
           </section>
@@ -238,12 +324,48 @@ export default async function PlansTasksPage({ searchParams }: Props) {
         </div>
       ) : null}
 
-      {tab === "tasks" ? (
-        <AssignmentsTaskList
-          role={session.user.role}
-          userId={session.user.id}
-          returnPath="/plans-tasks?tab=tasks"
-        />
+      {tab === "tasks" && capabilities.salesTasks ? (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">销售任务</h2>
+            <p className="text-sm text-muted-foreground">
+              管理员指派的周任务、催收回款与待办确认
+            </p>
+          </div>
+          <AssignmentsTaskList
+            role={role}
+            userId={session.user.id}
+            returnPath="/plans-tasks?tab=tasks"
+          />
+        </div>
+      ) : null}
+
+      {tab === "project" && capabilities.projectTasks ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">项目任务</CardTitle>
+            <p className="text-sm font-normal text-muted-foreground">
+              项目计划中指派给你的任务；可更新状态并跳转到对应项目计划
+            </p>
+          </CardHeader>
+          <CardContent>
+            <MyProjectTasksPanel
+              tasks={projectTasks.map((task) => ({
+                id: task.id,
+                name: task.name,
+                description: task.description,
+                status: task.status,
+                progressPercent: task.progressPercent,
+                plannedStartAt: task.plannedStartAt,
+                plannedEndAt: task.plannedEndAt,
+                projectId: task.projectId,
+                projectName: task.project.name,
+                phaseName: task.phase.name,
+                canOpenPlan: projectAccessById.get(task.projectId) === true,
+              }))}
+            />
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

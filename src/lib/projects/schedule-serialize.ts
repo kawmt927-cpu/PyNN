@@ -1,5 +1,9 @@
 import { AllocationMode, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  implementationStaffListWhere,
+  shouldHideResignedPeriodMetrics,
+} from "@/lib/personnel/access";
 import { buildProjectListWhere } from "./access";
 import {
   computeAllocationCost,
@@ -73,11 +77,18 @@ export type ScheduleStaff = {
   weekEffectiveDays: number;
   parallelProjects: number;
   weekLoadPercent: number;
+  /** 人事档案已停用（离职），仅展示历史排班 */
+  resigned: boolean;
+  /** 离职且本周期无排期：界面不展示具体数值 */
+  hidePeriodMetrics: boolean;
+  /** 本周期有重叠投入的项目名称 */
+  activeProjectNames: string[];
 };
 
 export type ScheduleProjectStaff = {
   userId: string;
   name: string;
+  resigned: boolean;
 };
 
 export type ScheduleProjectOption = {
@@ -91,6 +102,11 @@ export type ScheduleProjectOption = {
   plannedEndAt: string | null;
   actualStartAt: string | null;
   actualEndAt: string | null;
+  /** 该项目全部排班人员（不限当前周期） */
+  allocatedStaff: ScheduleProjectStaff[];
+  /** 全部排班起止（用于适配自定义周期） */
+  allocationSpanStart: string | null;
+  allocationSpanEnd: string | null;
   periodEffectiveDays: number;
   periodStaffCount: number;
   periodCost: number;
@@ -104,6 +120,8 @@ export type ScheduleModuleData = {
     to: string;
   };
   staff: ScheduleStaff[];
+  /** 添加投入可选的总资源池；缺省与 staff 相同 */
+  poolStaff: ScheduleStaff[];
   projects: ScheduleProjectOption[];
   /** 当前周期内可见的投入条（用于甘特展示） */
   allBars: ScheduleBar[];
@@ -207,14 +225,13 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
   );
 
   const users = await prisma.user.findMany({
-    where: {
-      personnelProfile: { staffCategory: "IMPLEMENTATION", enabled: true },
-    },
+    where: implementationStaffListWhere(),
     select: {
       id: true,
       name: true,
       personnelProfile: {
         select: {
+          enabled: true,
           baseSalary: true,
           socialSecurityCompany: true,
           housingFundCompany: true,
@@ -224,7 +241,12 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
       },
       staffAllocations: {
         where: overlapRangeWhere(range.from, range.to),
-        select: { projectId: true, startDate: true, endDate: true },
+        select: {
+          projectId: true,
+          startDate: true,
+          endDate: true,
+          project: { select: { name: true } },
+        },
       },
     },
     orderBy: { name: "asc" },
@@ -235,6 +257,7 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
 
   const result: ScheduleStaff[] = [];
   for (const user of users) {
+    const resigned = user.personnelProfile?.enabled === false;
     const allRecords = (
       await prisma.projectStaffAllocation.findMany({ where: { userId: user.id } })
     ).map(serializeAllocationRecord);
@@ -253,18 +276,39 @@ export async function loadScheduleStaff(period: SchedulePeriod): Promise<Schedul
           ? Number(user.personnelProfile.dailyRate)
           : null;
 
-    const projectIds = new Set(user.staffAllocations.map((a) => a.projectId));
+    const projectNames = [
+      ...new Set(
+        user.staffAllocations
+          .map((a) => a.project.name)
+          .filter((name): name is string => Boolean(name))
+      ),
+    ].sort((a, b) => a.localeCompare(b, "zh-CN"));
+
+    const hidePeriodMetrics = shouldHideResignedPeriodMetrics({
+      resigned,
+      periodEffectiveDays,
+    });
+
     result.push({
       id: user.id,
       name: user.name,
-      dailyRate,
+      dailyRate: hidePeriodMetrics ? null : dailyRate,
       personnelType: user.personnelProfile?.personnelType ?? null,
-      weekEffectiveDays: round2(periodEffectiveDays),
-      parallelProjects: projectIds.size,
+      weekEffectiveDays: hidePeriodMetrics ? 0 : round2(periodEffectiveDays),
+      parallelProjects: hidePeriodMetrics ? 0 : projectNames.length,
       weekLoadPercent:
-        capacityDays > 0 ? round2((periodEffectiveDays / capacityDays) * 100) : 0,
+        hidePeriodMetrics || capacityDays <= 0
+          ? 0
+          : round2((periodEffectiveDays / capacityDays) * 100),
+      resigned,
+      hidePeriodMetrics,
+      activeProjectNames: hidePeriodMetrics ? [] : projectNames,
     });
   }
+  result.sort((a, b) => {
+    if (a.resigned !== b.resigned) return a.resigned ? 1 : -1;
+    return a.name.localeCompare(b.name, "zh-CN");
+  });
   return result;
 }
 
@@ -441,7 +485,7 @@ export async function getScheduleModuleData(
         ? { project: projectWhere }
         : {};
 
-  const [staff, projectsRaw, barsRaw] = await Promise.all([
+  const [staff, projectsRaw, barsRaw, allAllocationsMeta] = await Promise.all([
     loadScheduleStaff(period),
     prisma.project.findMany({
       where: projectWhere.id === "__none__" ? { id: "__none__" } : projectWhere,
@@ -470,17 +514,68 @@ export async function getScheduleModuleData(
       },
       orderBy: [{ project: { name: "asc" } }, { user: { name: "asc" } }],
     }),
+    // 不限周期：用于甘特行展示「项目全部成员」及适配自定义区间
+    prisma.projectStaffAllocation.findMany({
+      where: allocationWhere,
+      select: {
+        projectId: true,
+        userId: true,
+        startDate: true,
+        endDate: true,
+        user: {
+          select: {
+            name: true,
+            personnelProfile: { select: { enabled: true } },
+          },
+        },
+      },
+    }),
   ]);
+
+  const allocatedByProject = new Map<
+    string,
+    {
+      staff: Map<string, { name: string; resigned: boolean }>;
+      spanStart: Date | null;
+      spanEnd: Date | null;
+    }
+  >();
+  for (const row of allAllocationsMeta) {
+    const bucket = allocatedByProject.get(row.projectId) ?? {
+      staff: new Map<string, { name: string; resigned: boolean }>(),
+      spanStart: null,
+      spanEnd: null,
+    };
+    bucket.staff.set(row.userId, {
+      name: row.user.name,
+      resigned: row.user.personnelProfile?.enabled === false,
+    });
+    const start = toDateOnly(row.startDate);
+    const end = toDateOnly(row.endDate);
+    if (!bucket.spanStart || start.getTime() < bucket.spanStart.getTime()) {
+      bucket.spanStart = start;
+    }
+    if (!bucket.spanEnd || end.getTime() > bucket.spanEnd.getTime()) {
+      bucket.spanEnd = end;
+    }
+    allocatedByProject.set(row.projectId, bucket);
+  }
 
   const allBars = await enrichBars(barsRaw, range);
 
   // 编辑弹窗需要同项目同人员的全部分段（含当前周期外），否则会漏检重叠
+  // 含「本周期无条但仍属项目成员」的人员，便于空行上新增排班
   const pairKeys = new Map<string, { projectId: string; userId: string }>();
   for (const row of barsRaw) {
     pairKeys.set(`${row.projectId}:${row.userId}`, {
       projectId: row.projectId,
       userId: row.userId,
     });
+  }
+  for (const [projectId, bucket] of allocatedByProject) {
+    for (const userId of bucket.staff.keys()) {
+      pairKeys.set(`${projectId}:${userId}`, { projectId, userId });
+    }
   }
   const pairs = [...pairKeys.values()];
   const siblingRows =
@@ -524,8 +619,10 @@ export async function getScheduleModuleData(
       to: formatLocalDateInput(range.to),
     },
     staff,
+    poolStaff: staff.filter((s) => !s.resigned),
     projects: projectsRaw.map((p) => {
       const stats = projectStats.get(p.id);
+      const allocated = allocatedByProject.get(p.id);
       return {
         id: p.id,
         name: p.name,
@@ -537,11 +634,24 @@ export async function getScheduleModuleData(
         plannedEndAt: p.plannedEndAt?.toISOString() ?? null,
         actualStartAt: p.actualStartAt?.toISOString() ?? null,
         actualEndAt: p.actualEndAt?.toISOString() ?? null,
+        allocatedStaff: [...(allocated?.staff.entries() ?? [])]
+          .map(([userId, info]) => ({
+            userId,
+            name: info.name,
+            resigned: info.resigned,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
+        allocationSpanStart: allocated?.spanStart
+          ? formatLocalDateInput(allocated.spanStart)
+          : null,
+        allocationSpanEnd: allocated?.spanEnd
+          ? formatLocalDateInput(allocated.spanEnd)
+          : null,
         periodEffectiveDays: stats?.effectiveDays ?? 0,
         periodStaffCount: stats?.staff.size ?? 0,
         periodCost: stats?.cost ?? 0,
         periodStaff: [...(stats?.staff.entries() ?? [])]
-          .map(([userId, name]) => ({ userId, name }))
+          .map(([userId, name]) => ({ userId, name, resigned: false }))
           .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
       };
     }),

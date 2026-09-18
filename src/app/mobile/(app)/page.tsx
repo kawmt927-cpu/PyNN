@@ -5,6 +5,8 @@ import {
   NotebookPen,
   ChevronRight,
   MapPinned,
+  CalendarClock,
+  Building2,
 } from "lucide-react";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -22,6 +24,7 @@ import {
   summarizeTeamWorkActivity,
 } from "@/lib/today-work/team-work-activity";
 import { MobileExpandableActivityFeed } from "@/components/mobile/mobile-expandable-activity-feed";
+import { countMobileTaskActions } from "@/lib/mobile/task-actions";
 import { cn } from "@/lib/utils";
 import { isDailyReportCountedAsLate } from "@/lib/sales-log/daily-report-submission";
 
@@ -40,15 +43,19 @@ export default async function MobileHomePage() {
   const now = new Date();
 
   if (manager) {
-    const { start, end } = getTeamActivityDateRange("day", now);
-    const [upcoming, dueFollowUps, pendingApprovals, activityItems] = await Promise.all([
-      listUpcomingActionsThisWeek(role, userId, 30),
-      getPendingFollowUps(role, userId, "due", now, 50),
-      countPendingApprovals({ id: userId, role }),
-      listTeamWorkActivity({ start, end, filter: null }),
-    ]);
-    const summary = summarizeTeamWorkActivity(activityItems);
-    const serialized = activityItems.map((item) => ({
+    const dayRange = getTeamActivityDateRange("day", now);
+    const weekRange = getTeamActivityDateRange("week", now);
+    const [upcoming, dueFollowUps, pendingApprovals, dayItems, weekItems] =
+      await Promise.all([
+        listUpcomingActionsThisWeek(role, userId, 30),
+        getPendingFollowUps(role, userId, "due", now, 50),
+        countPendingApprovals({ id: userId, role }),
+        listTeamWorkActivity({ start: dayRange.start, end: dayRange.end, filter: null }),
+        listTeamWorkActivity({ start: weekRange.start, end: weekRange.end, filter: null }),
+      ]);
+    const daySummary = summarizeTeamWorkActivity(dayItems);
+    const weekSummary = summarizeTeamWorkActivity(weekItems);
+    const serialized = dayItems.map((item) => ({
       ...item,
       at: item.at.toISOString(),
       nextFollowUpAt: item.nextFollowUpAt ? item.nextFollowUpAt.toISOString() : null,
@@ -59,10 +66,34 @@ export default async function MobileHomePage() {
         <header className="shrink-0 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <p className="text-xs text-muted-foreground">{format(now, "M月d日 EEEE")}</p>
           <h1 className="text-lg font-bold">你好，{session.user.name}</h1>
-          <p className="text-xs text-muted-foreground">团队今日动态 · 打卡 / 往来 / 日报</p>
+          <p className="text-xs text-muted-foreground">团队今日动态 · 本周工作一览</p>
         </header>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 pb-6">
+          <Link
+            href="/mobile/activity?view=week"
+            className="block rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold">本周团队工作</p>
+              <span className="text-xs text-primary">查看全部 →</span>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-lg font-semibold tabular-nums">{weekSummary.checkIns}</p>
+                <p className="text-[11px] text-muted-foreground">打卡</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold tabular-nums">{weekSummary.followUps}</p>
+                <p className="text-[11px] text-muted-foreground">往来</p>
+              </div>
+              <div>
+                <p className="text-lg font-semibold tabular-nums">{weekSummary.logsSubmitted}</p>
+                <p className="text-[11px] text-muted-foreground">已交日报</p>
+              </div>
+            </div>
+          </Link>
+
           <div className="grid grid-cols-3 gap-2">
             <Link
               href="/mobile/plans"
@@ -79,7 +110,7 @@ export default async function MobileHomePage() {
               <p className="text-[11px] text-muted-foreground">待审</p>
             </Link>
             <Link
-              href="/mobile/follow-ups"
+              href="/mobile/follow-ups?scope=due"
               className="rounded-xl border bg-card px-2 py-3 text-center shadow-sm active:bg-muted/60"
             >
               <p className="text-lg font-semibold tabular-nums">{dueFollowUps.length}</p>
@@ -92,12 +123,13 @@ export default async function MobileHomePage() {
               <div>
                 <h2 className="text-sm font-semibold">今日团队动态</h2>
                 <p className="text-xs text-muted-foreground">
-                  打卡 {summary.checkIns} · 往来 {summary.followUps} · 已交日报 {summary.logsSubmitted}
+                  打卡 {daySummary.checkIns} · 往来 {daySummary.followUps} · 已交日报{" "}
+                  {daySummary.logsSubmitted}
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <Link href="/mobile/activity" className="text-xs text-primary">
-                  全部日志
+                  按日
                 </Link>
                 <Link href="/mobile/reports" className="text-xs text-primary">
                   日报管理
@@ -114,7 +146,8 @@ export default async function MobileHomePage() {
     );
   }
 
-  const [checkIns, dailyLog, upcoming, dueFollowUps] = await Promise.all([
+  const weekRange = getTeamActivityDateRange("week", now);
+  const [checkIns, dailyLog, upcoming, dueFollowUps, weekItems] = await Promise.all([
     listMyTodayCheckIns(userId),
     prisma.salesDailyLog.findUnique({
       where: {
@@ -133,9 +166,16 @@ export default async function MobileHomePage() {
     }),
     listUpcomingActionsThisWeek(role, userId, 30),
     getPendingFollowUps(role, userId, "due", now, 50),
+    listTeamWorkActivity({
+      start: weekRange.start,
+      end: weekRange.end,
+      filter: userId,
+    }),
   ]);
 
+  const weekSummary = summarizeTeamWorkActivity(weekItems);
   const pendingCheckIns = checkIns.filter((row) => checkInRequiresFollowUp(row)).length;
+  const taskCount = countMobileTaskActions(upcoming.items);
   let dailyLabel = "未开始";
   if (dailyLog) {
     const submitted =
@@ -153,24 +193,32 @@ export default async function MobileHomePage() {
       <header className="shrink-0 border-b bg-card px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <p className="text-xs text-muted-foreground">{format(now, "M月d日 EEEE")}</p>
         <h1 className="text-lg font-bold">你好，{session.user.name}</h1>
-        <p className="text-xs text-muted-foreground">外勤打卡 · 日报 · 待办查阅</p>
+        <p className="text-xs text-muted-foreground">外勤打卡 · 日报 · 本周工作一览</p>
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-6">
         <Link
-          href="/mobile/activity"
-          className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
+          href="/mobile/activity?view=week"
+          className="block rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-50 text-violet-700">
-            <ClipboardList className="h-5 w-5" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block font-medium">今日工作日志</span>
-            <span className="text-xs text-muted-foreground">
-              查看打卡、往来与日报（可切换日期）
-            </span>
-          </span>
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold">本周工作</p>
+            <span className="text-xs text-primary">按日查看全部 →</span>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div>
+              <p className="text-lg font-semibold tabular-nums">{weekSummary.checkIns}</p>
+              <p className="text-[11px] text-muted-foreground">打卡</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold tabular-nums">{weekSummary.followUps}</p>
+              <p className="text-[11px] text-muted-foreground">往来</p>
+            </div>
+            <div>
+              <p className="text-lg font-semibold tabular-nums">{weekSummary.logsSubmitted}</p>
+              <p className="text-[11px] text-muted-foreground">已交日报</p>
+            </div>
+          </div>
         </Link>
 
         <Link
@@ -214,25 +262,57 @@ export default async function MobileHomePage() {
         </Link>
 
         <Link
+          href="/mobile/customers"
+          className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-sky-700">
+            <Building2 className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">客户</span>
+            <span className="text-xs text-muted-foreground">搜索、新增与跟进</span>
+          </span>
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
+
+        <Link
           href="/mobile/tasks"
           className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-50 text-orange-700">
+          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-700">
             <ClipboardList className="h-5 w-5" />
+            {taskCount > 0 ? (
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+                {taskCount > 99 ? "99+" : taskCount}
+              </span>
+            ) : null}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block font-medium">待办</span>
+            <span className="block font-medium">待办任务</span>
             <span className="text-xs text-muted-foreground">
-              本周 {upcoming.items.length} 项
-              {dueFollowUps.length > 0 ? ` · ${dueFollowUps.length} 已到期` : ""}
+              {taskCount > 0 ? `本周 ${taskCount} 项未完成` : "本周暂无待办任务"}
             </span>
           </span>
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </Link>
 
-        <div className="rounded-xl border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
-          客户、商机可在「更多」中新增与查阅；往来打卡内也可快捷新建。电脑端入口在「更多 → 切换到电脑端」。
-        </div>
+        <Link
+          href="/mobile/follow-ups?scope=due"
+          className="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm active:bg-muted/60"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+            <CalendarClock className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">待跟进</span>
+            <span className="text-xs text-muted-foreground">
+              {dueFollowUps.length > 0
+                ? `${dueFollowUps.length} 已到期`
+                : "暂无到期跟进"}
+            </span>
+          </span>
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        </Link>
       </div>
     </div>
   );

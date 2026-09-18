@@ -59,6 +59,28 @@ function normalizeExternalInstallments(rows: ComparableExternalInstallment[] = [
     .sort((a, b) => a.periodNumber - b.periodNumber);
 }
 
+function productCoreKey(row: {
+  productName: string;
+  description: string;
+  costType: string;
+  costAmount: number;
+  productServiceId: string;
+}) {
+  return `${row.costType}|${row.productName}|${row.costAmount}|${row.description}|${row.productServiceId}`;
+}
+
+function normalizeProductCore(rows: ComparableContractProduct[]) {
+  return [...rows]
+    .map((row) => ({
+      productName: row.productName.trim(),
+      description: row.description?.trim() || "",
+      costType: row.costType === "EXTERNAL" ? "EXTERNAL" : "INTERNAL",
+      costAmount: Number(asMoney(row.costAmount).toFixed(2)),
+      productServiceId: row.productServiceId?.trim() || "",
+    }))
+    .sort((a, b) => productCoreKey(a).localeCompare(productCoreKey(b), "zh-CN"));
+}
+
 function normalizeProducts(rows: ComparableContractProduct[]) {
   return [...rows]
     .map((row) => ({
@@ -69,11 +91,7 @@ function normalizeProducts(rows: ComparableContractProduct[]) {
       productServiceId: row.productServiceId?.trim() || "",
       externalInstallments: normalizeExternalInstallments(row.externalInstallments),
     }))
-    .sort((a, b) => {
-      const keyA = `${a.costType}|${a.productName}|${a.costAmount}`;
-      const keyB = `${b.costType}|${b.productName}|${b.costAmount}`;
-      return keyA.localeCompare(keyB, "zh-CN");
-    });
+    .sort((a, b) => productCoreKey(a).localeCompare(productCoreKey(b), "zh-CN"));
 }
 
 function normalizePaymentInstallments(rows: ComparablePaymentInstallment[]) {
@@ -94,6 +112,28 @@ export function contractProductsChanged(
   return (
     JSON.stringify(normalizeProducts(existing)) !==
     JSON.stringify(normalizeProducts(next))
+  );
+}
+
+/** 产品构成是否变化（不含外部付款计划：条件/到期/分期金额） */
+export function contractProductCoreChanged(
+  existing: ComparableContractProduct[],
+  next: ComparableContractProduct[]
+) {
+  return (
+    JSON.stringify(normalizeProductCore(existing)) !==
+    JSON.stringify(normalizeProductCore(next))
+  );
+}
+
+/** 仅外部付款计划变化（产品行本身未变） */
+export function contractExternalPlansOnlyChanged(
+  existing: ComparableContractProduct[],
+  next: ComparableContractProduct[]
+) {
+  return (
+    !contractProductCoreChanged(existing, next) &&
+    contractProductsChanged(existing, next)
   );
 }
 

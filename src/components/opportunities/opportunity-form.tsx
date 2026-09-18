@@ -27,6 +27,8 @@ import type { ActionResult } from "@/lib/action-result";
 import type { OpportunityStatus } from "@prisma/client";
 import { cn } from "@/lib/utils";
 import { nextClientKey } from "@/lib/ui/stable-client-key";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
+import Link from "next/link";
 
 type SalesOption = { id: string; name: string };
 
@@ -141,6 +143,10 @@ export function OpportunityForm({
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [duplicateConfirm, setDuplicateConfirm] = useState<{
+    message: string;
+    existingHref: string;
+  } | null>(null);
 
   const amountLocked = initial?.amountLocked ?? false;
   const fixedOwner = readOnlyOwner ?? currentUser;
@@ -149,8 +155,7 @@ export function OpportunityForm({
     setForm((prev) => ({ ...prev, ...patch }));
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function buildFormData(confirmDuplicate: boolean) {
     const formData = new FormData();
     formData.set("customerMode", mode === "edit" ? "existing" : customerMode);
     formData.set("title", form.title);
@@ -164,6 +169,7 @@ export function OpportunityForm({
     formData.set("notes", form.notes);
     formData.set("ownerId", showOwnerSelect ? form.ownerId : fixedOwner.id);
     formData.set("partiesJson", partiesToJson(parties));
+    if (confirmDuplicate) formData.set("confirmDuplicate", "1");
 
     if (mode === "create" && customerMode === "existing") {
       formData.set("customerId", form.customerId);
@@ -172,14 +178,52 @@ export function OpportunityForm({
     } else if (mode === "edit") {
       formData.set("customerId", form.customerId);
     }
+    return formData;
+  }
+
+  function submitCreate(confirmDuplicate: boolean) {
+    startTransition(async () => {
+      setError(null);
+      try {
+        const result: ActionResult = await createOpportunity(
+          buildFormData(confirmDuplicate)
+        );
+        if (result.needsConfirm?.kind === "duplicate_opportunity") {
+          setDuplicateConfirm({
+            message: result.needsConfirm.message,
+            existingHref: result.needsConfirm.existingHref,
+          });
+          return;
+        }
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        setDuplicateConfirm(null);
+        if (result.redirectTo) {
+          router.push(result.redirectTo);
+          router.refresh();
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "提交失败，请重试");
+      }
+    });
+  }
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (mode === "create") {
+      submitCreate(false);
+      return;
+    }
 
     startTransition(async () => {
       setError(null);
       try {
-        const result: ActionResult =
-          mode === "create"
-            ? await createOpportunity(formData)
-            : await updateOpportunity(opportunityId!, formData);
+        const result: ActionResult = await updateOpportunity(
+          opportunityId!,
+          buildFormData(false)
+        );
         if (result.error) {
           setError(result.error);
           return;
@@ -195,6 +239,7 @@ export function OpportunityForm({
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
       {(mode === "create" || mode === "edit") && (
         <div className="space-y-3">
@@ -415,5 +460,29 @@ export function OpportunityForm({
         {pending ? "提交中…" : submitLabel}
       </Button>
     </form>
+
+    <ConfirmDestructiveDialog
+      open={Boolean(duplicateConfirm)}
+      title="发现同名商机"
+      message={duplicateConfirm?.message ?? ""}
+      confirmLabel="仍要新建"
+      variant="default"
+      pending={pending}
+      onCancel={() => setDuplicateConfirm(null)}
+      onConfirm={() => submitCreate(true)}
+    />
+    {duplicateConfirm ? (
+      <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+        可先打开{" "}
+        <Link
+          href={duplicateConfirm.existingHref}
+          className="text-primary underline"
+        >
+          已有商机
+        </Link>{" "}
+        查看，避免重复录入。
+      </p>
+    ) : null}
+    </>
   );
 }

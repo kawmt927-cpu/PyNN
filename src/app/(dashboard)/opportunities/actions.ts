@@ -12,14 +12,16 @@ import {
   opportunityFollowUpSchema,
   abandonOpportunitySchema,
   restoreOpportunityStatusSchema,
+  opportunityQuoteSchema,
+  opportunityQuoteUpdateSchema,
 } from "@/lib/validations/opportunity";
 import {
   canManageOpportunityOwner,
   canEditOpportunityContent,
-  canFollowUpOpportunity,
   canFollowUpOpportunityForUser,
   getOpportunityForUser,
 } from "@/lib/opportunities/access";
+import { hasPermission } from "@/lib/rbac/has-permission";
 import { buildOpportunityEditChanges } from "@/lib/opportunities/edit-log";
 import {
   buildFollowUpOpportunityUpdateData,
@@ -28,9 +30,15 @@ import {
 } from "@/lib/opportunities/follow-up-opportunity";
 import { parseExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
 import {
+  canAddOpportunityQuote,
   formatAbandonSummary,
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/opportunities/status";
+import {
+  deleteOpportunityQuoteAttachmentFile,
+} from "@/lib/opportunities/quote-attachments";
+import { formatAmount } from "@/lib/opportunities/funnel";
+import { recordEntityOperation, ENTITY_TYPES } from "@/lib/audit/entity-operation-log";
 import { getCustomerForUser } from "@/lib/customers/access";
 import { assertSelectableSalesOwner } from "@/lib/sales/selectable-users";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
@@ -145,7 +153,9 @@ async function resolveCustomerId(
   if (mode === "existing") {
     const customerId = formData.get("customerId")?.toString().trim();
     if (!customerId) return null;
-    const customer = await getCustomerForUser(customerId, role, userId);
+    const customer = await getCustomerForUser(customerId, role, userId, {
+      allowFollowUpOnAnyCustomer: true,
+    });
     if (!customer) throw new Error("无权使用该客户");
     return customerId;
   }
@@ -154,17 +164,43 @@ async function resolveCustomerId(
   const configFields = await validateCustomerConfigFields(data);
   const ownerId = await resolveOwnerId(role, userId, data.ownerId);
 
-  await assertCustomerNameAvailable(data.name);
+  let name = data.name.trim();
+  let province = data.province;
+  let city = data.city;
+  let district = data.district;
+  let hospitalLevel = data.hospitalLevel ?? undefined;
+  let bedCount = data.bedCount ?? undefined;
+
+  if (data.category === "HOSPITAL" || data.category === "COMPANY") {
+    const { requireVerifiedOrgProfile } = await import("@/lib/customers/kimi-enrich");
+    const verified = await requireVerifiedOrgProfile({
+      name,
+      category: data.category,
+      province,
+      city,
+      district,
+      hospitalLevel: hospitalLevel ?? null,
+      bedCount: bedCount ?? null,
+    });
+    name = verified.officialName;
+    province = verified.province ?? undefined;
+    city = verified.city ?? undefined;
+    district = verified.district ?? undefined;
+    hospitalLevel = verified.hospitalLevel ?? undefined;
+    bedCount = verified.bedCount ?? undefined;
+  }
+
+  await assertCustomerNameAvailable(name);
 
   const customer = await prisma.customer.create({
     data: {
-      name: data.name,
+      name,
       category: data.category,
-      hospitalLevel: data.hospitalLevel ?? undefined,
-      province: data.province,
-      city: data.city,
-      district: data.district,
-      bedCount: data.bedCount ?? undefined,
+      hospitalLevel: data.category === "HOSPITAL" ? hospitalLevel : undefined,
+      province,
+      city,
+      district,
+      bedCount: data.category === "HOSPITAL" ? bedCount : undefined,
       existingSystem: data.existingSystem,
       source: configFields.source ?? undefined,
       customerType: configFields.customerType ?? undefined,
@@ -208,12 +244,60 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
     const parties = readPartiesFromFormData(formData);
     assertPartiesNotOverlappingPrimary(parties, customerId);
 
+    let confirmStatus: "CONFIRMED" | "PENDING_MANAGER" | "REJECTED" = "CONFIRMED";
+    let customerName: string | null = null;
+    if (customerId) {
+      const customer = await getCustomerForUser(customerId, session.user.role, session.user.id, {
+        allowFollowUpOnAnyCustomer: true,
+      });
+      if (!customer) throw new Error("无权使用该客户");
+      customerName = customer.name;
+      const { resolveOpportunityConfirmStatus, canProposeOpportunityOnCustomer } = await import(
+        "@/lib/opportunities/confirm-status"
+      );
+      if (!canProposeOpportunityOnCustomer(session.user.role)) {
+        throw new Error("无权新建商机");
+      }
+      confirmStatus = resolveOpportunityConfirmStatus({
+        role: session.user.role,
+        userId: session.user.id,
+        customer,
+      });
+    }
+
+    const confirmDuplicate = formData.get("confirmDuplicate") === "1";
+    if (customerId && !confirmDuplicate) {
+      const {
+        findSameCustomerSameTitleOpportunities,
+        formatDuplicateOpportunityConfirmMessage,
+      } = await import("@/lib/opportunities/duplicate-title");
+      const duplicates = await findSameCustomerSameTitleOpportunities({
+        customerId,
+        title: parsed.title,
+      });
+      if (duplicates.length > 0) {
+        return {
+          needsConfirm: {
+            kind: "duplicate_opportunity",
+            message: formatDuplicateOpportunityConfirmMessage(
+              parsed.title.trim(),
+              customerName,
+              duplicates
+            ),
+            existingOpportunityId: duplicates[0].id,
+            existingHref: `/opportunities/${duplicates[0].id}`,
+          },
+        };
+      }
+    }
+
     const opportunity = await prisma.$transaction(async (tx) => {
       const created = await tx.opportunity.create({
         data: {
           title: parsed.title.trim(),
           customerId,
           ownerId,
+          createdById: session.user.id,
           expectedAmount: parsed.expectedAmount,
           expectedCloseDate: parseExpectedCloseMonth(parsed.expectedCloseDate),
           stage,
@@ -222,6 +306,9 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
           winProbability: parsed.winProbability ?? undefined,
           competitor: parsed.competitor?.trim() || undefined,
           notes: parsed.notes?.trim() || undefined,
+          confirmStatus,
+          confirmedAt: confirmStatus === "CONFIRMED" ? new Date() : undefined,
+          confirmedById: confirmStatus === "CONFIRMED" ? session.user.id : undefined,
         },
       });
       await replaceOpportunityParties(tx, created.id, parties);
@@ -230,14 +317,24 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
           opportunityId: created.id,
           userId: session.user.id,
           toStage: stage,
-          note: "创建商机",
+          note:
+            confirmStatus === "PENDING_MANAGER"
+              ? "创建商机（待管理确认）"
+              : confirmDuplicate
+                ? "创建商机（确认同名后新建）"
+                : "创建商机",
         },
       });
       return created;
     });
 
+    if (confirmStatus === "PENDING_MANAGER" && customerId) {
+      // 随往来代录一并确认，不单独进审批队列
+    }
+
     revalidatePath("/opportunities");
     revalidatePath("/customers");
+    revalidatePath("/approvals");
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(
       "@/lib/audit/entity-operation-log"
@@ -247,7 +344,10 @@ export async function createOpportunity(formData: FormData): Promise<ActionResul
       entityId: opportunity.id,
       userId: session.user.id,
       action: "创建",
-      summary: `创建商机「${opportunity.title}」`,
+      summary:
+        confirmStatus === "PENDING_MANAGER"
+          ? `提交商机「${opportunity.title}」待确认`
+          : `创建商机「${opportunity.title}」`,
     });
 
     return { redirectTo: `/opportunities/${opportunity.id}` };
@@ -438,7 +538,19 @@ export async function abandonOpportunity(formData: FormData): Promise<ActionResu
 
 export async function restoreOpportunityStatus(formData: FormData): Promise<ActionResult> {
   try {
-    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    const session = await requireRole([
+      "ADMIN",
+      "SALES_MANAGER",
+      "SALES",
+      "HR",
+      "PROJECT_ADMIN",
+      "PROJECT_MANAGER",
+      "PROJECT_STAFF",
+      "OTHER",
+    ]);
+    if (!(await hasPermission(session.user.role, "opportunities.restore"))) {
+      return { error: "无权恢复已放弃商机" };
+    }
     const parsed = restoreOpportunityStatusSchema.parse({
       opportunityId: formData.get("opportunityId"),
     });
@@ -520,14 +632,73 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
     const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
     const parsed = parseOpportunityFollowUpForm(formData);
 
+    const skipAssignmentCompletionRaw = formData.get("skipAssignmentCompletion")?.toString().trim();
+    const skipAssignmentCompletion =
+      skipAssignmentCompletionRaw === "true" || skipAssignmentCompletionRaw === "1";
+    const completedAssignmentIds = [
+      ...new Set(
+        formData
+          .getAll("completedAssignmentIds")
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      ),
+    ];
+
     const existing = await prisma.opportunity.findUnique({
       where: { id: parsed.opportunityId },
-      include: { owner: { select: { name: true } } },
+      include: {
+        owner: { select: { name: true } },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            ownerId: true,
+            assistantOwners: { select: { userId: true } },
+          },
+        },
+      },
     });
     if (!existing) return { error: "商机不存在或无权访问" };
     if (!(await canFollowUpOpportunityForUser(session.user.role, session.user.id, existing))) {
       return { error: "无权跟进该商机" };
     }
+    if (!existing.customerId || !existing.customer) {
+      return { error: "商机未关联主客户，无法写入客户往来" };
+    }
+
+    const { listPendingAssignmentsForFollowUp, completeWeeklyAssignmentsByIds } = await import(
+      "@/lib/today-work/assignment-follow-up-complete"
+    );
+    const { resolveOpportunityFollowUpConfirmStatus } = await import(
+      "@/lib/follow-ups/confirm-status"
+    );
+
+    const pendingAssignments = await listPendingAssignmentsForFollowUp({
+      assigneeId: session.user.id,
+      customerId: existing.customerId,
+      opportunityIds: [parsed.opportunityId],
+    });
+    const hasPendingAssignments = pendingAssignments.length > 0;
+    if (hasPendingAssignments) {
+      if (!skipAssignmentCompletion && completedAssignmentIds.length === 0) {
+        return { error: "请选择是否完成指派任务" };
+      }
+      if (!skipAssignmentCompletion) {
+        const pendingIdSet = new Set(pendingAssignments.map((a) => a.id));
+        for (const id of completedAssignmentIds) {
+          if (!pendingIdSet.has(id)) {
+            return { error: "所选任务无效或已完成" };
+          }
+        }
+      }
+    }
+
+    const confirmStatus = resolveOpportunityFollowUpConfirmStatus({
+      role: session.user.role,
+      userId: session.user.id,
+      opportunity: existing,
+      customer: existing.customer,
+      hasPendingAssignment: hasPendingAssignments && !skipAssignmentCompletion,
+    });
 
     const { CONFIG_CATEGORY, assertConfigValue, getConfigOptionMaps } = await import(
       "@/lib/config-options"
@@ -544,35 +715,62 @@ export async function createOpportunityFollowUp(formData: FormData): Promise<Act
       opportunityInput,
       stageLabels
     );
+    const applyOpportunityChanges = Boolean(changeSummary) && confirmStatus === "CONFIRMED";
 
     await prisma.$transaction(async (tx) => {
-      if (changeSummary) {
+      if (applyOpportunityChanges && changeSummary) {
         await tx.opportunity.update({
           where: { id: parsed.opportunityId },
           data: buildFollowUpOpportunityUpdateData(existing, opportunityInput),
         });
       }
 
-      if (!existing.customerId) {
-        throw new Error("商机未关联主客户，无法写入客户往来");
-      }
-
       await tx.followUp.create({
         data: {
-          customerId: existing.customerId,
+          customerId: existing.customerId!,
           opportunityId: parsed.opportunityId,
           userId: session.user.id,
           method: parsed.method,
           content: parsed.content,
-          result: changeSummary ?? undefined,
+          result: applyOpportunityChanges ? (changeSummary ?? undefined) : undefined,
           followUpAt: new Date(parsed.followUpAt),
           nextFollowUpAt: parsePlannedFollowUpDateInput(parsed.nextFollowUpAt),
+          confirmStatus,
+          confirmedAt: confirmStatus === "CONFIRMED" ? new Date() : undefined,
+          confirmedById: confirmStatus === "CONFIRMED" ? session.user.id : undefined,
           linkedOpportunities: {
             create: [{ opportunityId: parsed.opportunityId }],
           },
         },
       });
+
+      if (hasPendingAssignments && !skipAssignmentCompletion) {
+        await completeWeeklyAssignmentsByIds(tx, {
+          assigneeId: session.user.id,
+          assignmentIds: completedAssignmentIds,
+        });
+      }
     });
+
+    if (confirmStatus === "PENDING_MANAGER") {
+      const { createAppNotification, NOTIFICATION_TYPES } = await import(
+        "@/lib/notifications/app-notifications"
+      );
+      await createAppNotification({
+        type: NOTIFICATION_TYPES.FOLLOW_UP_PENDING_CONFIRM,
+        title: "往来待确认入库",
+        body: `${existing.customer.name}：有一条非本人客户往来待确认`,
+        linkHref: "/approvals?type=FOLLOW_UP_CONFIRM",
+        actorRole: session.user.role,
+        excludeUserId: session.user.id,
+        pushWeCom: true,
+        meta: {
+          opportunityId: parsed.opportunityId,
+          customerId: existing.customerId,
+          action: "confirm_follow_up",
+        },
+      });
+    }
 
     await revalidateOpportunityFollowUpPaths(parsed.opportunityId, existing.customerId);
     return { redirectTo: `/opportunities/${parsed.opportunityId}` };
@@ -643,6 +841,228 @@ export async function updateOpportunityFollowUp(formData: FormData): Promise<Act
 
     await revalidateOpportunityFollowUpPaths(parsed.opportunityId, followUp.opportunity.customerId);
     return { redirectTo: `/opportunities/${parsed.opportunityId}` };
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+function parseQuoteDate(value: string): Date {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error("报价日期无效");
+  }
+  return d;
+}
+
+export async function createOpportunityQuote(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const parsed = opportunityQuoteSchema.parse({
+      opportunityId: formData.get("opportunityId"),
+      amount: formData.get("amount"),
+      quotedAt: formData.get("quotedAt"),
+      notes: formData.get("notes") || undefined,
+    });
+
+    const opportunity = await getOpportunityForUser(
+      parsed.opportunityId,
+      session.user.role,
+      session.user.id
+    );
+    if (!opportunity) return { error: "商机不存在或无权访问" };
+    if (!canAddOpportunityQuote(opportunity.status)) {
+      return { error: "仅未签约商机可新增报价单" };
+    }
+    if (!canEditOpportunityContent(session.user.role, session.user.id, opportunity)) {
+      return { error: "无权新增报价单" };
+    }
+
+    const quotedAt = parseQuoteDate(parsed.quotedAt);
+    const quote = await prisma.opportunityQuote.create({
+      data: {
+        opportunityId: parsed.opportunityId,
+        amount: parsed.amount,
+        quotedAt,
+        notes: parsed.notes?.trim() || null,
+        createdById: session.user.id,
+      },
+    });
+
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: parsed.opportunityId,
+      userId: session.user.id,
+      action: "新增报价单",
+      summary: `报价 ${formatAmount(parsed.amount)} · ${quotedAt.toISOString().slice(0, 10)}`,
+    });
+
+    revalidatePath(`/opportunities/${parsed.opportunityId}`);
+    revalidatePath("/opportunities");
+    return { quoteId: quote.id };
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function updateOpportunityQuote(formData: FormData): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const parsed = opportunityQuoteUpdateSchema.parse({
+      quoteId: formData.get("quoteId"),
+      amount: formData.get("amount"),
+      quotedAt: formData.get("quotedAt"),
+      notes: formData.get("notes") || undefined,
+    });
+
+    const existing = await prisma.opportunityQuote.findUnique({
+      where: { id: parsed.quoteId },
+      include: {
+        opportunity: { select: { id: true, ownerId: true, status: true, title: true } },
+      },
+    });
+    if (!existing) return { error: "报价单不存在" };
+
+    const opportunity = await getOpportunityForUser(
+      existing.opportunityId,
+      session.user.role,
+      session.user.id
+    );
+    if (!opportunity) return { error: "商机不存在或无权访问" };
+    if (!canEditOpportunityContent(session.user.role, session.user.id, opportunity)) {
+      return { error: "无权修改报价单" };
+    }
+
+    const quotedAt = parseQuoteDate(parsed.quotedAt);
+    await prisma.opportunityQuote.update({
+      where: { id: parsed.quoteId },
+      data: {
+        amount: parsed.amount,
+        quotedAt,
+        notes: parsed.notes?.trim() || null,
+      },
+    });
+
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: existing.opportunityId,
+      userId: session.user.id,
+      action: "修改报价单",
+      summary: `报价 ${formatAmount(parsed.amount)} · ${quotedAt.toISOString().slice(0, 10)}`,
+    });
+
+    revalidatePath(`/opportunities/${existing.opportunityId}`);
+    revalidatePath("/opportunities");
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+export async function deleteOpportunityQuote(quoteId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    const existing = await prisma.opportunityQuote.findUnique({
+      where: { id: quoteId },
+      include: {
+        attachments: { select: { storageKey: true } },
+        opportunity: { select: { id: true, ownerId: true, status: true } },
+      },
+    });
+    if (!existing) return { error: "报价单不存在" };
+
+    const opportunity = await getOpportunityForUser(
+      existing.opportunityId,
+      session.user.role,
+      session.user.id
+    );
+    if (!opportunity) return { error: "商机不存在或无权访问" };
+    if (!canEditOpportunityContent(session.user.role, session.user.id, opportunity)) {
+      return { error: "无权删除报价单" };
+    }
+
+    await prisma.opportunityQuote.delete({ where: { id: quoteId } });
+    await Promise.all(
+      existing.attachments.map((row) => deleteOpportunityQuoteAttachmentFile(row.storageKey))
+    );
+
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: existing.opportunityId,
+      userId: session.user.id,
+      action: "删除报价单",
+      summary: `删除报价 ${formatAmount(existing.amount)}`,
+    });
+
+    revalidatePath(`/opportunities/${existing.opportunityId}`);
+    revalidatePath("/opportunities");
+    return {};
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+/** 管理员 / 销售管理：删除商机（有关联合同时拒绝） */
+export async function deleteOpportunity(opportunityId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["ADMIN", "SALES_MANAGER"]);
+    const id = opportunityId.trim();
+    if (!id) return { error: "商机 ID 无效" };
+
+    const existing = await prisma.opportunity.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        title: true,
+        quotes: { select: { id: true, attachments: { select: { storageKey: true } } } },
+      },
+    });
+    if (!existing) return { error: "商机不存在或已删除" };
+
+    const contractCount = await prisma.contract.count({
+      where: { opportunityId: id },
+    });
+    if (contractCount > 0) {
+      return {
+        error: `无法删除「${existing.title}」：仍有 ${contractCount} 份关联合同。请先处理合同后再删。`,
+      };
+    }
+
+    const storageKeys = existing.quotes.flatMap((q) =>
+      q.attachments.map((a) => a.storageKey)
+    );
+
+    await prisma.$transaction(async (tx) => {
+      await tx.followUp.updateMany({
+        where: { opportunityId: id },
+        data: { opportunityId: null },
+      });
+      await tx.salesWeeklyAssignment.updateMany({
+        where: { opportunityId: id },
+        data: { opportunityId: null },
+      });
+      await tx.salesPlanItem.updateMany({
+        where: { opportunityId: id },
+        data: { opportunityId: null },
+      });
+      await tx.opportunity.delete({ where: { id } });
+    });
+
+    await Promise.all(
+      storageKeys.map((key) => deleteOpportunityQuoteAttachmentFile(key))
+    );
+
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.OPPORTUNITY,
+      entityId: id,
+      userId: session.user.id,
+      action: "DELETE",
+      summary: `删除商机「${existing.title}」`,
+    });
+
+    revalidatePath("/opportunities");
+    revalidatePath("/customers");
+    revalidatePath("/admin/map");
+    return { redirectTo: "/opportunities" };
   } catch (error) {
     return formatActionError(error);
   }

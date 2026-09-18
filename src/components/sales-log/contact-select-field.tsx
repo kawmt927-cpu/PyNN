@@ -37,6 +37,9 @@ type Props = SingleProps | MultipleProps;
 function formatContactLabel(c: ContactOption) {
   const parts = [c.name];
   if (c.title) parts.push(c.title);
+  if (c.responsibleProvinces && c.responsibleProvinces.length > 0) {
+    parts.push(c.responsibleProvinces.join("、"));
+  }
   let label = parts.join(" · ");
   if (c.isPrimary) label += "（主联系人）";
   return label;
@@ -46,6 +49,9 @@ function contactDetailParts(c: ContactOption) {
   const parts: string[] = [];
   if (c.title) parts.push(c.title);
   if (c.department) parts.push(c.department);
+  if (c.responsibleProvinces && c.responsibleProvinces.length > 0) {
+    parts.push(`负责：${c.responsibleProvinces.join("、")}`);
+  }
   if (c.phone) parts.push(c.phone);
   if (c.wechat) parts.push(c.wechat);
   if (c.isPrimary) parts.push("主联系人");
@@ -87,6 +93,7 @@ export function ContactSelectField(props: Props) {
 
   const [contacts, setContacts] = useState<ContactOption[]>([]);
   const [canWriteContent, setCanWriteContent] = useState(false);
+  const [canProposeContact, setCanProposeContact] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [editingContact, setEditingContact] = useState<QuickContactDraft | null>(null);
@@ -95,11 +102,16 @@ export function ContactSelectField(props: Props) {
     if (!customerId) {
       setContacts([]);
       setCanWriteContent(false);
+      setCanProposeContact(false);
       return;
     }
     try {
       const res = await fetch(`/api/customers/${customerId}/contacts`, { credentials: "include" });
-      const data = (await res.json()) as { items: ContactOption[]; canWriteContent?: boolean };
+      const data = (await res.json()) as {
+        items: ContactOption[];
+        canWriteContent?: boolean;
+        canProposeContact?: boolean;
+      };
       setContacts(
         (data.items ?? []).map((item) => ({
           ...item,
@@ -107,9 +119,11 @@ export function ContactSelectField(props: Props) {
         }))
       );
       setCanWriteContent(Boolean(data.canWriteContent));
+      setCanProposeContact(Boolean(data.canProposeContact));
     } catch {
       setContacts([]);
       setCanWriteContent(false);
+      setCanProposeContact(false);
     }
   }, [customerId]);
 
@@ -120,6 +134,8 @@ export function ContactSelectField(props: Props) {
   useEffect(() => {
     if (!customerId) {
       setContacts([]);
+      setCanWriteContent(false);
+      setCanProposeContact(false);
       return;
     }
     void loadContacts();
@@ -168,15 +184,20 @@ export function ContactSelectField(props: Props) {
     );
   }
 
+  const canCreate = canWriteContent || canProposeContact;
   const multipleHint =
     multiple && required
-      ? !canWriteContent
-        ? "您无权为该客户新增联系人，请从已有联系人中选择或联系销售管理。"
-        : contacts.length === 0
-        ? "该客户暂无联系人，请点击「新增联系人」添加。"
-        : props.value.length === 0
-          ? "请至少选择一位联系人。"
-          : ""
+      ? contacts.length === 0
+        ? canCreate
+          ? canWriteContent
+            ? "该客户暂无联系人，请点击「新增联系人」添加。"
+            : "该客户暂无联系人，可新增后提交，待销售管理确认入库。"
+          : "该客户暂无联系人，请联系负责人补充后再录入往来。"
+        : !canWriteContent && canProposeContact
+          ? "可从已有联系人中选择，也可新增（新增需销售管理确认）。"
+          : props.value.length === 0
+            ? "请至少选择一位联系人。"
+            : ""
       : "";
 
   return (
@@ -187,15 +208,17 @@ export function ContactSelectField(props: Props) {
             联系人{required ? " *" : ""}
             {multiple ? <span className="ml-1 font-normal text-muted-foreground">（可多选）</span> : null}
           </Label>
-          {canWriteContent ? (
+          {canCreate ? (
             <Button type="button" variant="outline" size="sm" onClick={() => openCreateContact()}>
               新增联系人
             </Button>
           ) : null}
         </div>
 
-        {!canWriteContent ? (
-          <p className="text-xs text-muted-foreground">您无权为该客户新增联系人。</p>
+        {!canWriteContent && canProposeContact ? (
+          <p className="text-xs text-muted-foreground">
+            非负责客户：新增联系人将提交销售管理确认后入库。
+          </p>
         ) : null}
 
         {multiple ? (
@@ -205,6 +228,7 @@ export function ContactSelectField(props: Props) {
             <div className="divide-y divide-border/60 rounded-md border bg-background/60">
               {contacts.map((c) => {
                 const checked = props.value.includes(c.id);
+                const pending = c.confirmStatus === "PENDING_MANAGER";
                 return (
                   <div
                     key={c.id}
@@ -218,6 +242,11 @@ export function ContactSelectField(props: Props) {
                         onChange={() => toggleContact(c.id)}
                       />
                       <ContactNameLabel contact={c} />
+                      {pending ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900">
+                          待确认
+                        </span>
+                      ) : null}
                     </label>
                     {canWriteContent ? (
                       <Button
@@ -251,6 +280,7 @@ export function ContactSelectField(props: Props) {
               {contacts.map((c) => (
                 <option key={c.id} value={c.id}>
                   {formatContactLabel(c)}
+                  {c.confirmStatus === "PENDING_MANAGER" ? "（待确认）" : ""}
                 </option>
               ))}
             </select>
@@ -281,7 +311,7 @@ export function ContactSelectField(props: Props) {
         ) : null}
       </div>
 
-      {canWriteContent ? (
+      {canCreate ? (
         <QuickContactDialog
           open={dialogOpen}
           onOpenChange={(open) => {
@@ -291,9 +321,28 @@ export function ContactSelectField(props: Props) {
           customerId={customerId}
           contact={editingContact}
           initialName={newContactName || initialName}
+          pendingConfirmHint={!canWriteContent && canProposeContact}
           onSaved={(contact) => {
-            void loadContacts().then(() => {
-              if (editingContact) return;
+            // 先并入列表并勾选，再异步刷新，避免待确认联系人短暂不在列表里导致无法提交
+            if (!editingContact) {
+              const optimisticPending = !canWriteContent && canProposeContact;
+              setContacts((prev) => {
+                if (prev.some((c) => c.id === contact.id)) return prev;
+                return [
+                  {
+                    id: contact.id,
+                    name: contact.name,
+                    title: null,
+                    department: null,
+                    phone: null,
+                    wechat: null,
+                    role: "OTHER",
+                    isPrimary: false,
+                    confirmStatus: optimisticPending ? "PENDING_MANAGER" : "CONFIRMED",
+                  },
+                  ...prev,
+                ];
+              });
               if (multiple) {
                 const current = props.value;
                 if (!current.includes(contact.id)) {
@@ -302,7 +351,8 @@ export function ContactSelectField(props: Props) {
               } else {
                 props.onChange(contact.id);
               }
-            });
+            }
+            void loadContacts();
           }}
         />
       ) : null}

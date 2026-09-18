@@ -10,6 +10,7 @@ import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
 import { customerFormSchema, followUpFormSchema, customerRelationSchema } from "@/lib/validations/customer";
 import { canManageCustomerOwner, getCustomerForUser, assertCustomerContentWriteAccess, assertCustomerFollowUpWriteAccess, CUSTOMER_ASSIGNABLE_ROLES } from "@/lib/customers/access";
+import { hasPermission } from "@/lib/rbac/has-permission";
 import { replaceCustomerAssistants } from "@/lib/customers/assistants";
 import { assertCustomerNameAvailable } from "@/lib/customers/duplicate-name";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
@@ -27,6 +28,7 @@ import {
 } from "@/lib/follow-ups/unified";
 import { ensureTodayDailyLog } from "@/lib/sales-log/daily-log";
 import { createFollowUpFromAgent } from "@/lib/sales-log/write";
+import { listPendingAssignmentsForFollowUp } from "@/lib/today-work/assignment-follow-up-complete";
 
 function parseOwnerField(raw: FormDataEntryValue | null): string | null {
   const value = raw?.toString().trim() ?? "";
@@ -150,10 +152,39 @@ async function resolveOwnerId(role: UserRole, userId: string, ownerId: string | 
 export async function createCustomer(formData: FormData): Promise<ActionResult> {
   try {
     const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
+    if (!(await hasPermission(session.user.role, "customers.create"))) {
+      return { error: "无权新建客户" };
+    }
     const data = parseCustomerForm(formData);
     const configFields = await validateCustomerConfigFields(data);
 
-    await assertCustomerNameAvailable(data.name);
+    let name = data.name.trim();
+    let province = data.province;
+    let city = data.city;
+    let district = data.district;
+    let hospitalLevel = data.hospitalLevel ?? undefined;
+    let bedCount = data.bedCount ?? undefined;
+
+    if (data.category === "HOSPITAL" || data.category === "COMPANY") {
+      const { requireVerifiedOrgProfile } = await import("@/lib/customers/kimi-enrich");
+      const verified = await requireVerifiedOrgProfile({
+        name,
+        category: data.category,
+        province,
+        city,
+        district,
+        hospitalLevel: hospitalLevel ?? null,
+        bedCount: bedCount ?? null,
+      });
+      name = verified.officialName;
+      province = verified.province ?? undefined;
+      city = verified.city ?? undefined;
+      district = verified.district ?? undefined;
+      hospitalLevel = verified.hospitalLevel ?? undefined;
+      bedCount = verified.bedCount ?? undefined;
+    }
+
+    await assertCustomerNameAvailable(name);
 
     const ownerId = await resolveOwnerId(session.user.role, session.user.id, data.ownerId);
     const canSetAssistants =
@@ -163,18 +194,19 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const { getConfigOptions, CONFIG_CATEGORY } = await import("@/lib/config-options");
     const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
     const isChannel = isChannelCustomerType(configFields.customerType, typeOptions);
+    const canSetNationwide = canManageCustomerOwner(session.user.role);
     const nationwideChannel =
-      isChannel && parseNationwideChannelFlag(formData);
+      canSetNationwide && isChannel && parseNationwideChannelFlag(formData);
 
     const customer = await prisma.customer.create({
       data: {
-        name: data.name,
+        name,
         category: data.category,
-        hospitalLevel: data.hospitalLevel ?? undefined,
-        province: data.province,
-        city: data.city,
-        district: data.district,
-        bedCount: data.bedCount ?? undefined,
+        hospitalLevel: data.category === "HOSPITAL" ? hospitalLevel : undefined,
+        province,
+        city,
+        district,
+        bedCount: data.category === "HOSPITAL" ? bedCount : undefined,
         existingSystem: data.existingSystem,
         source: configFields.source,
         customerType: configFields.customerType,
@@ -193,13 +225,11 @@ export async function createCustomer(formData: FormData): Promise<ActionResult> 
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(customer.id, parseTagValues(formData));
 
-    const { replaceCustomerCoverageProvinces, parseCoverageProvincesFromForm } = await import(
+    // 全国性渠道覆盖省改由联系人负责省驱动，不再写入客户层覆盖省
+    const { replaceCustomerCoverageProvinces } = await import(
       "@/lib/customers/coverage-provinces"
     );
-    await replaceCustomerCoverageProvinces(
-      customer.id,
-      nationwideChannel ? parseCoverageProvincesFromForm(formData) : []
-    );
+    await replaceCustomerCoverageProvinces(customer.id, []);
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(
       "@/lib/audit/entity-operation-log"
@@ -295,9 +325,30 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     ]);
 
     const typeLabels = optionMaps[CONFIG_CATEGORY.CUSTOMER_TYPE] ?? {};
-    const nationwideChannel =
-      isChannelCustomerType(configFields.customerType, typeLabels) &&
-      parseNationwideChannelFlag(formData);
+    const isChannel = isChannelCustomerType(configFields.customerType, typeLabels);
+    const canSetNationwide = canManageCustomerOwner(session.user.role);
+    const requestedNationwide = isChannel && parseNationwideChannelFlag(formData);
+    const nationwideChannel = canSetNationwide
+      ? requestedNationwide
+      : isChannel && Boolean(existing.nationwideChannel);
+
+    if (existing.nationwideChannel && !nationwideChannel) {
+      const contactWithProvinces = await prisma.contact.count({
+        where: {
+          customerId: id,
+          responsibleProvinces: { some: {} },
+        },
+      });
+      if (
+        contactWithProvinces > 0 &&
+        formData.get("confirmClearContactProvinces")?.toString() !== "1"
+      ) {
+        return {
+          error: `取消全国性渠道将清空 ${contactWithProvinces} 位联系人的负责省区，请确认后重试`,
+        };
+      }
+    }
+
     const nextData = {
       name: data.name,
       category: data.category,
@@ -380,13 +431,22 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
     const { replaceCustomerTags } = await import("@/lib/customers/tags");
     await replaceCustomerTags(id, tagValues);
 
-    const { replaceCustomerCoverageProvinces, parseCoverageProvincesFromForm } = await import(
+    const { replaceCustomerCoverageProvinces } = await import(
       "@/lib/customers/coverage-provinces"
     );
-    await replaceCustomerCoverageProvinces(
-      id,
-      nationwideChannel ? parseCoverageProvincesFromForm(formData) : []
-    );
+    await replaceCustomerCoverageProvinces(id, []);
+
+    if (!nationwideChannel) {
+      const contactIds = await prisma.contact.findMany({
+        where: { customerId: id },
+        select: { id: true },
+      });
+      if (contactIds.length > 0) {
+        await prisma.contactResponsibleProvince.deleteMany({
+          where: { contactId: { in: contactIds.map((c) => c.id) } },
+        });
+      }
+    }
 
     const { recordEntityOperation, ENTITY_TYPES } = await import(
       "@/lib/audit/entity-operation-log"
@@ -419,7 +479,75 @@ export async function updateCustomer(id: string, formData: FormData): Promise<Ac
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);
+    revalidatePath(`/mobile/customers/${id}`);
     return { redirectTo: `/customers/${id}` };
+  } catch (error) {
+    return formatActionError(error);
+  }
+}
+
+/** 手机端快捷开关：全国性渠道 */
+export async function setCustomerNationwideChannel(
+  customerId: string,
+  enabled: boolean,
+  confirmClearContactProvinces = false
+): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["SALES_MANAGER", "ADMIN"]);
+    const existing = await getCustomerForUser(
+      customerId,
+      session.user.role,
+      session.user.id
+    );
+    if (!existing) return { error: "无权访问该客户" };
+
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { getConfigOptions, CONFIG_CATEGORY } = await import("@/lib/config-options");
+    const typeOptions = await getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE);
+    if (!isChannelCustomerType(existing.customerType, typeOptions)) {
+      return { error: "仅渠道客户可设置全国性标记" };
+    }
+
+    if (existing.nationwideChannel && !enabled) {
+      const contactWithProvinces = await prisma.contact.count({
+        where: {
+          customerId,
+          responsibleProvinces: { some: {} },
+        },
+      });
+      if (contactWithProvinces > 0 && !confirmClearContactProvinces) {
+        return {
+          error: `取消全国性渠道将清空 ${contactWithProvinces} 位联系人的负责省区，请确认后重试`,
+        };
+      }
+    }
+
+    await prisma.customer.update({
+      where: { id: customerId },
+      data: { nationwideChannel: enabled },
+    });
+
+    const { replaceCustomerCoverageProvinces } = await import(
+      "@/lib/customers/coverage-provinces"
+    );
+    await replaceCustomerCoverageProvinces(customerId, []);
+
+    if (!enabled) {
+      const contactIds = await prisma.contact.findMany({
+        where: { customerId },
+        select: { id: true },
+      });
+      if (contactIds.length > 0) {
+        await prisma.contactResponsibleProvince.deleteMany({
+          where: { contactId: { in: contactIds.map((c) => c.id) } },
+        });
+      }
+    }
+
+    revalidatePath(`/customers/${customerId}`);
+    revalidatePath(`/mobile/customers/${customerId}`);
+    revalidatePath("/customers");
+    return {};
   } catch (error) {
     return formatActionError(error);
   }
@@ -460,10 +588,22 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
       .filter((key): key is string => typeof key === "string" && key.trim().length > 0),
   });
 
+  const skipAssignmentCompletionRaw = formData.get("skipAssignmentCompletion")?.toString().trim();
+  const skipAssignmentCompletion =
+    skipAssignmentCompletionRaw === "true" || skipAssignmentCompletionRaw === "1";
+  const completedAssignmentIds = [
+    ...new Set(
+      formData
+        .getAll("completedAssignmentIds")
+        .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    ),
+  ];
+
   const customer = await getCustomerForUser(
     parsed.customerId,
     session.user.role,
-    session.user.id
+    session.user.id,
+    { allowFollowUpOnAnyCustomer: true }
   );
   if (!customer) throw new Error("无权访问该客户");
   await assertCustomerFollowUpWriteAccess(session.user.role, session.user.id, customer);
@@ -478,19 +618,49 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
   if (planError) throw new Error(planError);
 
   const now = new Date();
-  const pendingPlans = await getCustomerPendingFollowPlans(parsed.customerId, now);
+  const [pendingPlans, pendingAssignments] = await Promise.all([
+    getCustomerPendingFollowPlans(parsed.customerId, now, { forUserId: session.user.id }),
+    listPendingAssignmentsForFollowUp({
+      assigneeId: session.user.id,
+      customerId: parsed.customerId,
+      opportunityIds:
+        opportunityIdsFromForm.length > 0
+          ? opportunityIdsFromForm
+          : opportunityIdsFromJson.length > 0
+            ? opportunityIdsFromJson
+            : parsed.opportunityId
+              ? [parsed.opportunityId]
+              : [],
+    }),
+  ]);
   const pendingKeySet = new Set(
     pendingPlans.map((item) => pendingPlanSelectionKey(item.source, item.id))
   );
   const completedPendingKeys = [...new Set(parsed.completedPendingKeys)];
-  if (pendingPlans.length > 0) {
+  const hasPendingAssignments = pendingAssignments.length > 0;
+
+  if (hasPendingAssignments) {
+    if (!skipAssignmentCompletion && completedAssignmentIds.length === 0) {
+      throw new Error("请选择是否完成指派任务");
+    }
+    if (!skipAssignmentCompletion) {
+      const pendingIdSet = new Set(pendingAssignments.map((a) => a.id));
+      for (const id of completedAssignmentIds) {
+        if (!pendingIdSet.has(id)) {
+          throw new Error("所选任务无效或已完成");
+        }
+      }
+    }
+  }
+
+  if (pendingPlans.length > 0 && !hasPendingAssignments) {
     if (completedPendingKeys.length === 0) {
       throw new Error("请至少选择一条要完成的待跟进计划");
     }
-    for (const key of completedPendingKeys) {
-      if (!pendingKeySet.has(key)) {
-        throw new Error("所选待跟进计划无效或已完成");
-      }
+  }
+  for (const key of completedPendingKeys) {
+    if (!pendingKeySet.has(key)) {
+      throw new Error("所选待跟进计划无效或已完成");
     }
   }
 
@@ -514,6 +684,12 @@ export async function createFollowUp(formData: FormData): Promise<ActionResult> 
       nextFollowUpMethod: (parsed.nextFollowUpMethod as FollowUpMethod | null) || undefined,
       nextFollowUpContent: parsed.nextFollowUpContent ?? undefined,
       suggestedGrade: parsed.suggestedGrade,
+      skipAssignmentCompletion: hasPendingAssignments ? skipAssignmentCompletion : undefined,
+      completedAssignmentIds: hasPendingAssignments
+        ? skipAssignmentCompletion
+          ? []
+          : completedAssignmentIds
+        : undefined,
     }
   );
 
@@ -664,4 +840,166 @@ export async function removeCustomerRelation(formData: FormData) {
 
   await prisma.customerRelation.delete({ where: { id: relationId } });
   revalidatePath(`/customers/${customerId}`);
+}
+
+function formatCustomerActionError(error: unknown): ActionResult {
+  if (error instanceof z.ZodError) {
+    return { error: error.errors[0]?.message ?? "表单校验失败" };
+  }
+  if (error instanceof Error) {
+    return { error: error.message };
+  }
+  return { error: "操作失败，请重试" };
+}
+
+/** 管理员 / 销售管理：删除客户（有合同、项目、商机等硬依赖时拒绝） */
+export async function deleteCustomer(customerId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["ADMIN", "SALES_MANAGER"]);
+    const id = customerId.trim();
+    if (!id) return { error: "客户 ID 无效" };
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      select: { id: true, name: true },
+    });
+    if (!customer) return { error: "客户不存在或已删除" };
+
+    const [
+      signContracts,
+      endUserContracts,
+      partyContracts,
+      projects,
+      primaryOpps,
+      partyOpps,
+      expenseTrips,
+      expenseInvoices,
+    ] = await Promise.all([
+      prisma.contract.count({ where: { signCustomerId: id } }),
+      prisma.contract.count({ where: { endUserCustomerId: id } }),
+      prisma.contractParty.count({ where: { customerId: id } }),
+      prisma.project.count({ where: { customerId: id } }),
+      prisma.opportunity.count({ where: { customerId: id } }),
+      prisma.opportunityParty.count({ where: { customerId: id } }),
+      prisma.expenseTrip.count({ where: { customerId: id } }),
+      prisma.expenseInvoice.count({ where: { customerId: id } }),
+    ]);
+
+    const blockers: string[] = [];
+    const contractTotal = signContracts + endUserContracts + partyContracts;
+    if (contractTotal > 0) blockers.push(`${contractTotal} 份合同关联`);
+    if (projects > 0) blockers.push(`${projects} 个项目`);
+    const oppTotal = primaryOpps + partyOpps;
+    if (oppTotal > 0) blockers.push(`${oppTotal} 个商机`);
+    if (expenseTrips + expenseInvoices > 0) {
+      blockers.push(`${expenseTrips + expenseInvoices} 条报销/费用记录`);
+    }
+    if (blockers.length > 0) {
+      return {
+        error: `无法删除「${customer.name}」：仍有 ${blockers.join("、")}。请先处理后再删。`,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.salesCheckIn.updateMany({
+        where: { customerId: id },
+        data: { customerId: null },
+      });
+      await tx.salesWeeklyAssignment.updateMany({
+        where: { customerId: id },
+        data: { customerId: null },
+      });
+      await tx.salesPlanItem.updateMany({
+        where: { customerId: id },
+        data: { customerId: null },
+      });
+      await tx.salesCost.updateMany({
+        where: { customerId: id },
+        data: { customerId: null },
+      });
+      await tx.salesTask.deleteMany({ where: { customerId: id } });
+      await tx.presalesAssignment.deleteMany({ where: { customerId: id } });
+      await tx.customer.delete({ where: { id } });
+    });
+
+    const { recordEntityOperation, ENTITY_TYPES } = await import(
+      "@/lib/audit/entity-operation-log"
+    );
+    await recordEntityOperation({
+      entityType: ENTITY_TYPES.CUSTOMER,
+      entityId: id,
+      userId: session.user.id,
+      action: "DELETE",
+      summary: `删除客户「${customer.name}」`,
+    });
+
+    revalidatePath("/customers");
+    revalidatePath("/follow-ups");
+    revalidatePath("/admin/map");
+    return { redirectTo: "/customers" };
+  } catch (error) {
+    return formatCustomerActionError(error);
+  }
+}
+
+/** 管理员 / 销售管理：删除往来（客户 FollowUp 或旧版商机跟进） */
+export async function deleteUnifiedFollowUp(formData: FormData): Promise<ActionResult> {
+  try {
+    await requireRole(["ADMIN", "SALES_MANAGER"]);
+    const source = String(formData.get("source") ?? "").trim();
+    const id = String(formData.get("id") ?? "").trim();
+    const customerId = String(formData.get("customerId") ?? "").trim();
+    if (!id || (source !== "customer" && source !== "opportunity")) {
+      return { error: "参数不完整" };
+    }
+
+    if (source === "customer") {
+      const existing = await prisma.followUp.findUnique({
+        where: { id },
+        select: { id: true, customerId: true },
+      });
+      if (!existing) return { error: "往来不存在或已删除" };
+
+      await prisma.$transaction(async (tx) => {
+        await tx.salesTask.updateMany({
+          where: { followUpId: id },
+          data: { followUpId: null },
+        });
+        await tx.salesCheckIn.updateMany({
+          where: { followUpId: id },
+          data: { followUpId: null },
+        });
+        await tx.salesWeeklyAssignment.updateMany({
+          where: { followUpId: id },
+          data: { followUpId: null },
+        });
+        await tx.followUp.delete({ where: { id } });
+      });
+
+      revalidatePath(`/customers/${existing.customerId}`);
+      revalidatePath(`/customers/${existing.customerId}/follow-ups`);
+      revalidatePath("/follow-ups");
+      revalidatePath("/admin/map");
+      if (customerId) revalidatePath(`/customers/${customerId}`);
+      return {};
+    }
+
+    const legacy = await prisma.opportunityFollowUp.findUnique({
+      where: { id },
+      select: { id: true, opportunityId: true },
+    });
+    if (!legacy) return { error: "往来不存在或已删除" };
+
+    await prisma.opportunityFollowUp.delete({ where: { id } });
+    revalidatePath(`/opportunities/${legacy.opportunityId}`);
+    revalidatePath(`/opportunities/${legacy.opportunityId}/follow-ups`);
+    if (customerId) {
+      revalidatePath(`/customers/${customerId}`);
+      revalidatePath(`/customers/${customerId}/follow-ups`);
+    }
+    revalidatePath("/follow-ups");
+    return {};
+  } catch (error) {
+    return formatCustomerActionError(error);
+  }
 }

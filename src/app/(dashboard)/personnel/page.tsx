@@ -12,9 +12,15 @@ import {
 } from "@/components/personnel/personnel-tabs";
 import { getPersonAllocationSplit } from "@/lib/projects/cost-summary";
 import {
+  canAccessPersonnelPage,
+  canManagePersonnelCosts,
+  canManagePersonnelInfo,
+  implementationStaffListWhere,
+  shouldHideResignedPeriodMetrics,
+} from "@/lib/personnel/access";
+import {
   compareYearMonth,
   computeMonthlyCost,
-  countMonthWorkdays,
   currentYearMonth,
   parseYearMonthParam,
   resolveEffectiveMonthlyCost,
@@ -22,6 +28,8 @@ import {
 } from "@/lib/personnel/daily-rate";
 import { resolveMonthCostFromHistory } from "@/lib/personnel/resolve-month-cost";
 import { ensureCurrentMonthCostsMaterialized } from "@/lib/personnel/ensure-month-costs";
+import { computeLeaveDeductionPreview } from "@/lib/personnel/leave-pay";
+import { ensureDefaultLeaveTypes } from "@/lib/personnel/leave-types";
 import { endOfMonth, startOfMonth } from "date-fns";
 import { redirect } from "next/navigation";
 
@@ -33,8 +41,15 @@ function costsHref(year: number, month: number) {
   return `/personnel?tab=costs&year=${year}&month=${month}`;
 }
 
-function parseTab(raw: string | undefined): PersonnelTabId {
-  return raw === "costs" ? "costs" : "info";
+function parseTab(
+  raw: string | undefined,
+  canCosts: boolean,
+  canInfo: boolean
+): PersonnelTabId {
+  if (raw === "costs" && canCosts) return "costs";
+  if (raw === "info" && canInfo) return "info";
+  if (canCosts && !canInfo) return "costs";
+  return "info";
 }
 
 function num(value: { toNumber?: () => number } | number | null | undefined): number | null {
@@ -43,17 +58,36 @@ function num(value: { toNumber?: () => number } | number | null | undefined): nu
 }
 
 export default async function PersonnelPage({ searchParams }: Props) {
-  await requireRole(["PROJECT_ADMIN", "ADMIN"]);
+  const session = await requireRole(["PROJECT_ADMIN", "HR", "ADMIN"]);
+  const role = session.user.role;
+  if (!canAccessPersonnelPage(role)) {
+    redirect("/");
+  }
+
+  const canCosts = canManagePersonnelCosts(role);
+  const canInfo = canManagePersonnelInfo(role);
 
   const params = await searchParams;
-  const activeTab = parseTab(params.tab);
+  const activeTab = parseTab(params.tab, canCosts, canInfo);
+
+  // 无权限的 tab 深链重定向
+  if (params.tab === "costs" && !canCosts) {
+    redirect("/personnel?tab=info");
+  }
+  if (params.tab === "info" && !canInfo && canCosts) {
+    redirect("/personnel?tab=costs");
+  }
 
   const now = new Date();
   const current = currentYearMonth(now);
+  const previous = shiftYearMonth(current.year, current.month, -1);
 
+  // 成本默认看「上个月」（事后确认）；显式传 year/month 时尊重参数
   const requested =
     activeTab === "costs"
-      ? parseYearMonthParam(params.year, params.month, now)
+      ? params.year || params.month
+        ? parseYearMonthParam(params.year, params.month, now)
+        : previous
       : current;
   const { year, month } = requested;
 
@@ -69,10 +103,14 @@ export default async function PersonnelPage({ searchParams }: Props) {
 
   if (activeTab === "costs") {
     await ensureCurrentMonthCostsMaterialized(year, month, now);
+    await ensureDefaultLeaveTypes();
   }
 
   const monthDate = new Date(year, month - 1, 1);
-  const monthWorkdays = countMonthWorkdays(monthDate);
+  const { countCompanyAttendanceDays } = await import(
+    "@/lib/calendar/company-attendance"
+  );
+  const monthWorkdays = await countCompanyAttendanceDays(year, month);
   const monthRange = {
     from: startOfMonth(monthDate),
     to: endOfMonth(monthDate),
@@ -82,20 +120,19 @@ export default async function PersonnelPage({ searchParams }: Props) {
   const canGoNext = compareYearMonth(next, current) <= 0;
 
   const users = await prisma.user.findMany({
-    where: {
-      personnelProfile: {
-        staffCategory: "IMPLEMENTATION",
-        enabled: true,
-      },
-    },
+    where: implementationStaffListWhere(),
     select: {
       id: true,
       name: true,
       email: true,
       personnelProfile: {
-        select: { personnelType: true },
+        select: { personnelType: true, enabled: true },
       },
       staffAllocations: {
+        where: {
+          startDate: { lte: monthRange.to },
+          endDate: { gte: monthRange.from },
+        },
         select: { projectId: true },
       },
       monthlyCostAdjustments: {
@@ -113,7 +150,28 @@ export default async function PersonnelPage({ searchParams }: Props) {
           socialSecurityCompany: true,
           housingFundCompany: true,
           adjustmentAmount: true,
+          leaveDeductionAmount: true,
+          attendanceDays: true,
           notes: true,
+          confirmedAt: true,
+          payrollEntity: true,
+          bonus: true,
+          penaltyAmount: true,
+          changeSummary: true,
+          performancePay: true,
+          wageAdjust: true,
+          sickLeaveDays: true,
+          sickLeaveDeduction: true,
+          personalLeaveDays: true,
+          personalLeaveDeduction: true,
+          payableWage: true,
+          pensionPersonal: true,
+          medicalPersonal: true,
+          unemploymentPersonal: true,
+          socialSecurityPersonal: true,
+          housingFundPersonal: true,
+          incomeTax: true,
+          netPay: true,
         },
         orderBy: [{ year: "desc" }, { month: "desc" }],
       },
@@ -127,7 +185,14 @@ export default async function PersonnelPage({ searchParams }: Props) {
         user.id,
         monthRange
       );
-      const projectCount = new Set(user.staffAllocations.map((a) => a.projectId)).size;
+      const resigned = user.personnelProfile?.enabled === false;
+      const hideMonthMetrics = shouldHideResignedPeriodMetrics({
+        resigned,
+        periodEffectiveDays: totalDays,
+      });
+      const projectCount = hideMonthMetrics
+        ? 0
+        : new Set(user.staffAllocations.map((a) => a.projectId)).size;
       const history = user.monthlyCostAdjustments.map((row) => ({
         year: row.year,
         month: row.month,
@@ -139,12 +204,43 @@ export default async function PersonnelPage({ searchParams }: Props) {
         notes: row.notes ?? "",
       }));
       const resolved = resolveMonthCostFromHistory(history, year, month);
+      const monthRecord = user.monthlyCostAdjustments.find(
+        (row) => row.year === year && row.month === month
+      );
+      const monthConfirmed = monthRecord?.confirmedAt != null;
 
       const contributionBase = resolved?.contributionBase ?? null;
       const baseSalary = resolved?.baseSalary ?? null;
       const socialSecurityCompany = resolved?.socialSecurityCompany ?? null;
       const housingFundCompany = resolved?.housingFundCompany ?? null;
       const monthAdjustment = resolved?.adjustmentAmount ?? 0;
+      const bonus = monthRecord ? num(monthRecord.bonus) ?? 0 : 0;
+      const penaltyAmount = monthRecord ? num(monthRecord.penaltyAmount) ?? 0 : 0;
+      const leavePreview =
+        activeTab === "costs"
+          ? await computeLeaveDeductionPreview({
+              userId: user.id,
+              year,
+              month,
+              baseSalary,
+              socialSecurityCompany,
+              housingFundCompany,
+            })
+          : {
+              leaveDeductionTotal: monthRecord
+                ? Number(monthRecord.leaveDeductionAmount ?? 0)
+                : 0,
+              attendanceDays: monthRecord?.attendanceDays ?? 0,
+              absenceDays: 0,
+            };
+      // 已确认：展示锁定值；待确认：展示关账预览（与保存时计算一致）
+      const leaveDeductionAmount = monthConfirmed
+        ? Number(monthRecord?.leaveDeductionAmount ?? 0)
+        : leavePreview.leaveDeductionTotal;
+      const attendanceDays = monthConfirmed
+        ? (monthRecord?.attendanceDays ?? leavePreview.attendanceDays)
+        : leavePreview.attendanceDays;
+      const absenceDays = leavePreview.absenceDays;
       const monthlyCost = computeMonthlyCost({
         baseSalary,
         socialSecurityCompany,
@@ -152,8 +248,46 @@ export default async function PersonnelPage({ searchParams }: Props) {
       });
       const effectiveMonthlyCost = resolveEffectiveMonthlyCost(
         monthlyCost,
-        monthAdjustment
+        monthAdjustment,
+        leaveDeductionAmount,
+        { bonus, penaltyAmount }
       );
+
+      const payrollSlip =
+        monthRecord != null
+          ? {
+              userId: user.id,
+              name: user.name,
+              year,
+              month,
+              payrollEntity: monthRecord.payrollEntity,
+              contributionBase,
+              baseSalary,
+              bonus: num(monthRecord.bonus),
+              penaltyAmount,
+              performancePay: num(monthRecord.performancePay),
+              wageAdjust: num(monthRecord.wageAdjust),
+              sickLeaveDays: num(monthRecord.sickLeaveDays),
+              sickLeaveDeduction: num(monthRecord.sickLeaveDeduction),
+              personalLeaveDays: num(monthRecord.personalLeaveDays),
+              personalLeaveDeduction: num(monthRecord.personalLeaveDeduction),
+              payableWage: num(monthRecord.payableWage),
+              socialSecurityCompany,
+              housingFundCompany,
+              pensionPersonal: num(monthRecord.pensionPersonal),
+              medicalPersonal: num(monthRecord.medicalPersonal),
+              unemploymentPersonal: num(monthRecord.unemploymentPersonal),
+              socialSecurityPersonal: num(monthRecord.socialSecurityPersonal),
+              housingFundPersonal: num(monthRecord.housingFundPersonal),
+              incomeTax: num(monthRecord.incomeTax),
+              netPay: num(monthRecord.netPay),
+              adjustmentAmount: monthAdjustment,
+              leaveDeductionAmount,
+              companyMonthlyCost: monthlyCost,
+              effectiveMonthlyCost,
+              notes: monthRecord.notes,
+            }
+          : null;
 
       return {
         userId: user.id,
@@ -164,29 +298,66 @@ export default async function PersonnelPage({ searchParams }: Props) {
         baseSalary,
         socialSecurityCompany,
         housingFundCompany,
+        bonus,
+        penaltyAmount,
         monthAdjustment,
-        monthAdjustmentNotes: resolved?.notes ?? "",
+        leaveDeductionAmount,
+        attendanceDays,
+        absenceDays,
+        changeSummary: monthRecord?.changeSummary ?? null,
         monthlyCost,
         effectiveMonthlyCost,
-        weekEffectiveDays: totalDays,
-        weekCost: totalCost,
+        monthConfirmed,
+        hasMonthRecord: monthRecord != null,
+        weekEffectiveDays: hideMonthMetrics ? 0 : totalDays,
+        weekCost: hideMonthMetrics ? 0 : totalCost,
         projectCount,
+        resigned,
+        hideMonthMetrics,
+        payrollSlip,
       };
     })
   );
 
+  items.sort((a, b) => {
+    if (a.resigned !== b.resigned) return a.resigned ? 1 : -1;
+    return a.name.localeCompare(b.name, "zh-CN");
+  });
+
+  /** 成本页：在职 + 本月已有成本记录的离职人员（便于关账） */
+  const costItems = items.filter(
+    (item) => !item.resigned || item.hasMonthRecord
+  );
+  const recorded = costItems.filter((item) => item.hasMonthRecord);
+  const monthFullyConfirmed =
+    recorded.length > 0 && recorded.every((item) => item.monthConfirmed);
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">实施人员</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {activeTab === "info"
-            ? "查看人员基本信息与当月投入概况；类型可在此维护。"
-            : "按月维护人员成本（含历史，不超过当前月）；进入当月时若无记录会自动从上月复制；项目成本按「有效月成本 ÷ 当月实际工作日」实时核算。"}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">
+            {activeTab === "costs" ? "人员成本" : "实施人员"}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {activeTab === "info"
+              ? "仅含系统角色为项目经理、项目人员的账号（含离职）；离职且当月无排期时不展示投入数值。类型由项目管理员维护。"
+              : "按月维护人员成本。未确认月份可直接改奖金、扣罚等，点「保存」并二次确认后整月一并生效；确认前不进项目人天核算。"}
+          </p>
+        </div>
+        {activeTab === "costs" && canCosts ? (
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/cost-ledger">成本台账</Link>
+          </Button>
+        ) : null}
       </div>
 
-      <PersonnelTabs activeTab={activeTab} costsHref={costsHref(year, month)} />
+      <PersonnelTabs
+        activeTab={activeTab}
+        costsHref={costsHref(year, month)}
+        showInfoTab={canInfo}
+        showCostsTab={canCosts}
+      />
 
       {activeTab === "info" ? (
         <Card>
@@ -194,7 +365,7 @@ export default async function PersonnelPage({ searchParams }: Props) {
             <CardTitle className="text-lg">
               人员信息
               <span className="ml-2 text-sm font-normal text-muted-foreground">
-                ({items.length} 人 · 当月 {year}年{month}月 · {monthWorkdays} 个工作日)
+                ({items.length} 人 · {year}年{month}月 · 公司出勤 {monthWorkdays} 天 · 事后关账)
               </span>
             </CardTitle>
           </CardHeader>
@@ -211,10 +382,14 @@ export default async function PersonnelPage({ searchParams }: Props) {
                 monthEffectiveDays: item.weekEffectiveDays,
                 monthCost: item.weekCost,
                 projectCount: item.projectCount,
+                resigned: item.resigned,
+                hideMonthMetrics: item.hideMonthMetrics,
               }))}
               year={year}
               month={month}
               monthWorkdays={monthWorkdays}
+              canEditTypes={canInfo}
+              showCostColumns={canCosts}
             />
           </CardContent>
         </Card>
@@ -245,17 +420,24 @@ export default async function PersonnelPage({ searchParams }: Props) {
               <CardTitle className="text-lg">
                 月成本批量编辑
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({items.length} 人 · {year}年{month}月 · {monthWorkdays} 个工作日)
+                  ({costItems.length} 人 · {year}年{month}月 · 公司出勤 {monthWorkdays} 天
+                  {costItems.length > 0
+                    ? monthFullyConfirmed
+                      ? " · 已确认生效"
+                      : " · 待确认"
+                    : ""}
+                  )
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <PersonnelCostBatchEditor
                 key={`${year}-${month}`}
-                items={items}
+                items={costItems}
                 year={year}
                 month={month}
                 monthWorkdays={monthWorkdays}
+                monthFullyConfirmed={monthFullyConfirmed}
               />
             </CardContent>
           </Card>

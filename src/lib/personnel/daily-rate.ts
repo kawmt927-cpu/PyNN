@@ -27,7 +27,7 @@ export function computeMonthlyCost(cost: PersonnelMonthlyCost): number | null {
 /** @deprecated 使用 computeMonthlyCost */
 export const computeTotalExpenditure = computeMonthlyCost;
 
-/** 当月实际工作日（周一至周五） */
+/** 当月公司日历出勤日（周一～五 − 放假 + 调休）；异步版见 company-attendance */
 export function countMonthWorkdays(reference: Date = new Date()): number {
   const day = toDateOnly(reference);
   return countWorkdays(startOfMonth(day), endOfMonth(day));
@@ -109,32 +109,47 @@ export function isCurrentYearMonth(
 }
 
 /**
- * 有效月成本 = 固定月成本 + 当月调整额（请假等）
+ * 有效月成本 = 固定月成本 + 奖金 + 绩效/其他调整 − 扣罚 − 请假规则扣款
  * 结果不低于 0
  */
 export function resolveEffectiveMonthlyCost(
   fixedMonthlyCost: number | null,
-  adjustmentAmount: number | null | undefined
+  adjustmentAmount: number | null | undefined,
+  leaveDeductionAmount: number | null | undefined = 0,
+  extras?: { bonus?: number | null; penaltyAmount?: number | null }
 ): number | null {
   if (fixedMonthlyCost == null) return null;
   const adjustment =
     adjustmentAmount != null && Number.isFinite(adjustmentAmount) ? adjustmentAmount : 0;
-  return roundMoney(Math.max(0, fixedMonthlyCost + adjustment));
+  const leaveDeduction =
+    leaveDeductionAmount != null && Number.isFinite(leaveDeductionAmount)
+      ? Math.max(0, leaveDeductionAmount)
+      : 0;
+  const bonus =
+    extras?.bonus != null && Number.isFinite(extras.bonus) ? Math.max(0, extras.bonus) : 0;
+  const penalty =
+    extras?.penaltyAmount != null && Number.isFinite(extras.penaltyAmount)
+      ? Math.max(0, extras.penaltyAmount)
+      : 0;
+  return roundMoney(Math.max(0, fixedMonthlyCost + adjustment + bonus - penalty - leaveDeduction));
 }
 
 /**
- * 日成本 = 有效月成本 / 该月实际工作日
+ * 日成本 = 有效月成本 / 个人实际出勤天数（关账后）
  */
 export function resolveDailyRateForMonth(
   effectiveMonthlyCost: number | null,
   year: number,
-  month: number
+  month: number,
+  attendanceDays?: number | null
 ): number | null {
   if (effectiveMonthlyCost == null) return null;
-  const reference = new Date(year, month - 1, 1);
-  const workdays = countMonthWorkdays(reference);
-  if (workdays <= 0) return null;
-  return roundMoney(effectiveMonthlyCost / workdays);
+  const days =
+    attendanceDays != null && attendanceDays > 0
+      ? attendanceDays
+      : countMonthWorkdays(new Date(year, month - 1, 1));
+  if (days <= 0) return null;
+  return roundMoney(effectiveMonthlyCost / days);
 }
 
 export function resolveDailyRateForDate(
@@ -164,35 +179,47 @@ export type DailyRateResolver = (userId: string, date: Date) => number;
 type MonthCostEntry = {
   fixedMonthlyCost: number | null;
   adjustmentAmount: number;
+  leaveDeductionAmount: number;
+  bonus: number;
+  penaltyAmount: number;
+  attendanceDays: number | null;
 };
 
 /**
- * 优先使用按月成本记录；无记录时沿用更早月份的固定月成本（不含上月调整）。
- * 项目核算按「有效月成本 ÷ 该日所在月工作日」。
+ * 优先使用已确认按月成本；无记录时沿用更早月份的固定月成本（不含调整/假扣）。
+ * 项目核算：有效月成本 ÷ 关账时锁定的个人实际出勤天数。
  */
 export function buildDailyRateResolver(input: {
-  /** userId:YYYY-MM → 该月成本记录 */
   monthCostByUserMonth: Map<string, MonthCostEntry>;
   fallbackDailyRateByUser?: Map<string, number>;
 }): DailyRateResolver {
   const cache = new Map<string, number>();
 
-  function lookupEntry(userId: string, year: number, month: number): MonthCostEntry | null {
-    let cursor = { year, month };
-    for (let i = 0; i < 120; i++) {
-      const key = `${userId}:${yearMonthKey(cursor.year, cursor.month)}`;
-      const entry = input.monthCostByUserMonth.get(key);
-      if (entry != null && entry.fixedMonthlyCost != null) {
-        const isExact = cursor.year === year && cursor.month === month;
+  const lookupEntry = (userId: string, year: number, month: number) => {
+    const exact = input.monthCostByUserMonth.get(`${userId}:${yearMonthKey(year, month)}`);
+    if (exact) return { entry: exact, isExact: true as const };
+    // walk back up to 24 months for fixed cost carry
+    for (let i = 1; i <= 24; i++) {
+      const shifted = shiftYearMonth(year, month, -i);
+      const hit = input.monthCostByUserMonth.get(
+        `${userId}:${yearMonthKey(shifted.year, shifted.month)}`
+      );
+      if (hit?.fixedMonthlyCost != null) {
         return {
-          fixedMonthlyCost: entry.fixedMonthlyCost,
-          adjustmentAmount: isExact ? entry.adjustmentAmount : 0,
+          entry: {
+            fixedMonthlyCost: hit.fixedMonthlyCost,
+            adjustmentAmount: 0,
+            leaveDeductionAmount: 0,
+            bonus: 0,
+            penaltyAmount: 0,
+            attendanceDays: null,
+          },
+          isExact: false as const,
         };
       }
-      cursor = shiftYearMonth(cursor.year, cursor.month, -1);
     }
-    return null;
-  }
+    return { entry: null, isExact: false as const };
+  };
 
   return (userId: string, date: Date) => {
     const { year, month } = yearMonthOf(date);
@@ -200,12 +227,21 @@ export function buildDailyRateResolver(input: {
     const cached = cache.get(cacheKey);
     if (cached != null) return cached;
 
-    const monthEntry = lookupEntry(userId, year, month);
+    const { entry, isExact } = lookupEntry(userId, year, month);
     const effective = resolveEffectiveMonthlyCost(
-      monthEntry?.fixedMonthlyCost ?? null,
-      monthEntry?.adjustmentAmount ?? 0
+      entry?.fixedMonthlyCost ?? null,
+      isExact ? entry?.adjustmentAmount ?? 0 : 0,
+      isExact ? entry?.leaveDeductionAmount ?? 0 : 0,
+      isExact
+        ? { bonus: entry?.bonus ?? 0, penaltyAmount: entry?.penaltyAmount ?? 0 }
+        : undefined
     );
-    const rate = resolveDailyRateForMonth(effective, year, month);
+    const rate = resolveDailyRateForMonth(
+      effective,
+      year,
+      month,
+      isExact ? entry?.attendanceDays : null
+    );
     if (rate != null) {
       cache.set(cacheKey, rate);
       return rate;

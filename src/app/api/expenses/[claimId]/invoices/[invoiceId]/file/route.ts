@@ -16,9 +16,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const { claimId, invoiceId } = await ctx.params;
     const claim = await prisma.expenseClaim.findUnique({
       where: { id: claimId },
-      select: { applicantId: true, managerId: true, status: true },
+      select: { applicantId: true, beneficiaryId: true, managerId: true, status: true },
     });
-    if (!claim || !canViewClaim(claim, session.user)) {
+    if (!claim || !(await canViewClaim(claim, session.user))) {
       return NextResponse.json({ error: "无权查看" }, { status: 403 });
     }
 
@@ -27,6 +27,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     });
     if (!invoice) {
       return NextResponse.json({ error: "附件不存在" }, { status: 404 });
+    }
+    if (invoice.storageKey.startsWith("manual://") || invoice.sizeBytes <= 0) {
+      return NextResponse.json({ error: "该项为手填额度，无发票文件" }, { status: 404 });
     }
 
     const abs = expenseAttachmentAbsolutePath(invoice.storageKey);

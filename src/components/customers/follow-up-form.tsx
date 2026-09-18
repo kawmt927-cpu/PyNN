@@ -18,7 +18,7 @@ import { NextFollowUpPlanFields } from "@/components/sales-log/next-follow-up-pl
 import { CustomerPendingFollowPlansPanel } from "@/components/customers/customer-pending-follow-plans-panel";
 import {
   CompletePendingFollowUpDialog,
-  planSelectionKey,
+  type AssignmentCompletionMode,
 } from "@/components/customers/complete-pending-follow-up-dialog";
 import { validateNextFollowUpPlan } from "@/lib/sales-log/next-follow-up-plan";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
@@ -27,16 +27,26 @@ import {
   customerGradeFormValue,
   customerGradeSubmitValue,
 } from "@/lib/customers/grade";
+import {
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveGradeOptionsForCustomerType,
+} from "@/lib/customers/customer-type-grade";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { SerializedCustomerPendingFollowPlan } from "@/lib/follow-ups/unified";
+import type { PendingAssignmentForFollowUp } from "@/lib/today-work/assignment-follow-up-complete";
 
 type Props = {
   customerId: string;
   customerName: string;
+  customerType?: string | null;
   currentCustomerGrade?: string | null;
   stageOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
+  typeOptions?: ConfigOptionItem[];
   pendingPlans?: SerializedCustomerPendingFollowPlan[];
+  assignments?: PendingAssignmentForFollowUp[];
 };
 
 function todayLocalDatetime() {
@@ -48,10 +58,14 @@ function todayLocalDatetime() {
 export function FollowUpForm({
   customerId,
   customerName,
+  customerType,
   currentCustomerGrade,
   stageOptions,
   gradeOptions,
-  pendingPlans = [],
+  channelGradeOptions = [],
+  typeOptions = [],
+  pendingPlans: pendingPlansProp = [],
+  assignments: assignmentsProp,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -59,11 +73,20 @@ export function FollowUpForm({
   const [method, setMethod] = useState<SalesLogMethod>("PHONE");
   const [contactIds, setContactIds] = useState<string[]>([]);
   const [opportunityIds, setOpportunityIds] = useState<string[]>([]);
-  const { options: opportunityOptions } = useCustomerNotSignedOpportunities(customerId);
+  const { options: opportunityOptions, upsertOption: upsertOpportunityOption } =
+    useCustomerNotSignedOpportunities(customerId);
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [selectedPendingKeys, setSelectedPendingKeys] = useState<string[]>([]);
+  const [assignmentMode, setAssignmentMode] = useState<AssignmentCompletionMode>(null);
+  const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<string[]>([]);
   const [pendingForm, setPendingForm] = useState<HTMLFormElement | null>(null);
+  const [pendingPlans, setPendingPlans] =
+    useState<SerializedCustomerPendingFollowPlan[]>(pendingPlansProp);
+  const [assignments, setAssignments] = useState<PendingAssignmentForFollowUp[]>(
+    assignmentsProp ?? []
+  );
+  const [pendingLoading, setPendingLoading] = useState(assignmentsProp == null);
   const [suggestedGrade, setSuggestedGrade] = useState(() =>
     customerGradeFormValue(currentCustomerGrade)
   );
@@ -71,11 +94,70 @@ export function FollowUpForm({
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
   const [nextFollowUpContent, setNextFollowUpContent] = useState("");
 
-  const hasPendingPlans = pendingPlans.length > 0;
+  const activeGradeOptions = resolveGradeOptionsForCustomerType(
+    customerType,
+    gradeOptions,
+    channelGradeOptions,
+    typeOptions
+  );
+  const gradeTone = gradeToneForCustomerType(customerType, typeOptions);
+  const gradeFieldLabel = isChannelCustomerType(customerType, typeOptions)
+    ? "渠道等级（可选，选择后将更新）"
+    : "客户等级（可选，选择后将更新客户等级）";
+
+  const needsCompleteDialog = pendingPlans.length > 0 || assignments.length > 0;
 
   useEffect(() => {
-    setOpportunityIds(defaultOpportunitySelection(opportunityOptions));
+    setOpportunityIds((prev) =>
+      prev.length > 0 ? prev : defaultOpportunitySelection(opportunityOptions)
+    );
   }, [customerId, opportunityOptions]);
+
+  useEffect(() => {
+    setPendingPlans(pendingPlansProp);
+  }, [pendingPlansProp]);
+
+  useEffect(() => {
+    if (assignmentsProp != null) {
+      setAssignments(assignmentsProp);
+      setPendingLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPendingLoading(true);
+    void fetch(`/api/customers/${encodeURIComponent(customerId)}/pending-follow-plans`, {
+      credentials: "include",
+    })
+      .then((res) => (res.ok ? res.json() : { items: [], assignments: [] }))
+      .then(
+        (data: {
+          items?: SerializedCustomerPendingFollowPlan[];
+          assignments?: PendingAssignmentForFollowUp[];
+        }) => {
+          if (cancelled) return;
+          if (pendingPlansProp.length === 0) {
+            setPendingPlans(data.items ?? []);
+          }
+          setAssignments(data.assignments ?? []);
+          setSelectedPendingKeys([]);
+          setAssignmentMode(null);
+          setSelectedAssignmentIds([]);
+        }
+      )
+      .catch(() => {
+        if (!cancelled) setAssignments([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPendingLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // pendingPlansProp 仅用于「未传入计划时用 API 填充」；长度变化不必重拉
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync plans via separate effect
+  }, [customerId, assignmentsProp]);
 
   function buildFormData(form: HTMLFormElement) {
     const formData = new FormData(form);
@@ -101,6 +183,17 @@ export function FollowUpForm({
     }
   }
 
+  function applyAssignmentSelection(
+    formData: FormData,
+    opts: { skipAssignmentCompletion: boolean; completedAssignmentIds: string[] }
+  ) {
+    formData.set("skipAssignmentCompletion", opts.skipAssignmentCompletion ? "true" : "false");
+    formData.delete("completedAssignmentIds");
+    for (const id of opts.completedAssignmentIds) {
+      formData.append("completedAssignmentIds", id);
+    }
+  }
+
   function resetFormState(form: HTMLFormElement) {
     form.reset();
     setContactIds([]);
@@ -111,12 +204,27 @@ export function FollowUpForm({
     setNextFollowUpContent("");
     setOpportunityIds([]);
     setSelectedPendingKeys([]);
+    setAssignmentMode(null);
+    setSelectedAssignmentIds([]);
   }
 
-  function submitFollowUp(form: HTMLFormElement, completedKeys?: string[]) {
+  function submitFollowUp(
+    form: HTMLFormElement,
+    opts?: {
+      completedKeys?: string[];
+      skipAssignmentCompletion?: boolean;
+      completedAssignmentIds?: string[];
+    }
+  ) {
     const formData = buildFormData(form);
-    if (completedKeys && completedKeys.length > 0) {
-      applyPendingSelection(formData, completedKeys);
+    if (opts?.completedKeys && opts.completedKeys.length > 0) {
+      applyPendingSelection(formData, opts.completedKeys);
+    }
+    if (opts) {
+      applyAssignmentSelection(formData, {
+        skipAssignmentCompletion: opts.skipAssignmentCompletion ?? false,
+        completedAssignmentIds: opts.completedAssignmentIds ?? [],
+      });
     }
 
     startTransition(async () => {
@@ -140,6 +248,8 @@ export function FollowUpForm({
     setError(null);
     const form = e.currentTarget;
 
+    if (pendingLoading) return;
+
     if (opportunityIds.length > 0 && !nextFollowUpAt.trim()) {
       setError("已关联商机时须填写下次拜访时间");
       return;
@@ -157,7 +267,7 @@ export function FollowUpForm({
       return;
     }
 
-    if (hasPendingPlans) {
+    if (needsCompleteDialog) {
       setPendingForm(form);
       setCompleteDialogOpen(true);
       return;
@@ -167,8 +277,12 @@ export function FollowUpForm({
   }
 
   function handleConfirmComplete() {
-    if (!pendingForm || selectedPendingKeys.length === 0) return;
-    submitFollowUp(pendingForm, selectedPendingKeys);
+    if (!pendingForm) return;
+    submitFollowUp(pendingForm, {
+      completedKeys: selectedPendingKeys,
+      skipAssignmentCompletion: assignmentMode === "skip",
+      completedAssignmentIds: assignmentMode === "complete" ? selectedAssignmentIds : [],
+    });
   }
 
   return (
@@ -236,10 +350,11 @@ export function FollowUpForm({
 
           <CustomerGradeSelect
             id="suggestedGradeDisplay"
-            label="客户等级（可选，选择后将更新客户等级）"
+            label={gradeFieldLabel}
             value={suggestedGrade}
             onValueChange={setSuggestedGrade}
-            options={gradeOptions}
+            options={activeGradeOptions}
+            tone={gradeTone}
             className="md:col-span-2"
           />
           <p className="text-xs text-muted-foreground md:col-span-2">
@@ -270,23 +385,28 @@ export function FollowUpForm({
               onContentChange={setNextFollowUpContent}
               suggestedGrade={suggestedGrade}
               currentCustomerGrade={currentCustomerGrade}
-              gradeOptions={gradeOptions}
+              gradeOptions={activeGradeOptions}
             />
           </div>
         </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        <Button type="submit" disabled={pending || contactIds.length === 0}>
-          {pending ? "保存中…" : "保存跟进"}
+        <Button type="submit" disabled={pending || pendingLoading || contactIds.length === 0}>
+          {pending ? "保存中…" : pendingLoading ? "加载计划…" : "保存跟进"}
         </Button>
       </form>
 
       <CompletePendingFollowUpDialog
         open={completeDialogOpen}
         onOpenChange={setCompleteDialogOpen}
-        items={pendingPlans}
-        selectedKeys={selectedPendingKeys}
-        onSelectedKeysChange={setSelectedPendingKeys}
+        assignments={assignments}
+        assignmentMode={assignmentMode}
+        onAssignmentModeChange={setAssignmentMode}
+        selectedAssignmentIds={selectedAssignmentIds}
+        onSelectedAssignmentIdsChange={setSelectedAssignmentIds}
+        planItems={pendingPlans}
+        selectedPlanKeys={selectedPendingKeys}
+        onSelectedPlanKeysChange={setSelectedPendingKeys}
         onConfirm={handleConfirmComplete}
         pending={pending}
       />
@@ -298,6 +418,10 @@ export function FollowUpForm({
         customerName={customerName}
         stageOptions={stageOptions}
         onCreated={(opp) => {
+          upsertOpportunityOption({
+            ...opp,
+            confirmStatus: opp.confirmStatus ?? "CONFIRMED",
+          });
           setOpportunityIds((prev) => [...new Set([...prev, opp.id])]);
         }}
       />

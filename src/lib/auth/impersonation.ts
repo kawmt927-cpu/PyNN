@@ -9,6 +9,7 @@ export const IMPERSONATION_ROLE_ORDER: UserRole[] = [
   "PROJECT_MANAGER",
   "PROJECT_STAFF",
   "HR",
+  "OTHER",
 ];
 
 /** 各角色可切换到的目标角色 */

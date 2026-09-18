@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ContractApprovalActions } from "@/components/contracts/contract-approval-actions";
 import { APPROVAL_TYPE_LABELS } from "@/lib/approvals/constants";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { withReturnTo } from "@/lib/navigation/return-to";
 import type { ActionResult } from "@/lib/action-result";
 
 export type ContractApprovalItem = {
@@ -28,6 +29,8 @@ type Props = {
   showTypeBadge?: boolean;
   onApprove?: ApproveAction;
   onReject?: RejectAction;
+  /** 跳转合同详情时带回的来源页 */
+  returnTo?: string;
 };
 
 export function ContractApprovalList({
@@ -36,6 +39,7 @@ export function ContractApprovalList({
   showTypeBadge,
   onApprove,
   onReject,
+  returnTo = "/approvals",
 }: Props) {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">暂无记录。</p>;
@@ -53,7 +57,10 @@ export function ContractApprovalList({
                 </span>
               ) : null}
               <p className="font-medium">
-                <Link href={`/contracts/${item.id}`} className="text-primary hover:underline">
+                <Link
+                  href={withReturnTo(`/contracts/${item.id}`, returnTo)}
+                  className="text-primary hover:underline"
+                >
                   {item.title}
                 </Link>
               </p>

@@ -46,10 +46,28 @@ export async function listOpportunitiesLinkedToCustomer(input: {
   userId: string;
   take?: number;
 }): Promise<CustomerLinkedOpportunity[]> {
+  const { isCustomerResponsible, canManageCustomerOwner } = await import(
+    "@/lib/customers/access"
+  );
+  const customer = await prisma.customer.findUnique({
+    where: { id: input.customerId },
+    select: {
+      ownerId: true,
+      assistantOwners: { select: { userId: true } },
+    },
+  });
+  const canSeeAllOnCustomer =
+    canManageCustomerOwner(input.role) ||
+    (customer != null && isCustomerResponsible(input.userId, customer));
+
   const rows = await prisma.opportunity.findMany({
     where: {
       AND: [
-        opportunityListWhere(input.role, input.userId),
+        canSeeAllOnCustomer
+          ? { confirmStatus: { not: "REJECTED" } }
+          : {
+              ...opportunityListWhere(input.role, input.userId),
+            },
         {
           OR: [
             { customerId: input.customerId },

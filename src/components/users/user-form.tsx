@@ -48,7 +48,9 @@ export function UserForm({ userId, defaultValues }: Props) {
   const showImplementationFields =
     role === "PROJECT_ADMIN" ||
     role === "PROJECT_MANAGER" ||
-    role === "PROJECT_STAFF";
+    role === "PROJECT_STAFF" ||
+    role === "OTHER";
+  const showPresalesField = showImplementationFields && role !== "OTHER";
 
   function handleSubmit(formData: FormData) {
     setError(null);
@@ -159,16 +161,18 @@ export function UserForm({ userId, defaultValues }: Props) {
 
         {showImplementationFields ? (
           <>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                name="isPresales"
-                checked={isPresales}
-                onChange={(e) => setIsPresales(e.target.checked)}
-                className="h-4 w-4 rounded border"
-              />
-              售前人员（可参与售前成本结算）
-            </label>
+            {showPresalesField ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="isPresales"
+                  checked={isPresales}
+                  onChange={(e) => setIsPresales(e.target.checked)}
+                  className="h-4 w-4 rounded border"
+                />
+                售前人员（可参与售前成本结算）
+              </label>
+            ) : null}
             <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
               <Label>日单价（元）</Label>
               <p className="text-lg font-semibold tabular-nums text-slate-900">
@@ -177,11 +181,14 @@ export function UserForm({ userId, defaultValues }: Props) {
                   : "—"}
               </p>
               <p className="text-xs text-muted-foreground">
-                由实施人员月成本自动计算，请前往{" "}
-                <Link href="/personnel" className="text-blue-600 hover:underline">
-                  实施人员
+                由人员月成本自动计算，请前往{" "}
+                <Link
+                  href="/personnel"
+                  className="text-blue-600 hover:underline"
+                >
+                  人员成本
                 </Link>{" "}
-                维护月成本。
+                （行政人事）维护月成本。
               </p>
             </div>
           </>

@@ -20,9 +20,10 @@ export function isClosedOpportunityStatus(status: OpportunityStatus) {
   return CLOSED_OPPORTUNITY_STATUSES.includes(status);
 }
 
-/** Prisma 过滤：仅未签约商机可产生待跟进 */
+/** Prisma 过滤：仅未签约且已确认入库的商机可产生待跟进 */
 export const pendingFollowUpOpportunityWhere = {
   status: { notIn: CLOSED_OPPORTUNITY_STATUSES },
+  confirmStatus: "CONFIRMED" as const,
 } as const;
 
 export function canSignOpportunity(status: OpportunityStatus) {

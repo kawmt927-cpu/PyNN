@@ -184,7 +184,7 @@ export function AiAgentSettings({ initial }: Props) {
               id="model"
               name="model"
               defaultValue={initial.model}
-              placeholder="kimi-k2.5"
+              placeholder="kimi-k2.6"
               required
             />
           </div>

@@ -4,6 +4,19 @@ export type ActionResult = {
   allocationId?: string;
   modelId?: string;
   contractId?: string;
+  quoteId?: string;
+  /** 需用户确认后再提交（如商机同客户同名、住宿超标） */
+  needsConfirm?:
+    | {
+        kind: "duplicate_opportunity";
+        message: string;
+        existingOpportunityId: string;
+        existingHref: string;
+      }
+    | {
+        kind: "hotel_cap_overage";
+        message: string;
+      };
 };
 
 export type UserFacingActionError = {

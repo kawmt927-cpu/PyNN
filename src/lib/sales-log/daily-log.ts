@@ -1,5 +1,5 @@
 import { format, subDays } from "date-fns";
-import { SalesDailyLogStatus } from "@prisma/client";
+import { SalesDailyLogStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const SALES_LOG_CONVERSATION_RETENTION_DAYS = 7;
@@ -104,15 +104,56 @@ export type ConversationMessage = {
   content: string;
 };
 
+export async function persistPendingCheckInLocation(
+  userId: string,
+  logDate: Date,
+  pendingCheckInLocation: Record<string, unknown>
+) {
+  const log = await ensureDailyLogForDate(userId, logDate);
+  const existingStructured =
+    log.structuredOutput &&
+    typeof log.structuredOutput === "object" &&
+    !Array.isArray(log.structuredOutput)
+      ? (log.structuredOutput as Record<string, unknown>)
+      : {};
+
+  await prisma.salesDailyLog.update({
+    where: { id: log.id },
+    data: {
+      structuredOutput: {
+        ...existingStructured,
+        pendingCheckInLocation,
+      } as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export async function syncDailyLogConversation(
   userId: string,
   messages: ConversationMessage[],
-  logDate: Date = getTodayLogDate()
+  logDate: Date = getTodayLogDate(),
+  options?: { pendingCheckInLocation?: Record<string, unknown> | null }
 ) {
   const log = await ensureDailyLogForDate(userId, logDate);
+  const existingStructured =
+    log.structuredOutput &&
+    typeof log.structuredOutput === "object" &&
+    !Array.isArray(log.structuredOutput)
+      ? (log.structuredOutput as Record<string, unknown>)
+      : {};
+
+  const data: Prisma.SalesDailyLogUpdateInput = { conversation: messages };
+
+  if (options?.pendingCheckInLocation) {
+    data.structuredOutput = {
+      ...existingStructured,
+      pendingCheckInLocation: options.pendingCheckInLocation,
+    } as Prisma.InputJsonValue;
+  }
+
   const updated = await prisma.salesDailyLog.update({
     where: { id: log.id },
-    data: { conversation: messages },
+    data,
     select: {
       id: true,
       status: true,

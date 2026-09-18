@@ -1,7 +1,6 @@
 import { canEditCustomerContent, canManageCustomerOwner } from "@/lib/customers/access";
-import { dedupeCustomersByName } from "@/lib/customers/duplicate-name";
 import { buildCustomerListWhere, type CustomerListFilters } from "@/lib/customers/list-filters";
-import { buildBroadNameWhere, rankByNameMatch, scoreNameMatch } from "@/lib/search/fuzzy-text";
+import { buildBroadNameWhere, scoreNameMatch } from "@/lib/search/fuzzy-text";
 import { opportunityListWhere } from "@/lib/opportunities/access";
 import { prisma } from "@/lib/prisma";
 import { CustomerCategory, OpportunityStatus, Prisma, UserRole } from "@prisma/client";
@@ -10,6 +9,7 @@ type CustomerSearchRow = {
   id: string;
   name: string;
   category: CustomerCategory;
+  customerType: string | null;
   customerGrade: string | null;
   ownerId: string | null;
   owner: { name: string } | null;
@@ -20,15 +20,20 @@ export type CustomerSearchResult = {
   id: string;
   name: string;
   category: CustomerCategory;
+  customerType: string | null;
   customerGrade: string | null;
   writable: boolean;
   ownerName: string | null;
+  /** 因联系人姓名命中时带上，便于 UI 提示「通过联系人关联」 */
+  matchedContactName?: string | null;
+  matchedContactTitle?: string | null;
 };
 
 const customerSearchSelect = {
   id: true,
   name: true,
   category: true,
+  customerType: true,
   customerGrade: true,
   ownerId: true,
   owner: { select: { name: true } },
@@ -38,25 +43,74 @@ const customerSearchSelect = {
 function toCustomerSearchResult(
   role: UserRole,
   userId: string,
-  row: CustomerSearchRow
+  row: CustomerSearchRow,
+  contactMatch?: { name: string; title: string | null } | null
 ): CustomerSearchResult {
   return {
     id: row.id,
     name: row.name,
     category: row.category,
+    customerType: row.customerType,
     customerGrade: row.customerGrade,
     writable: canEditCustomerContent(role, userId, row),
     ownerName: row.owner?.name ?? null,
+    matchedContactName: contactMatch?.name ?? null,
+    matchedContactTitle: contactMatch?.title ?? null,
   };
 }
 
-function sortCustomersForSearch(role: UserRole, userId: string, rows: CustomerSearchRow[]) {
-  return [...rows].sort((a, b) => {
-    const aWritable = canEditCustomerContent(role, userId, a);
-    const bWritable = canEditCustomerContent(role, userId, b);
-    if (aWritable !== bWritable) return aWritable ? -1 : 1;
-    return 0;
+async function findCustomersByContactName(
+  trimmed: string,
+  excluded: string[]
+): Promise<
+  Array<{
+    customer: CustomerSearchRow;
+    contactName: string;
+    contactTitle: string | null;
+    score: number;
+  }>
+> {
+  if (trimmed.length < 2) return [];
+
+  const contacts = await prisma.contact.findMany({
+    where: {
+      name: { contains: trimmed },
+      ...(excluded.length > 0 ? { customerId: { notIn: excluded } } : {}),
+    },
+    select: {
+      name: true,
+      title: true,
+      customer: { select: customerSearchSelect },
+    },
+    take: 40,
+    orderBy: { updatedAt: "desc" },
   });
+
+  const bestByCustomer = new Map<
+    string,
+    {
+      customer: CustomerSearchRow;
+      contactName: string;
+      contactTitle: string | null;
+      score: number;
+    }
+  >();
+
+  for (const row of contacts) {
+    const score = scoreNameMatch(trimmed, row.name);
+    if (score <= 0) continue;
+    const existing = bestByCustomer.get(row.customer.id);
+    if (!existing || score > existing.score) {
+      bestByCustomer.set(row.customer.id, {
+        customer: row.customer,
+        contactName: row.name,
+        contactTitle: row.title,
+        score: score + 5, // 联系人命中略优先于弱客户名匹配
+      });
+    }
+  }
+
+  return [...bestByCustomer.values()];
 }
 
 export async function searchCustomersForUser(
@@ -103,19 +157,87 @@ export async function searchCustomersForUser(
     where.id = { notIn: [...new Set(excluded)] };
   }
 
-  const rows = await prisma.customer.findMany({
-    where,
-    select: customerSearchSelect,
-    take: 60,
-    orderBy: { updatedAt: "desc" },
+  const [rows, contactMatches] = await Promise.all([
+    prisma.customer.findMany({
+      where,
+      select: customerSearchSelect,
+      take: 60,
+      orderBy: { updatedAt: "desc" },
+    }),
+    findCustomersByContactName(trimmed, [...new Set(excluded)]),
+  ]);
+
+  // 非全库模式：联系人命中也要落在同一可见范围
+  let scopedContactMatches = contactMatches;
+  if (!options?.markWritable) {
+    const view = options?.view ?? (canManageCustomerOwner(role) ? "all" : "mine");
+    const scopeWhere = buildCustomerListWhere(role, userId, view, {
+      ...filters,
+      q: "",
+    });
+    const scopedIds = new Set(
+      (
+        await prisma.customer.findMany({
+          where: {
+            AND: [scopeWhere, { id: { in: contactMatches.map((m) => m.customer.id) } }],
+          },
+          select: { id: true },
+        })
+      ).map((c) => c.id)
+    );
+    scopedContactMatches = contactMatches.filter((m) => scopedIds.has(m.customer.id));
+  }
+
+  const contactById = new Map(
+    scopedContactMatches.map((m) => [
+      m.customer.id,
+      { name: m.contactName, title: m.contactTitle, score: m.score },
+    ])
+  );
+
+  const byId = new Map<string, CustomerSearchRow>();
+  for (const row of rows) byId.set(row.id, row);
+  for (const m of scopedContactMatches) {
+    if (!byId.has(m.customer.id)) byId.set(m.customer.id, m.customer);
+  }
+
+  const merged = [...byId.values()].map((row) => {
+    const viaContact = contactById.get(row.id);
+    const nameScore = scoreNameMatch(trimmed, row.name);
+    const score = Math.max(nameScore, viaContact?.score ?? 0);
+    return { row, score, viaContact };
   });
 
-  const ranked = rankByNameMatch(trimmed, rows);
-  const ordered = options?.markWritable ? sortCustomersForSearch(role, userId, ranked) : ranked;
+  merged.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (options?.markWritable) {
+      const aw = canEditCustomerContent(role, userId, a.row);
+      const bw = canEditCustomerContent(role, userId, b.row);
+      if (aw !== bw) return aw ? -1 : 1;
+    }
+    return 0;
+  });
 
-  return dedupeCustomersByName(ordered)
-    .slice(0, 20)
-    .map((row) => toCustomerSearchResult(role, userId, row));
+  // 同名客户去重时保留分数更高的；联系人命中优先保留
+  const seenName = new Set<string>();
+  const deduped: typeof merged = [];
+  for (const item of merged) {
+    const key = item.row.name.trim();
+    if (seenName.has(key)) continue;
+    seenName.add(key);
+    deduped.push(item);
+  }
+
+  return deduped.slice(0, 20).map((item) =>
+    toCustomerSearchResult(
+      role,
+      userId,
+      item.row,
+      item.viaContact
+        ? { name: item.viaContact.name, title: item.viaContact.title }
+        : null
+    )
+  );
 }
 
 export async function searchOpportunitiesForUser(
@@ -152,6 +274,7 @@ export async function searchOpportunitiesForUser(
       id: true,
       title: true,
       status: true,
+      confirmStatus: true,
       updatedAt: true,
       customer: { select: { name: true } },
     },

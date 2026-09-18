@@ -3,37 +3,59 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { BackLink } from "@/components/navigation/back-link";
 import { ProjectTabs } from "@/components/projects/project-tabs";
 import { CostSummaryCards } from "@/components/projects/cost-summary-cards";
 import { ProjectOverviewForm } from "@/components/projects/project-overview-form";
 import { ProjectPlanPanel } from "@/components/projects/project-plan-panel";
-import { canManageProject, buildProjectListWhere, canAccessResourceSchedule } from "@/lib/projects/access";
+import { ProjectPlanChrome } from "@/components/projects/project-plan-chrome";
+import {
+  canManageProject,
+  canEditProjectContent,
+  canDeleteProject,
+  buildProjectListWhere,
+  canAccessResourceSchedule,
+  getProjectMemberAccessLevel,
+} from "@/lib/projects/access";
 import { getProjectCostSummary } from "@/lib/projects/cost-summary";
 import { clearActualStartIfNoAllocations } from "@/lib/projects/project-actual-dates";
-import { buildScheduleModuleHref } from "@/lib/projects/timeline";
 import { PROJECT_STATUS_LABELS, ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import { PROJECT_TABS, parseProjectTab } from "@/lib/validations/project";
 import { formatAmount } from "@/lib/opportunities/funnel";
-import { formatLocalDateInput } from "@/lib/dates/local-date";
+import { selfReturnPath, withReturnTo } from "@/lib/navigation/return-to";
+import { ProjectScheduleEmbed } from "@/components/projects/project-schedule-embed";
+import { ProjectMemberAccessPanel } from "@/components/projects/project-member-access-panel";
+import { ProjectExpenseClaimsPanel } from "@/components/projects/project-expense-claims-panel";
+import { ProjectDeliveryPanel } from "@/components/projects/project-delivery-panel";
+import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
+import { hasPermission } from "@/lib/rbac/has-permission";
+import type { ProjectMemberAccess } from "@prisma/client";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; taskId?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    taskId?: string;
+    returnTo?: string;
+    range?: string;
+    start?: string;
+    end?: string;
+    week?: string;
+    axis?: string;
+  }>;
 };
 
 export default async function ProjectDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { tab: rawTab, taskId: rawTaskId } = await searchParams;
-  const activeTab = parseProjectTab(rawTab);
-  const initialTaskId = rawTaskId?.trim() || null;
+  const query = await searchParams;
+  const activeTab = parseProjectTab(query.tab);
+  const initialTaskId = query.taskId?.trim() || null;
 
   const session = await requireRole([
     "PROJECT_ADMIN",
     "PROJECT_MANAGER",
     "PROJECT_STAFF",
     "ADMIN",
+    "SALES_MANAGER",
   ]);
 
   const project = await prisma.project.findFirst({
@@ -56,8 +78,19 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
   if (!project) notFound();
 
-  const canEdit = canManageProject(session.user.role, session.user.id, project);
+  const selfPath = selfReturnPath(`/projects/${id}`, query);
+
+  const memberAccessLevel = await getProjectMemberAccessLevel(project.id, session.user.id);
+  const canManage = canManageProject(session.user.role, session.user.id, project);
+  const canEdit = canEditProjectContent(
+    session.user.role,
+    session.user.id,
+    project,
+    memberAccessLevel
+  );
+  const canDelete = canDeleteProject(session.user.role);
   const canSchedule = canAccessResourceSchedule(session.user.role);
+  const canExpenseAccess = await hasPermission(session.user.role, "expense.access");
   const resolvedTab =
     activeTab === "schedule" && !canSchedule ? "overview" : activeTab;
   // 无人力投入时不应保留实际开始（历史误填常等于计划开始）
@@ -65,48 +98,113 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
     const cleared = await clearActualStartIfNoAllocations(project.id);
     if (cleared) project.actualStartAt = null;
   }
-  const [costSummary, projectModels, allocationUsers, sourceModelPhases] = await Promise.all([
-    getProjectCostSummary(project.id),
-    resolvedTab === "plan"
-      ? prisma.projectModel.findMany({
-          where: { enabled: true },
-          orderBy: { name: "asc" },
-          select: {
-            id: true,
-            name: true,
-            totalDurationDays: true,
-            _count: { select: { phases: true } },
-          },
-        })
-      : Promise.resolve([]),
-    resolvedTab === "plan"
-      ? prisma.projectStaffAllocation.findMany({
-          where: { projectId: project.id },
-          distinct: ["userId"],
-          select: {
-            user: { select: { id: true, name: true } },
-          },
-        })
-      : Promise.resolve([]),
-    resolvedTab === "plan" && project.sourceModelId
-      ? prisma.projectModelPhase.findMany({
-          where: { modelId: project.sourceModelId },
-          select: {
-            id: true,
-            tasks: {
-              orderBy: { sortOrder: "asc" },
-              select: { id: true, name: true, durationDays: true },
+  const [costSummary, projectModels, allocationUsers, allocationSpan, sourceModelPhases, projectMemos, projectMembers, projectExpenseClaims, acceptances, changeRequests] =
+    await Promise.all([
+      getProjectCostSummary(project.id),
+      resolvedTab === "plan"
+        ? prisma.projectModel.findMany({
+            where: { enabled: true },
+            orderBy: { name: "asc" },
+            select: {
+              id: true,
+              name: true,
+              totalDurationDays: true,
+              _count: { select: { phases: true } },
             },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
+          })
+        : Promise.resolve([]),
+      resolvedTab === "plan" || (resolvedTab === "overview" && canManage)
+        ? prisma.projectStaffAllocation.findMany({
+            where: { projectId: project.id },
+            distinct: ["userId"],
+            select: {
+              user: { select: { id: true, name: true } },
+            },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "plan"
+        ? prisma.projectStaffAllocation.aggregate({
+            where: { projectId: project.id },
+            _max: { endDate: true },
+          })
+        : Promise.resolve({ _max: { endDate: null as Date | null } }),
+      resolvedTab === "plan" && project.sourceModelId
+        ? prisma.projectModelPhase.findMany({
+            where: { modelId: project.sourceModelId },
+            select: {
+              id: true,
+              tasks: {
+                orderBy: { sortOrder: "asc" },
+                select: { id: true, name: true, durationDays: true },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "plan"
+        ? prisma.projectMemo.findMany({
+            where: { projectId: project.id },
+            orderBy: { createdAt: "desc" },
+            include: {
+              author: { select: { name: true } },
+              taskLinks: {
+                include: { task: { select: { id: true, name: true } } },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "overview" && canManage
+        ? prisma.projectMember.findMany({
+            where: { projectId: project.id },
+            select: {
+              userId: true,
+              accessLevel: true,
+              user: { select: { id: true, name: true } },
+            },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "costs" && isExpenseFeatureEnabled()
+        ? prisma.expenseClaim.findMany({
+            where: {
+              OR: [
+                { projectId: project.id },
+                { items: { some: { projectId: project.id } } },
+                { invoices: { some: { projectId: project.id } } },
+              ],
+            },
+            orderBy: { updatedAt: "desc" },
+            take: 50,
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              totalAmount: true,
+              updatedAt: true,
+              applicant: { select: { name: true } },
+              beneficiary: { select: { name: true } },
+            },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "delivery"
+        ? prisma.projectAcceptance.findMany({
+            where: { projectId: project.id },
+            orderBy: { acceptedAt: "desc" },
+            include: { createdBy: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+      resolvedTab === "delivery"
+        ? prisma.projectChangeRequest.findMany({
+            where: { projectId: project.id },
+            orderBy: { createdAt: "desc" },
+            include: {
+              requester: { select: { id: true, name: true } },
+              reviewer: { select: { name: true } },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
 
   const scheduleHref = canSchedule
-    ? buildScheduleModuleHref({
-        view: "detail",
-        project: project.id,
-      })
+    ? `/projects/${project.id}?tab=schedule`
     : null;
 
   const templateTasksByPhaseId: Record<
@@ -119,6 +217,51 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
   const assignees = allocationUsers.map((row) => row.user);
 
+  const accessCandidates = (() => {
+    if (!canManage || resolvedTab !== "overview") return [];
+    type Acc = {
+      userId: string;
+      name: string;
+      accessLevel: ProjectMemberAccess;
+      sources: Set<string>;
+    };
+    const map = new Map<string, Acc>();
+    const ensure = (userId: string, name: string, source: string, level?: ProjectMemberAccess) => {
+      if (project.projectManagerId && userId === project.projectManagerId) return;
+      const existing = map.get(userId);
+      if (existing) {
+        existing.sources.add(source);
+        if (level) existing.accessLevel = level;
+        return;
+      }
+      map.set(userId, {
+        userId,
+        name,
+        accessLevel: level ?? "NONE",
+        sources: new Set([source]),
+      });
+    };
+    for (const m of projectMembers) {
+      ensure(m.userId, m.user.name, "成员", m.accessLevel);
+    }
+    for (const phase of project.phases) {
+      for (const task of phase.projectTasks) {
+        if (task.assignee) ensure(task.assignee.id, task.assignee.name, "任务负责人");
+      }
+    }
+    for (const row of allocationUsers) {
+      ensure(row.user.id, row.user.name, "排班");
+    }
+    return [...map.values()]
+      .map((row) => ({
+        userId: row.userId,
+        name: row.name,
+        accessLevel: row.accessLevel,
+        sources: [...row.sources],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  })();
+
   const tabs = PROJECT_TABS.filter((tab) => canSchedule || tab.id !== "schedule").map(
     (tab) => ({
       ...tab,
@@ -126,97 +269,98 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
     })
   );
 
-  if (resolvedTab === "plan") {
-    return (
-      <div className="flex h-dvh flex-col overflow-hidden overscroll-none">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2">
-          <div className="flex min-w-0 items-center gap-4">
-            <Button variant="outline" size="sm" className="h-8 shrink-0" asChild>
-              <Link href={`/projects/${project.id}?tab=overview`}>返回概览</Link>
-            </Button>
-            <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold">项目计划 · {project.name}</h1>
-              <p className="truncate text-xs text-muted-foreground">
-                {project.customer?.name ?? "内部项目"}
-                {project.plannedStartAt && project.plannedEndAt
-                  ? ` · ${formatLocalDateInput(project.plannedStartAt)} ~ ${formatLocalDateInput(project.plannedEndAt)}`
-                  : " · 未设置计划起止"}
-              </p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8" asChild>
-              <Link href="/projects">项目列表</Link>
-            </Button>
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col p-3">
-          <ProjectPlanPanel
-            projectId={project.id}
-            canEdit={canEdit}
-            plannedStartAt={project.plannedStartAt}
-            plannedEndAt={project.plannedEndAt}
-            scheduleHref={scheduleHref}
-            initialTaskId={initialTaskId}
-            assignees={assignees}
-            templateTasksByPhaseId={templateTasksByPhaseId}
-            projectModels={projectModels.map((model) => ({
-              id: model.id,
-              name: model.name,
-              phaseCount: model._count.phases,
-              totalDurationDays: model.totalDurationDays,
-            }))}
-            phases={project.phases.map((phase) => ({
-              id: phase.id,
-              name: phase.name,
-              sortOrder: phase.sortOrder,
-              progressWeight: phase.progressWeight,
-              status: phase.status,
-              plannedStartAt: phase.plannedStartAt,
-              plannedEndAt: phase.plannedEndAt,
-              sourceModelPhaseId: phase.sourceModelPhaseId,
-              tasks: phase.projectTasks.map((task) => ({
-                id: task.id,
-                name: task.name,
-                description: task.description,
-                status: task.status,
-                plannedStartAt: task.plannedStartAt,
-                plannedEndAt: task.plannedEndAt,
-                actualCompletedAt: task.actualCompletedAt,
-                cancelledNote: task.cancelledNote,
-                sortOrder: task.sortOrder,
-                assigneeId: task.assigneeId,
-                assigneeName: task.assignee?.name ?? null,
-              })),
-            }))}
-          />
-        </div>
-      </div>
-    );
-  }
+  const planPanel =
+    resolvedTab === "plan" ? (
+      <ProjectPlanChrome
+        projectName={project.name}
+        customerName={project.customer?.name ?? null}
+      >
+        <ProjectPlanPanel
+          projectId={project.id}
+          canEdit={canEdit}
+          plannedStartAt={project.plannedStartAt}
+          plannedEndAt={project.plannedEndAt}
+          allocationSpanEnd={allocationSpan._max.endDate}
+          scheduleHref={scheduleHref}
+          initialTaskId={initialTaskId}
+          assignees={assignees}
+          templateTasksByPhaseId={templateTasksByPhaseId}
+          memos={projectMemos.map((memo) => ({
+            id: memo.id,
+            content: memo.content,
+            category: memo.category,
+            isRisk: memo.isRisk,
+            followStatus: memo.followStatus,
+            authorName: memo.author.name,
+            createdAt: memo.createdAt,
+            taskLinks: memo.taskLinks.map((link) => ({
+              taskId: link.task.id,
+              taskName: link.task.name,
+            })),
+          }))}
+          projectModels={projectModels.map((model) => ({
+            id: model.id,
+            name: model.name,
+            phaseCount: model._count.phases,
+            totalDurationDays: model.totalDurationDays,
+          }))}
+          phases={project.phases.map((phase) => ({
+            id: phase.id,
+            name: phase.name,
+            sortOrder: phase.sortOrder,
+            progressWeight: phase.progressWeight,
+            status: phase.status,
+            plannedStartAt: phase.plannedStartAt,
+            plannedEndAt: phase.plannedEndAt,
+            sourceModelPhaseId: phase.sourceModelPhaseId,
+            tasks: phase.projectTasks.map((task) => ({
+              id: task.id,
+              name: task.name,
+              description: task.description,
+              status: task.status,
+              plannedStartAt: task.plannedStartAt,
+              plannedEndAt: task.plannedEndAt,
+              progressPercent: task.progressPercent,
+              actualCompletedAt: task.actualCompletedAt,
+              cancelledNote: task.cancelledNote,
+              sortOrder: task.sortOrder,
+              assigneeId: task.assigneeId,
+              assigneeName: task.assignee?.name ?? null,
+            })),
+          }))}
+        />
+      </ProjectPlanChrome>
+    ) : null;
 
   return (
-    <div className="space-y-6">
-      <BackLink href="/projects" label="返回项目列表" />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">{project.name}</h1>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-bold leading-tight">{project.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            客户：
-            {project.customer ? (
-              <Link href={`/customers/${project.customer.id}`} className="hover:underline">
-                {project.customer.name}
-              </Link>
-            ) : (
-              <span>内部/独立项目</span>
-            )}
-            {project.projectManager ? ` · 项目经理：${project.projectManager.name}` : ""}
-            {` · ${PROJECT_STATUS_LABELS[project.status]}`}
+            {project.customer && project.customer.name !== project.name ? (
+              <>
+                客户：
+                <Link
+                  href={withReturnTo(`/customers/${project.customer.id}`, selfPath)}
+                  className="hover:underline"
+                >
+                  {project.customer.name}
+                </Link>
+                {" · "}
+              </>
+            ) : null}
+            {!project.customer ? <span>内部/独立项目 · </span> : null}
+            {project.projectManager ? `项目经理：${project.projectManager.name} · ` : ""}
+            {PROJECT_STATUS_LABELS[project.status]}
           </p>
           {project.contract ? (
             <p className="text-sm text-muted-foreground">
               关联合同：
-              <Link href={`/contracts/${project.contract.id}`} className="hover:underline">
+              <Link
+                href={withReturnTo(`/contracts/${project.contract.id}`, selfPath)}
+                className="hover:underline"
+              >
                 {project.contract.title}
               </Link>
               {` · ${formatAmount(Number(project.contract.totalAmount))}`}
@@ -225,7 +369,13 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
         </div>
       </div>
 
-      <ProjectTabs activeTab={resolvedTab} tabs={tabs} />
+      <ProjectTabs
+        activeTab={resolvedTab}
+        tabs={tabs}
+        showFullscreen={resolvedTab === "plan" || resolvedTab === "schedule"}
+      />
+
+      {planPanel}
 
       {resolvedTab === "overview" ? (
         <div className="space-y-6">
@@ -237,7 +387,9 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
             <CardContent>
               <ProjectOverviewForm
                 projectId={project.id}
-                canEdit={canEdit}
+                projectName={project.name}
+                canEdit={canManage}
+                canDelete={canDelete}
                 phaseCount={project.phases.length}
                 defaultValues={{
                   status: project.status,
@@ -251,6 +403,19 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
               />
             </CardContent>
           </Card>
+          {canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">访问权限</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ProjectMemberAccessPanel
+                  projectId={project.id}
+                  candidates={accessCandidates}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">人力成本明细</CardTitle>
@@ -292,19 +457,19 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
       ) : null}
 
       {resolvedTab === "schedule" && canSchedule ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">资源排班</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              排班已独立为全屏模块：左侧人员列表（搜索/筛选），右侧按项目切换甘特图，并支持全局总览与选中人员跨项目视图。
-            </p>
-            <Button asChild>
-              <Link href={scheduleHref!}>打开资源排班</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <ProjectScheduleEmbed
+          projectId={project.id}
+          role={session.user.role}
+          userId={session.user.id}
+          canEdit={canEdit}
+          query={{
+            range: query.range,
+            start: query.start,
+            end: query.end,
+            week: query.week,
+            axis: query.axis,
+          }}
+        />
       ) : null}
 
       {resolvedTab === "costs" ? (
@@ -313,10 +478,35 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
             <CardTitle className="text-lg">发生费用</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-muted-foreground">
-              发生费用录入功能将在下一阶段实现。当前已计入费用合计：
-              {formatAmount(costSummary.expenseCost)}
-            </p>
+            <ProjectExpenseClaimsPanel
+              projectId={project.id}
+              projectName={project.name}
+              expenseCost={costSummary.expenseCost}
+              claims={projectExpenseClaims}
+              canCreate={canExpenseAccess && (canEdit || canManage)}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {resolvedTab === "delivery" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">验收与变更</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ProjectDeliveryPanel
+              projectId={project.id}
+              canEdit={canEdit || canManage}
+              canReview={
+                canManage ||
+                session.user.role === "PROJECT_ADMIN" ||
+                session.user.role === "ADMIN"
+              }
+              currentUserId={session.user.id}
+              acceptances={acceptances}
+              changeRequests={changeRequests}
+            />
           </CardContent>
         </Card>
       ) : null}

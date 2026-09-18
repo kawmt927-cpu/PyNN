@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { ALLOCATION_MODE_LABELS } from "@/lib/projects/labels";
 import {
   scheduleYearBandClass,
   scheduleYearBandMutedClass,
-  staffColorClass,
+  useStaffColor,
 } from "@/lib/projects/timeline-colors";
 import {
   barStyleForRange,
@@ -18,6 +19,11 @@ import type { ScheduleBar } from "@/lib/projects/schedule-serialize";
 import { getDailyShares, type AllocationRecord } from "@/lib/projects/allocation-split";
 import { parseDateOnlyInput } from "@/lib/validations/project";
 import { toDateOnly } from "@/lib/projects/workdays";
+import {
+  coalesceFillRuns,
+  dayFillCornerClass,
+  fillHeightPct,
+} from "@/lib/projects/schedule-bar-fills";
 
 type TimelineBand = {
   key: string;
@@ -69,28 +75,6 @@ function buildMonthBands(days: TimelineDay[]): TimelineBand[] {
     }
   }
   return bands;
-}
-
-function fillHeightPct(share: number): number {
-  return Math.max(share * 100, share > 0 ? 6 : 0);
-}
-
-function dayFillCornerClass(
-  heightPct: number,
-  prevHeightPct: number | null,
-  nextHeightPct: number | null
-): string {
-  // 台阶拐角只圆「更高」一侧，避免矮块贴高块时出现内凹缺口
-  const roundTl = prevHeightPct == null || heightPct > prevHeightPct;
-  const roundTr = nextHeightPct == null || heightPct > nextHeightPct;
-  const roundBl = prevHeightPct == null;
-  const roundBr = nextHeightPct == null;
-  return cn(
-    roundTl && "rounded-tl",
-    roundTr && "rounded-tr",
-    roundBl && "rounded-bl",
-    roundBr && "rounded-br"
-  );
 }
 
 function clampShare(share: number): number {
@@ -185,19 +169,24 @@ export function ScheduleTimelineHeader({
 
   return (
     <div
-      className="sticky top-0 z-10 flex border-b bg-muted/80 backdrop-blur text-xs text-muted-foreground"
+      className="sticky top-0 z-20 flex border-b bg-muted text-xs text-muted-foreground"
       style={{ width: trackWidth + sideWidth, minWidth: trackWidth + sideWidth }}
     >
       <div
-        className="shrink-0 border-r p-2 font-medium flex items-center"
-        style={{ width: rowLabelWidth }}
+        className="sticky left-0 z-30 shrink-0 border-r bg-muted p-2 font-medium flex items-center shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+        style={{ width: rowLabelWidth, minWidth: rowLabelWidth, maxWidth: rowLabelWidth }}
       >
         {rowLabel}
       </div>
       {secondaryLabel ? (
         <div
-          className="shrink-0 border-r p-2 font-medium flex items-center"
-          style={{ width: secondaryLabelWidth }}
+          className="sticky z-30 shrink-0 border-r bg-muted p-2 font-medium flex items-center shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+          style={{
+            width: secondaryLabelWidth,
+            minWidth: secondaryLabelWidth,
+            maxWidth: secondaryLabelWidth,
+            left: rowLabelWidth,
+          }}
         >
           {secondaryLabel}
         </div>
@@ -321,12 +310,13 @@ export function ScheduleTimelineBar({
     () => dayFillsForBar(bar, days, periodStart, peerRecords),
     [bar, days, periodStart, peerRecords]
   );
+  const runs = useMemo(() => coalesceFillRuns(fills), [fills]);
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
+  const color = useStaffColor(bar.userId);
 
-  if (!style.visible || fills.length === 0) return null;
+  if (!style.visible || runs.length === 0) return null;
 
-  const colorClass = staffColorClass(bar.userId);
-  const summary = `${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · 本周期 ${formatPersonDays(bar.effectiveDays)} 人天 · ${ALLOCATION_MODE_LABELS[bar.allocationMode]}`;
+  const summary = `${bar.userName}${showProject ? ` · ${bar.projectName}` : ""} · 本周期 ${formatPersonDays(bar.effectiveDays)} 人天 · ${ALLOCATION_MODE_LABELS[bar.allocationMode]} · ${bar.startDate}~${bar.endDate}`;
 
   return (
     <button
@@ -338,45 +328,35 @@ export function ScheduleTimelineBar({
       className={cn(
         "absolute top-1 bottom-1 overflow-visible transition-shadow",
         "outline outline-1 outline-transparent",
-        hoveredDay ? "z-20 outline-2 outline-foreground/70" : null,
+        hoveredDay ? "z-[2] outline-2 outline-foreground/70" : null,
         dimmed && "opacity-30",
-        highlighted && "z-10 outline-2 outline-primary"
+        highlighted && "z-[1] outline-2 outline-primary"
       )}
       style={{ left: style.left, width: style.width, minWidth: 0 }}
     >
       <div className="absolute inset-0 flex">
-        {fills.map((fill, index) => {
-          const heightPct = fillHeightPct(fill.share);
+        {runs.map((run, index) => {
+          const heightPct = fillHeightPct(run.share);
           const prevHeightPct =
-            index > 0 ? fillHeightPct(fills[index - 1].share) : null;
+            index > 0 ? fillHeightPct(runs[index - 1].share) : null;
           const nextHeightPct =
-            index < fills.length - 1 ? fillHeightPct(fills[index + 1].share) : null;
-          const active = hoveredDay === fill.dateKey;
+            index < runs.length - 1 ? fillHeightPct(runs[index + 1].share) : null;
+          const active = hoveredDay === run.dateKey;
           return (
             <div
-              key={fill.dateKey}
-              className="relative h-full min-w-0 flex-1"
-              onMouseEnter={() => setHoveredDay(fill.dateKey)}
+              key={`${run.dateKey}-${run.dayCount}`}
+              className="relative h-full min-w-0"
+              style={{ flex: run.dayCount }}
+              onMouseEnter={() => setHoveredDay(run.dateKey)}
             >
               <div
                 className={cn(
                   "absolute bottom-0 left-0 right-0",
-                  colorClass,
                   active && "brightness-110",
                   dayFillCornerClass(heightPct, prevHeightPct, nextHeightPct)
                 )}
-                style={{ height: `${heightPct}%` }}
+                style={{ height: `${heightPct}%`, backgroundColor: color }}
               />
-              {fill.share > 0 && active ? (
-                <span
-                  className={cn(
-                    "pointer-events-none absolute left-1/2 top-0.5 z-30 -translate-x-1/2 whitespace-nowrap",
-                    "rounded bg-foreground/90 px-1 py-0.5 text-[10px] font-medium leading-none text-background shadow"
-                  )}
-                >
-                  {formatPersonDays(fill.share)}人日
-                </span>
-              ) : null}
             </div>
           );
         })}
@@ -393,6 +373,7 @@ export function ScheduleTimelineRow({
   rowLabelWidth,
   label,
   sublabel,
+  labelContent,
   secondaryLabel,
   secondaryLabelWidth,
   bars,
@@ -404,6 +385,7 @@ export function ScheduleTimelineRow({
   highlightUserIds,
   onSelectBar,
   dropTarget,
+  rowMinHeight = 56,
 }: {
   rowId: string;
   periodStart: Date;
@@ -412,6 +394,8 @@ export function ScheduleTimelineRow({
   rowLabelWidth: number;
   label: string;
   sublabel?: string;
+  /** 自定义左侧 sticky 内容（如富信息人员卡）；传入时覆盖 label/sublabel 文本 */
+  labelContent?: ReactNode;
   secondaryLabel?: string;
   secondaryLabelWidth?: number;
   bars: ScheduleBar[];
@@ -423,6 +407,7 @@ export function ScheduleTimelineRow({
   highlightUserIds?: string[];
   onSelectBar: (bar: ScheduleBar) => void;
   dropTarget?: { projectId: string; userId: string };
+  rowMinHeight?: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: rowId,
@@ -439,20 +424,43 @@ export function ScheduleTimelineRow({
         highlighted && "bg-primary/5",
         dimmed && "opacity-40"
       )}
+      style={{
+        minWidth:
+          rowLabelWidth +
+          (secondaryLabelWidth ?? 0) +
+          days.length * dayWidth,
+        minHeight: rowMinHeight,
+      }}
     >
       <div
-        className="shrink-0 border-r p-2 text-xs"
-        style={{ width: rowLabelWidth }}
+        className={cn(
+          "sticky left-0 z-20 shrink-0 border-r shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]",
+          labelContent ? "p-0" : "p-2 text-xs",
+          highlighted ? "bg-primary/10" : "bg-card"
+        )}
+        style={{ width: rowLabelWidth, minWidth: rowLabelWidth, maxWidth: rowLabelWidth }}
       >
-        <p className="font-medium truncate">{label}</p>
-        {sublabel ? (
-          <p className="text-muted-foreground truncate">{sublabel}</p>
-        ) : null}
+        {labelContent ?? (
+          <>
+            <p className="truncate font-medium">{label}</p>
+            {sublabel ? (
+              <p className="truncate text-muted-foreground">{sublabel}</p>
+            ) : null}
+          </>
+        )}
       </div>
       {secondaryLabel != null && secondaryLabelWidth != null ? (
         <div
-          className="shrink-0 border-r p-2 text-xs"
-          style={{ width: secondaryLabelWidth }}
+          className={cn(
+            "sticky z-20 shrink-0 border-r p-2 text-xs shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]",
+            highlighted ? "bg-primary/10" : "bg-card"
+          )}
+          style={{
+            width: secondaryLabelWidth,
+            minWidth: secondaryLabelWidth,
+            maxWidth: secondaryLabelWidth,
+            left: rowLabelWidth,
+          }}
           title={secondaryLabel}
         >
           <p className="font-medium truncate">{secondaryLabel}</p>
@@ -461,10 +469,10 @@ export function ScheduleTimelineRow({
       <div
         ref={setNodeRef}
         className={cn(
-          "relative shrink-0 min-h-[56px]",
+          "relative z-0 shrink-0",
           isOver && canDrop && "bg-primary/10 ring-1 ring-inset ring-primary/40"
         )}
-        style={{ width: days.length * dayWidth }}
+        style={{ width: days.length * dayWidth, minHeight: rowMinHeight }}
       >
         <div className="absolute inset-0 flex pointer-events-none">
           {days.map((day) => (
@@ -509,6 +517,7 @@ export function ScheduleTimelineAddRow({
   secondaryLabelWidth,
   label = "添加投入",
   hint = "",
+  onAddClick,
 }: {
   rowId: string;
   projectId: string;
@@ -519,38 +528,106 @@ export function ScheduleTimelineAddRow({
   secondaryLabelWidth?: number;
   label?: string;
   hint?: string;
+  /** 有点击回调时改为按钮，不再作为拖放目标 */
+  onAddClick?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: rowId,
     data: { type: "project-add", projectId },
+    disabled: !canDrop || Boolean(onAddClick),
+  });
+
+  return (
+    <div
+      className="flex border-b border-dashed"
+      style={{
+        minWidth: rowLabelWidth + (secondaryLabelWidth ?? 0) + days.length * dayWidth,
+      }}
+    >
+      <div
+        className="sticky left-0 z-20 shrink-0 border-r bg-card p-2 text-xs shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+        style={{ width: rowLabelWidth, minWidth: rowLabelWidth, maxWidth: rowLabelWidth }}
+      >
+        {onAddClick && canDrop ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 w-full text-xs"
+            onClick={onAddClick}
+          >
+            {label}
+          </Button>
+        ) : (
+          <p className="truncate text-muted-foreground" title={label}>
+            {label}
+          </p>
+        )}
+      </div>
+      {secondaryLabelWidth != null && secondaryLabelWidth > 0 ? (
+        <div
+          className="sticky z-20 shrink-0 border-r bg-card p-2 text-xs text-muted-foreground shadow-[2px_0_6px_-2px_rgba(0,0,0,0.12)]"
+          style={{
+            width: secondaryLabelWidth,
+            minWidth: secondaryLabelWidth,
+            maxWidth: secondaryLabelWidth,
+            left: rowLabelWidth,
+          }}
+        />
+      ) : null}
+      <div
+        ref={onAddClick ? undefined : setNodeRef}
+        className={cn(
+          "relative flex min-h-[40px] shrink-0 items-center justify-center text-xs text-muted-foreground",
+          !onAddClick && isOver && canDrop && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40"
+        )}
+        style={{ width: days.length * dayWidth }}
+      >
+        {onAddClick && canDrop ? (
+          <button
+            type="button"
+            className="text-xs text-primary hover:underline"
+            onClick={onAddClick}
+          >
+            从资源池选择人员并设置时段
+          </button>
+        ) : (
+          hint
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 全局排班：整块项目作为投放区，悬停时高亮整个项目 */
+export function ScheduleProjectDropZone({
+  projectId,
+  canDrop,
+  className,
+  children,
+}: {
+  projectId: string;
+  canDrop: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `project-drop-${projectId}`,
+    data: { type: "project-drop", projectId },
     disabled: !canDrop,
   });
 
   return (
-    <div className="flex border-b border-dashed">
-      <div
-        className="shrink-0 border-r p-2 text-xs text-muted-foreground"
-        style={{ width: rowLabelWidth }}
-        title={label}
-      >
-        <p className="truncate">{label}</p>
-      </div>
-      {secondaryLabelWidth != null && secondaryLabelWidth > 0 ? (
-        <div
-          className="shrink-0 border-r p-2 text-xs text-muted-foreground"
-          style={{ width: secondaryLabelWidth }}
-        />
-      ) : null}
-      <div
-        ref={setNodeRef}
-        className={cn(
-          "relative shrink-0 min-h-[40px] flex items-center justify-center text-xs text-muted-foreground",
-          isOver && canDrop && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40"
-        )}
-        style={{ width: days.length * dayWidth }}
-      >
-        {hint}
-      </div>
+    <div
+      ref={setNodeRef}
+      className={cn(
+        className,
+        isOver &&
+          canDrop &&
+          "bg-primary/5 ring-2 ring-inset ring-primary/35 transition-colors"
+      )}
+    >
+      {children}
     </div>
   );
 }

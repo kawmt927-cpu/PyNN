@@ -27,6 +27,11 @@ import {
   customerGradeFormValue,
   customerGradeSubmitValue,
 } from "@/lib/customers/grade";
+import {
+  gradeToneForCustomerType,
+  isChannelCustomerType,
+  resolveGradeOptionsForCustomerType,
+} from "@/lib/customers/customer-type-grade";
 import { SALES_LOG_METHOD_OPTIONS, type SalesLogMethod } from "@/lib/sales-log/methods";
 import type { ConfigOptionItem } from "@/lib/config-options";
 
@@ -36,10 +41,13 @@ type Props = {
   checkInId: string;
   customerId: string;
   customerName: string;
+  customerType?: string | null;
   currentCustomerGrade?: string | null;
   defaultContactIds?: string[];
   stageOptions: ConfigOptionItem[];
   gradeOptions: ConfigOptionItem[];
+  channelGradeOptions?: ConfigOptionItem[];
+  typeOptions?: ConfigOptionItem[];
 };
 
 export function CheckInCompleteDialog({
@@ -48,18 +56,23 @@ export function CheckInCompleteDialog({
   checkInId,
   customerId,
   customerName,
+  customerType,
   currentCustomerGrade,
   defaultContactIds = [],
   stageOptions,
   gradeOptions,
+  channelGradeOptions = [],
+  typeOptions = [],
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [contactIds, setContactIds] = useState<string[]>(defaultContactIds);
   const [opportunityIds, setOpportunityIds] = useState<string[]>([]);
-  const { options: opportunityOptions } = useCustomerNotSignedOpportunities(customerId);
+  const { options: opportunityOptions, upsertOption: upsertOpportunityOption } =
+    useCustomerNotSignedOpportunities(customerId);
   const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
+  const [customerWritable, setCustomerWritable] = useState(true);
   const [method, setMethod] = useState<SalesLogMethod>("FACE_VISIT");
   const [content, setContent] = useState("");
   const [result, setResult] = useState("");
@@ -67,6 +80,33 @@ export function CheckInCompleteDialog({
   const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [nextFollowUpMethod, setNextFollowUpMethod] = useState<SalesLogMethod | "">("");
   const [nextFollowUpContent, setNextFollowUpContent] = useState("");
+
+  const activeGradeOptions = resolveGradeOptionsForCustomerType(
+    customerType,
+    gradeOptions,
+    channelGradeOptions,
+    typeOptions
+  );
+  const gradeTone = gradeToneForCustomerType(customerType, typeOptions);
+  const gradeFieldLabel = isChannelCustomerType(customerType, typeOptions)
+    ? "渠道等级（可选，选择后将更新）"
+    : "客户等级（可选，选择后将更新客户等级）";
+
+  useEffect(() => {
+    if (!open || !customerId) return;
+    let cancelled = false;
+    void fetch(`/api/customers/${customerId}/contacts`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { canWriteContent?: boolean } | null) => {
+        if (!cancelled) setCustomerWritable(Boolean(data?.canWriteContent));
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerWritable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, customerId]);
 
   useEffect(() => {
     if (!open) return;
@@ -84,7 +124,9 @@ export function CheckInCompleteDialog({
 
   useEffect(() => {
     if (!open) return;
-    setOpportunityIds(defaultOpportunitySelection(opportunityOptions));
+    setOpportunityIds((prev) =>
+      prev.length > 0 ? prev : defaultOpportunitySelection(opportunityOptions)
+    );
   }, [open, opportunityOptions]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -172,6 +214,7 @@ export function CheckInCompleteDialog({
                 options={opportunityOptions}
                 value={opportunityIds}
                 onChange={setOpportunityIds}
+                pendingConfirmHint={!customerWritable}
               />
             </div>
 
@@ -193,10 +236,11 @@ export function CheckInCompleteDialog({
 
             <CustomerGradeSelect
               id="completeGrade"
-              label="客户等级（可选，选择后将更新客户等级）"
+              label={gradeFieldLabel}
               value={suggestedGrade}
               onValueChange={setSuggestedGrade}
-              options={gradeOptions}
+              options={activeGradeOptions}
+              tone={gradeTone}
             />
 
             <div className="space-y-2 md:col-span-2">
@@ -230,7 +274,7 @@ export function CheckInCompleteDialog({
                 onContentChange={setNextFollowUpContent}
                 suggestedGrade={suggestedGrade}
                 currentCustomerGrade={currentCustomerGrade}
-                gradeOptions={gradeOptions}
+                gradeOptions={activeGradeOptions}
               />
             </div>
 
@@ -253,7 +297,13 @@ export function CheckInCompleteDialog({
         customerId={customerId}
         customerName={customerName}
         stageOptions={stageOptions}
+        pendingConfirmHint={!customerWritable}
         onCreated={(opp) => {
+          upsertOpportunityOption({
+            ...opp,
+            confirmStatus:
+              opp.confirmStatus ?? (!customerWritable ? "PENDING_MANAGER" : "CONFIRMED"),
+          });
           setOpportunityIds((prev) => [...new Set([...prev, opp.id])]);
         }}
       />

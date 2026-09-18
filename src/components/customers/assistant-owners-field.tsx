@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Label } from "@/components/ui/label";
+import { ScrollChain } from "@/components/ui/scroll-chain";
 import { cn } from "@/lib/utils";
 
 type SalesOption = { id: string; name: string };
@@ -41,7 +42,7 @@ export function AssistantOwnersField({
           暂无可选销售
         </p>
       ) : (
-        <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border p-3">
+        <ScrollChain className="max-h-40 space-y-2 overflow-y-auto rounded-md border p-3">
           {options.map((user) => (
             <label key={user.id} className="flex cursor-pointer items-center gap-2 text-sm">
               <input
@@ -55,7 +56,7 @@ export function AssistantOwnersField({
               <span>{user.name}</span>
             </label>
           ))}
-        </div>
+        </ScrollChain>
       )}
     </div>
   );

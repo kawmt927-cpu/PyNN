@@ -67,9 +67,49 @@ export async function createOpportunityFromAgent(
     input.customerId,
     input.customerName
   );
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: {
+      id: true,
+      name: true,
+      ownerId: true,
+      assistantOwners: { select: { userId: true } },
+    },
+  });
+  if (!customer) throw new Error("客户不存在");
+
+  const { canProposeOpportunityOnCustomer, resolveOpportunityConfirmStatus } = await import(
+    "@/lib/opportunities/confirm-status"
+  );
+  if (!canProposeOpportunityOnCustomer(ctx.role)) {
+    throw new Error("无权新建商机");
+  }
+
   const ownerId = await resolveOwnerId(ctx.role, ctx.userId);
+  const confirmStatus = resolveOpportunityConfirmStatus({
+    role: ctx.role,
+    userId: ctx.userId,
+    customer,
+  });
   const title = input.title.trim();
   if (!title) throw new Error("商机名称不能为空");
+
+  const { findSameCustomerSameTitleOpportunities } = await import(
+    "@/lib/opportunities/duplicate-title"
+  );
+  const duplicates = await findSameCustomerSameTitleOpportunities({
+    customerId,
+    title,
+  });
+  if (duplicates.length > 0) {
+    return {
+      success: true as const,
+      opportunityId: duplicates[0].id,
+      title: duplicates[0].title,
+      deduplicated: true as const,
+      message: `客户下已存在同名商机「${duplicates[0].title}」，未重复创建`,
+    };
+  }
 
   const opportunity = await prisma.$transaction(async (tx) => {
     const created = await tx.opportunity.create({
@@ -77,6 +117,7 @@ export async function createOpportunityFromAgent(
         title,
         customerId,
         ownerId,
+        createdById: ctx.userId,
         expectedAmount: input.expectedAmount,
         expectedCloseDate: parseExpectedCloseMonth(input.expectedCloseDate),
         stage,
@@ -85,6 +126,9 @@ export async function createOpportunityFromAgent(
         winProbability: input.winProbability ?? undefined,
         competitor: input.competitor?.trim() || undefined,
         notes: input.notes?.trim() || undefined,
+        confirmStatus,
+        confirmedAt: confirmStatus === "CONFIRMED" ? new Date() : undefined,
+        confirmedById: confirmStatus === "CONFIRMED" ? ctx.userId : undefined,
       },
     });
     await tx.opportunityStageLog.create({
@@ -92,11 +136,18 @@ export async function createOpportunityFromAgent(
         opportunityId: created.id,
         userId: ctx.userId,
         toStage: stage,
-        note: "AI 销售日志创建",
+        note:
+          confirmStatus === "PENDING_MANAGER"
+            ? "AI 销售日志创建（待管理确认）"
+            : "AI 销售日志创建",
       },
     });
     return created;
   });
+
+  if (confirmStatus === "PENDING_MANAGER") {
+    // 随往来代录一并确认，不单独通知
+  }
 
   const { recordEntityOperation, ENTITY_TYPES } = await import(
     "@/lib/audit/entity-operation-log"
@@ -106,7 +157,10 @@ export async function createOpportunityFromAgent(
     entityId: opportunity.id,
     userId: ctx.userId,
     action: "创建",
-    summary: `创建商机「${opportunity.title}」`,
+    summary:
+      confirmStatus === "PENDING_MANAGER"
+        ? `提交商机「${opportunity.title}」待确认`
+        : `创建商机「${opportunity.title}」`,
     detail: "来源：AI 销售日志",
   });
 
@@ -114,7 +168,11 @@ export async function createOpportunityFromAgent(
     success: true as const,
     opportunityId: opportunity.id,
     title: opportunity.title,
-    message: `已新建商机「${opportunity.title}」`,
+    confirmStatus,
+    message:
+      confirmStatus === "PENDING_MANAGER"
+        ? `已提交商机「${opportunity.title}」，待销售管理确认后入库`
+        : `已新建商机「${opportunity.title}」`,
   };
 }
 

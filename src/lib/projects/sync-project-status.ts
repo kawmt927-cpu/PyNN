@@ -1,9 +1,10 @@
-import { PhaseStatus, ProjectStatus, ProjectTaskStatus } from "@prisma/client";
+import { PhaseStatus, ProjectStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { evaluateProjectSetup } from "@/lib/projects/project-setup-gate";
+import { isProjectTaskStarted } from "@/lib/projects/task-progress";
 
 /**
- * 子任务进入「进行中」时联动：
+ * 子任务进入「已开工」状态时联动：
  * - 所属阶段若为「未开始」→「进行中」
  * - 项目若为「待启动」且基础设置已齐 →「实施中」
  */
@@ -29,7 +30,7 @@ export async function syncStatusFromTasks(projectId: string): Promise<void> {
   const phasesToStart = project.phases.filter(
     (phase) =>
       phase.status === PhaseStatus.NOT_STARTED &&
-      phase.projectTasks.some((task) => task.status === ProjectTaskStatus.IN_PROGRESS)
+      phase.projectTasks.some((task) => isProjectTaskStarted(task.status))
   );
 
   if (phasesToStart.length > 0) {
@@ -39,11 +40,11 @@ export async function syncStatusFromTasks(projectId: string): Promise<void> {
     });
   }
 
-  const hasInProgressTask = project.phases.some((phase) =>
-    phase.projectTasks.some((task) => task.status === ProjectTaskStatus.IN_PROGRESS)
+  const hasStartedTask = project.phases.some((phase) =>
+    phase.projectTasks.some((task) => isProjectTaskStarted(task.status))
   );
 
-  if (project.status === ProjectStatus.PENDING_START && hasInProgressTask) {
+  if (project.status === ProjectStatus.PENDING_START && hasStartedTask) {
     const setup = evaluateProjectSetup({
       plannedStartAt: project.plannedStartAt,
       plannedEndAt: project.plannedEndAt,
@@ -54,6 +55,10 @@ export async function syncStatusFromTasks(projectId: string): Promise<void> {
         where: { id: projectId },
         data: { status: ProjectStatus.IMPLEMENTING },
       });
+      const { syncContractStatusFromProject } = await import(
+        "@/lib/contracts/sync-contract-status-from-project"
+      );
+      await syncContractStatusFromProject(projectId);
     }
   }
 }

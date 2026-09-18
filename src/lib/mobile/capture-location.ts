@@ -42,11 +42,18 @@ export function formatLocationCaptureError(error: unknown): string {
   return geolocationErrorMessage(error);
 }
 
-/** 助理是否在请销售确认完整拟稿 */
+/** 助理是否在请销售确认完整拟稿（勿把「已提交成功」类回复当成拟稿确认） */
 export function isSalesLogDraftConfirmationRequest(content: string): boolean {
   const text = content.trim();
   if (!text || text.length < 40) return false;
-  return /请核对|请确认|无误请|回复确认|确认后.*(写入|记进)|以上是今日总结|准备写入 CRM|记进系统|帮忙看一眼|拟落库/.test(
+  // 口头谎称/真实成功后的收尾话术：不再触发自动定位
+  if (
+    /日报已提交|已成功提交|已带风险.*提交|日报已写入|重新帮你提交|已帮你提交/.test(text) &&
+    !/请.*(确认|核对)|帮忙看一眼|无误请/.test(text)
+  ) {
+    return false;
+  }
+  return /请核对|请确认|无误请|回复确认|确认后.*(写入|记进)|以上是今日总结|帮忙看一眼|拟落库/.test(
     text
   );
 }

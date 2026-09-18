@@ -11,6 +11,7 @@ import {
   createContactFormAction,
   updateContactFormAction,
 } from "@/app/(dashboard)/customers/contact-actions";
+import { CoverageProvincesField } from "@/components/customers/coverage-provinces-field";
 import type { ActionResult } from "@/lib/action-result";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { Contact } from "@prisma/client";
@@ -18,9 +19,13 @@ import { cn } from "@/lib/utils";
 
 const fieldLabelClass = "flex min-h-9 items-center";
 
+export type ContactFormContact = Contact & {
+  responsibleProvinces?: { province: string }[];
+};
+
 type Props = {
   customerId: string;
-  contact?: Contact;
+  contact?: ContactFormContact;
   onCancel?: () => void;
   onSuccess?: () => void;
   titleOptions: ConfigOptionItem[];
@@ -28,6 +33,8 @@ type Props = {
   roleOptions: ConfigOptionItem[];
   /** 仅医院客户显示科室/部门 */
   showDepartment?: boolean;
+  /** 渠道客户：可标注联系人负责省区 */
+  showResponsibleProvinces?: boolean;
   embedded?: boolean;
 };
 
@@ -40,6 +47,7 @@ export function ContactForm({
   departmentOptions,
   roleOptions,
   showDepartment = true,
+  showResponsibleProvinces = false,
   embedded = false,
 }: Props) {
   const router = useRouter();
@@ -160,6 +168,14 @@ export function ContactForm({
           />
         </div>
       </div>
+      {showResponsibleProvinces ? (
+        <CoverageProvincesField
+          name="responsibleProvinces"
+          label="负责省区"
+          description="可选。仅全国性渠道可标注；总部对接人可不选。按省统计与 KPI 以联系人负责省为准，同省不重复。"
+          defaultValue={contact?.responsibleProvinces?.map((r) => r.province) ?? []}
+        />
+      ) : null}
       <p className="text-xs text-muted-foreground">手机和微信至少填写一项。</p>
       <label className="flex items-center gap-2 text-sm">
         <input

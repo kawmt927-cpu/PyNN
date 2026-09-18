@@ -2,6 +2,15 @@ import { format, addDays } from "date-fns";
 import { SalesDailyLogStatus, UserRole } from "@prisma/client";
 import { canViewAllDailyReports } from "@/lib/sales-log/access";
 import { prisma } from "@/lib/prisma";
+import {
+  ensureCompanyCalendarCache,
+  isDailyReportRequiredForUser,
+} from "@/lib/calendar/cn-daily-report-days";
+import {
+  ensureUnsubmittedDailyReportPlaceholder,
+  isUnsubmittedDailyReportPlaceholder,
+  UNSUBMITTED_DAILY_REPORT_BODY,
+} from "@/lib/sales-log/unsubmitted-daily-report";
 import type { DailyReportDetail } from "@/lib/sales-log/daily-reports";
 
 export type DailyReportDayParams = {
@@ -110,6 +119,13 @@ export async function getDailyReportDayView(
 
   const { start, end, logDate } = dayBounds(dateStr);
 
+  await ensureCompanyCalendarCache();
+  await ensureUnsubmittedDailyReportPlaceholder({
+    userId: subjectUserId,
+    logDate,
+  });
+  const reportRequired = await isDailyReportRequiredForUser(subjectUserId, logDate);
+
   const [dailyLog, checkIns, followUps] = await Promise.all([
     prisma.salesDailyLog.findUnique({
       where: { userId_logDate: { userId: subjectUserId, logDate } },
@@ -133,18 +149,22 @@ export async function getDailyReportDayView(
   ]);
 
   const emptyStatus = SalesDailyLogStatus.IN_PROGRESS;
+  const rawBody = dailyLog?.dailyReport ?? null;
+  const cleanedBody =
+    !reportRequired && rawBody?.trim() === UNSUBMITTED_DAILY_REPORT_BODY ? null : rawBody;
 
   return {
     id: dailyLog?.id ?? `day-${subjectUserId}-${dateStr}`,
     logDate,
     status: dailyLog?.status ?? emptyStatus,
-    dailyReport: dailyLog?.dailyReport ?? null,
+    dailyReport: cleanedBody,
     structuredOutput: (dailyLog?.structuredOutput as DailyReportDetail["structuredOutput"]) ?? null,
     riskFlag: dailyLog?.riskFlag ?? false,
     riskNotes: dailyLog?.riskNotes ?? null,
     submittedAt: dailyLog?.submittedAt ?? null,
-    lateMarkedAt: dailyLog?.lateMarkedAt ?? null,
+    lateMarkedAt: reportRequired ? (dailyLog?.lateMarkedAt ?? null) : null,
     updatedAt: dailyLog?.updatedAt ?? logDate,
+    reportRequired,
     conversation: Array.isArray(dailyLog?.conversation)
       ? (dailyLog!.conversation as Array<{ role: string; content: string }>)
       : null,
@@ -178,7 +198,7 @@ function toDayKey(date: Date) {
   return format(date, "yyyy-MM-dd");
 }
 
-/** 返回某月内有日报/打卡/往来记录的日期（yyyy-MM-dd） */
+/** 返回某月内有日报/打卡/往来记录的日期（yyyy-MM-dd）；不含「未提交」占位 */
 export async function listDailyReportMarkedDates(
   subjectUserId: string,
   year: number,
@@ -190,7 +210,7 @@ export async function listDailyReportMarkedDates(
   const [logs, checkIns, followUps] = await Promise.all([
     prisma.salesDailyLog.findMany({
       where: { userId: subjectUserId, logDate: { gte: start, lt: end } },
-      select: { logDate: true, status: true, dailyReport: true },
+      select: { logDate: true, status: true, dailyReport: true, lateMarkedAt: true },
     }),
     prisma.salesCheckIn.findMany({
       where: { userId: subjectUserId, checkedInAt: { gte: start, lt: end } },
@@ -203,6 +223,7 @@ export async function listDailyReportMarkedDates(
   ]);
 
   for (const log of logs) {
+    if (isUnsubmittedDailyReportPlaceholder(log)) continue;
     const hasReport =
       log.status === "SUBMITTED" ||
       log.status === "RISK_SUBMITTED" ||

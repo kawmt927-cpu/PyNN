@@ -5,7 +5,12 @@ import { PhaseStatus, ProjectStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/session";
 import type { ActionResult } from "@/lib/action-result";
-import { canCreateProject, canManageProject, getProjectForUser } from "@/lib/projects/access";
+import {
+  canCreateProject,
+  canDeleteProject,
+  canManageProject,
+  getProjectForUser,
+} from "@/lib/projects/access";
 import {
   createProjectSchema,
   parseOptionalDate,
@@ -14,6 +19,7 @@ import {
 } from "@/lib/validations/project";
 import { z } from "zod";
 import { toDateOnly } from "@/lib/projects/workdays";
+import { computeExtendedProjectWindow } from "@/lib/projects/project-window";
 import { syncActualEndWithStatus } from "@/lib/projects/project-actual-dates";
 import {
   assertProjectStatusTransition,
@@ -131,6 +137,13 @@ export async function createProject(formData: FormData): Promise<ActionResult> {
       },
     });
 
+    if (contractId) {
+      const { syncContractStatusFromProject } = await import(
+        "@/lib/contracts/sync-contract-status-from-project"
+      );
+      await syncContractStatusFromProject(project.id);
+    }
+
     revalidatePath("/projects");
     revalidatePath("/contracts");
     if (contractId) revalidatePath(`/contracts/${contractId}`);
@@ -196,9 +209,15 @@ export async function updateProjectStatus(formData: FormData): Promise<ActionRes
       data: { status: nextStatus },
     });
     await syncActualEndWithStatus(projectId, nextStatus, project.status);
+    const { syncContractStatusFromProject } = await import(
+      "@/lib/contracts/sync-contract-status-from-project"
+    );
+    await syncContractStatusFromProject(projectId);
 
     revalidatePath(`/projects/${projectId}`);
     revalidatePath("/projects");
+    revalidatePath("/contracts");
+    if (project.contractId) revalidatePath(`/contracts/${project.contractId}`);
     return {};
   } catch (error) {
     return formatError(error);
@@ -210,6 +229,7 @@ export async function createProjectPhase(formData: FormData): Promise<ActionResu
     const projectId = formData.get("projectId")?.toString();
     if (!projectId) return { error: "缺少项目 ID" };
     const { project } = await requireProjectAccess(projectId, true);
+    const extendProjectWindow = formData.get("extendProjectWindow")?.toString() === "1";
 
     const plannedStartAt =
       parseOptionalDate(formData.get("plannedStartAt")?.toString()) ??
@@ -230,30 +250,65 @@ export async function createProjectPhase(formData: FormData): Promise<ActionResu
     if (plannedStartAt && plannedEndAt && plannedStartAt.getTime() > plannedEndAt.getTime()) {
       throw new Error("阶段结束不能早于开始");
     }
-    if (project.plannedStartAt && plannedStartAt && plannedStartAt < toDateOnly(project.plannedStartAt)) {
-      throw new Error("阶段开始不能早于项目计划开始");
-    }
-    if (project.plannedEndAt && plannedEndAt && plannedEndAt > toDateOnly(project.plannedEndAt)) {
-      throw new Error("阶段结束不能晚于项目计划结束");
+
+    const extended = computeExtendedProjectWindow({
+      projectStart: project.plannedStartAt,
+      projectEnd: project.plannedEndAt,
+      phaseStart: plannedStartAt,
+      phaseEnd: plannedEndAt,
+    });
+    if (extended && !extendProjectWindow) {
+      if (
+        plannedStartAt &&
+        project.plannedStartAt &&
+        plannedStartAt < toDateOnly(project.plannedStartAt)
+      ) {
+        throw new Error("阶段开始不能早于项目计划开始");
+      }
+      if (plannedEndAt && project.plannedEndAt && plannedEndAt > toDateOnly(project.plannedEndAt)) {
+        throw new Error("阶段结束不能晚于项目计划结束");
+      }
     }
 
-    await prisma.projectPhase.create({
-      data: {
-        projectId,
-        name: parsed.name,
-        sortOrder: parsed.sortOrder,
-        parallelGroup: parsed.parallelGroup ?? null,
-        status: parsed.status as PhaseStatus,
-        plannedAt: plannedEndAt,
-        plannedStartAt,
-        plannedEndAt,
-        completedAt: parseOptionalDate(parsed.completedAt),
-        sourceProduct: parsed.sourceProduct?.trim() || null,
-      },
+    const created = await prisma.$transaction(async (tx) => {
+      if (extended && extendProjectWindow) {
+        await tx.project.update({
+          where: { id: projectId },
+          data: {
+            plannedStartAt: extended.plannedStartAt,
+            plannedEndAt: extended.plannedEndAt,
+          },
+        });
+      }
+      return tx.projectPhase.create({
+        data: {
+          projectId,
+          name: parsed.name,
+          sortOrder: parsed.sortOrder,
+          parallelGroup: parsed.parallelGroup ?? null,
+          status: parsed.status as PhaseStatus,
+          plannedAt: plannedEndAt,
+          plannedStartAt,
+          plannedEndAt,
+          completedAt: parseOptionalDate(parsed.completedAt),
+          sourceProduct: parsed.sourceProduct?.trim() || null,
+        },
+      });
     });
+
+    if (parsed.status === "COMPLETED") {
+      const { handleProjectPhaseCompleted } = await import(
+        "@/lib/contracts/on-phase-completed"
+      );
+      await handleProjectPhaseCompleted(created.id);
+      revalidatePath("/admin/ops");
+      revalidatePath("/contracts");
+      revalidatePath("/notifications");
+    }
 
     await syncPhaseWeightsAndProgress(projectId);
     revalidatePath(`/projects/${projectId}`);
+    revalidatePath("/projects");
     return {};
   } catch (error) {
     return formatError(error);
@@ -286,30 +341,66 @@ export async function updateProjectPhase(formData: FormData): Promise<ActionResu
     if (plannedStartAt && plannedEndAt && plannedStartAt.getTime() > plannedEndAt.getTime()) {
       throw new Error("阶段结束不能早于开始");
     }
-    if (project.plannedStartAt && plannedStartAt && plannedStartAt < toDateOnly(project.plannedStartAt)) {
-      throw new Error("阶段开始不能早于项目计划开始");
-    }
-    if (project.plannedEndAt && plannedEndAt && plannedEndAt > toDateOnly(project.plannedEndAt)) {
-      throw new Error("阶段结束不能晚于项目计划结束");
+
+    const extendProjectWindow = formData.get("extendProjectWindow")?.toString() === "1";
+    const extended = computeExtendedProjectWindow({
+      projectStart: project.plannedStartAt,
+      projectEnd: project.plannedEndAt,
+      phaseStart: plannedStartAt,
+      phaseEnd: plannedEndAt,
+    });
+    if (extended && !extendProjectWindow) {
+      if (
+        plannedStartAt &&
+        project.plannedStartAt &&
+        plannedStartAt < toDateOnly(project.plannedStartAt)
+      ) {
+        throw new Error("阶段开始不能早于项目计划开始");
+      }
+      if (plannedEndAt && project.plannedEndAt && plannedEndAt > toDateOnly(project.plannedEndAt)) {
+        throw new Error("阶段结束不能晚于项目计划结束");
+      }
     }
 
-    await prisma.projectPhase.update({
-      where: { id: phaseId },
-      data: {
-        name: parsed.name,
-        sortOrder: parsed.sortOrder,
-        parallelGroup: parsed.parallelGroup ?? null,
-        status: parsed.status as PhaseStatus,
-        plannedAt: plannedEndAt,
-        plannedStartAt,
-        plannedEndAt,
-        completedAt: parseOptionalDate(parsed.completedAt),
-        sourceProduct: parsed.sourceProduct?.trim() || null,
-      },
+    await prisma.$transaction(async (tx) => {
+      if (extended && extendProjectWindow) {
+        await tx.project.update({
+          where: { id: projectId },
+          data: {
+            plannedStartAt: extended.plannedStartAt,
+            plannedEndAt: extended.plannedEndAt,
+          },
+        });
+      }
+      await tx.projectPhase.update({
+        where: { id: phaseId },
+        data: {
+          name: parsed.name,
+          sortOrder: parsed.sortOrder,
+          parallelGroup: parsed.parallelGroup ?? null,
+          status: parsed.status as PhaseStatus,
+          plannedAt: plannedEndAt,
+          plannedStartAt,
+          plannedEndAt,
+          completedAt: parseOptionalDate(parsed.completedAt),
+          sourceProduct: parsed.sourceProduct?.trim() || null,
+        },
+      });
     });
+
+    if (parsed.status === "COMPLETED") {
+      const { handleProjectPhaseCompleted } = await import(
+        "@/lib/contracts/on-phase-completed"
+      );
+      await handleProjectPhaseCompleted(phaseId);
+      revalidatePath("/admin/ops");
+      revalidatePath("/contracts");
+      revalidatePath("/notifications");
+    }
 
     await syncPhaseWeightsAndProgress(projectId);
     revalidatePath(`/projects/${projectId}`);
+    revalidatePath("/projects");
     return {};
   } catch (error) {
     return formatError(error);
@@ -399,6 +490,69 @@ export async function applyProjectModelToProject(formData: FormData): Promise<Ac
     await syncProjectProgress(projectId);
     revalidatePath(`/projects/${projectId}`);
     return {};
+  } catch (error) {
+    return formatError(error);
+  }
+}
+
+/** 删除项目：仅管理员 / 项目管理员；级联清理子数据，解绑合同回款阶段与报销关联 */
+export async function deleteProject(projectId: string): Promise<ActionResult> {
+  try {
+    const session = await requireRole(["ADMIN", "PROJECT_ADMIN"]);
+    if (!canDeleteProject(session.user.role)) {
+      return { error: "无权删除项目" };
+    }
+
+    const id = projectId.trim();
+    if (!id) return { error: "项目 ID 无效" };
+
+    const existing = await prisma.project.findUnique({
+      where: { id },
+      select: { id: true, name: true },
+    });
+    if (!existing) return { error: "项目不存在或已删除" };
+
+    await prisma.$transaction(async (tx) => {
+      // 合同分期绑定的项目阶段：解绑，避免删阶段时外键阻塞
+      await tx.paymentInstallment.updateMany({
+        where: { phase: { projectId: id } },
+        data: { phaseId: null },
+      });
+
+      // 报销发票：解绑项目与已入账项目成本
+      const costIds = (
+        await tx.projectCost.findMany({
+          where: { projectId: id },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (costIds.length > 0) {
+        await tx.expenseInvoice.updateMany({
+          where: { postedProjectCostId: { in: costIds } },
+          data: { postedProjectCostId: null },
+        });
+      }
+      await tx.expenseInvoice.updateMany({
+        where: { projectId: id },
+        data: { projectId: null },
+      });
+
+      // 阶段外键（无 Cascade）先清空，再删项目（子表 Cascade）
+      await tx.projectStaffAllocation.updateMany({
+        where: { projectId: id },
+        data: { phaseId: null },
+      });
+      await tx.task.updateMany({
+        where: { projectId: id },
+        data: { phaseId: null },
+      });
+
+      await tx.project.delete({ where: { id } });
+    });
+
+    revalidatePath("/projects");
+    revalidatePath(`/projects/${id}`);
+    return { redirectTo: "/projects" };
   } catch (error) {
     return formatError(error);
   }

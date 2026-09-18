@@ -43,24 +43,53 @@ export async function createContact(formData: FormData): Promise<ActionResult> {
     const role = await assertConfigValue(CONFIG_CATEGORY.CONTACT_ROLE, parsed.role);
     if (!role) throw new Error("请选择角色");
 
+    const {
+      canProposeCustomerContact,
+      resolveContactConfirmStatus,
+    } = await import("@/lib/customers/contact-confirm-status");
+    if (!canProposeCustomerContact(session.user.role)) {
+      throw new Error("无权新增联系人");
+    }
+
     const customer = await getCustomerForUser(
       parsed.customerId,
       session.user.role,
-      session.user.id
+      session.user.id,
+      { allowFollowUpOnAnyCustomer: true }
     );
     if (!customer) throw new Error("无权访问该客户");
-    await assertCustomerContentWriteAccess(session.user.role, session.user.id, customer);
 
-    const isPrimary = parsed.isPrimary === "true";
+    const confirmStatus = resolveContactConfirmStatus({
+      role: session.user.role,
+      userId: session.user.id,
+      customer,
+    });
+    // 待确认联系人不可设为主联系人
+    const isPrimary = parsed.isPrimary === "true" && confirmStatus === "CONFIRMED";
 
-    await prisma.$transaction(async (tx) => {
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { getConfigOptions, CONFIG_CATEGORY: CFG } = await import("@/lib/config-options");
+    const {
+      replaceContactResponsibleProvinces,
+      parseResponsibleProvincesFromForm,
+    } = await import("@/lib/customers/contact-responsible-provinces");
+    const typeOptions = await getConfigOptions(CFG.CUSTOMER_TYPE);
+    const allowResponsibleProvinces =
+      confirmStatus === "CONFIRMED" &&
+      isChannelCustomerType(customer.customerType, typeOptions) &&
+      Boolean(customer.nationwideChannel);
+    const responsibleProvinces = allowResponsibleProvinces
+      ? parseResponsibleProvincesFromForm(formData)
+      : [];
+
+    const contact = await prisma.$transaction(async (tx) => {
       if (isPrimary) {
         await tx.contact.updateMany({
-          where: { customerId: parsed.customerId },
+          where: { customerId: parsed.customerId, confirmStatus: "CONFIRMED" },
           data: { isPrimary: false },
         });
       }
-      await tx.contact.create({
+      return tx.contact.create({
         data: {
           customerId: parsed.customerId,
           name: parsed.name,
@@ -70,11 +99,26 @@ export async function createContact(formData: FormData): Promise<ActionResult> {
           wechat: parsed.wechat,
           role,
           isPrimary,
+          createdById: session.user.id,
+          confirmStatus,
+          confirmedAt: confirmStatus === "CONFIRMED" ? new Date() : undefined,
+          confirmedById: confirmStatus === "CONFIRMED" ? session.user.id : undefined,
         },
+        select: { id: true, name: true },
       });
     });
 
+    if (responsibleProvinces.length > 0) {
+      await replaceContactResponsibleProvinces(contact.id, responsibleProvinces);
+    }
+
+    if (confirmStatus === "PENDING_MANAGER") {
+      // 随往来代录一并确认，不单独进审批队列
+    }
+
     revalidatePath(`/customers/${parsed.customerId}`);
+    revalidatePath(`/mobile/customers/${parsed.customerId}`);
+    revalidatePath("/approvals");
     return {};
   } catch (error) {
     return formatActionError(error);
@@ -100,6 +144,20 @@ export async function updateContact(contactId: string, formData: FormData): Prom
 
     const isPrimary = parsed.isPrimary === "true";
 
+    const { isChannelCustomerType } = await import("@/lib/customers/customer-type-grade");
+    const { getConfigOptions, CONFIG_CATEGORY: CFG } = await import("@/lib/config-options");
+    const {
+      replaceContactResponsibleProvinces,
+      parseResponsibleProvincesFromForm,
+    } = await import("@/lib/customers/contact-responsible-provinces");
+    const typeOptions = await getConfigOptions(CFG.CUSTOMER_TYPE);
+    const allowResponsibleProvinces =
+      isChannelCustomerType(customer.customerType, typeOptions) &&
+      Boolean(customer.nationwideChannel);
+    const responsibleProvinces = allowResponsibleProvinces
+      ? parseResponsibleProvincesFromForm(formData)
+      : [];
+
     await prisma.$transaction(async (tx) => {
       if (isPrimary) {
         await tx.contact.updateMany({
@@ -121,7 +179,10 @@ export async function updateContact(contactId: string, formData: FormData): Prom
       });
     });
 
+    await replaceContactResponsibleProvinces(contactId, responsibleProvinces);
+
     revalidatePath(`/customers/${parsed.customerId}`);
+    revalidatePath(`/mobile/customers/${parsed.customerId}`);
     return {};
   } catch (error) {
     return formatActionError(error);
@@ -146,6 +207,7 @@ export async function deleteContact(formData: FormData): Promise<void> {
 
   await prisma.contact.delete({ where: { id: contactId } });
   revalidatePath(`/customers/${customerId}`);
+  revalidatePath(`/mobile/customers/${customerId}`);
 }
 
 export async function createContactFormAction(

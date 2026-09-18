@@ -31,7 +31,7 @@ export async function listMyTodayCheckIns(userId: string, status?: SalesCheckInS
     },
     orderBy: { checkedInAt: "desc" },
     include: {
-      customer: { select: { id: true, name: true, customerGrade: true } },
+      customer: { select: { id: true, name: true, customerType: true, customerGrade: true } },
       contact: { select: { id: true, name: true, title: true } },
       user: { select: { id: true, name: true } },
       followUp: { select: { id: true, method: true, content: true } },
@@ -57,6 +57,8 @@ type CheckInWriteInput = {
   completeInteractionNow?: boolean;
   followUp?: CheckInFollowUpInput | null;
   completedPendingKeys?: string[];
+  skipAssignmentCompletion?: boolean;
+  completedAssignmentIds?: string[];
   /** 仅服务端从请求头注入，不对销售展示 */
   clientIp?: string | null;
 };
@@ -89,6 +91,8 @@ async function createInteractionFollowUpFromCheckIn(
     suggestedGrade: input.followUp.suggestedGrade ?? undefined,
     opportunityId: input.followUp.opportunityId ?? undefined,
     opportunityIds: input.followUp.opportunityIds ?? undefined,
+    skipAssignmentCompletion: input.skipAssignmentCompletion,
+    completedAssignmentIds: input.completedAssignmentIds,
   });
 
   if (input.completedPendingKeys?.length) {
@@ -127,11 +131,15 @@ async function finalizeCompletedPendingPlans(
   const uniqueKeys = [...new Set(keys.filter(Boolean))];
   if (uniqueKeys.length === 0) return;
 
-  const customer = await getCustomerForUser(customerId, role, userId);
+  const customer = await getCustomerForUser(customerId, role, userId, {
+    allowFollowUpOnAnyCustomer: true,
+  });
   if (!customer) throw new Error("无权访问该客户");
   await assertCustomerFollowUpWriteAccess(role, userId, customer);
 
-  const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date());
+  const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date(), {
+    forUserId: userId,
+  });
   const pendingKeySet = new Set(
     pendingPlans.map((item) => pendingPlanSelectionKey(item.source, item.id))
   );
@@ -153,13 +161,22 @@ async function finalizeCompletedPendingPlans(
   });
 }
 
-async function assertContactsBelongToCustomer(customerId: string, contactIds: string[]) {
+async function assertContactsBelongToCustomer(
+  customerId: string,
+  contactIds: string[],
+  viewerUserId?: string
+) {
   if (contactIds.length === 0) return;
+  const { contactSelectableWhere } = await import("@/lib/customers/contact-confirm-status");
   const contacts = await prisma.contact.findMany({
-    where: { id: { in: contactIds }, customerId },
+    where: {
+      id: { in: contactIds },
+      customerId,
+      ...(viewerUserId ? contactSelectableWhere(viewerUserId) : { confirmStatus: "CONFIRMED" }),
+    },
     select: { id: true },
   });
-  if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户");
+  if (contacts.length !== contactIds.length) throw new Error("联系人不属于该客户或尚未可用");
 }
 
 export async function updateSalesCheckIn(
@@ -182,14 +199,16 @@ export async function updateSalesCheckIn(
 
   if (isInteraction && !customerId) throw new Error("请选择客户");
   if (isInteraction && contactIds.length > 0) {
-    await assertContactsBelongToCustomer(customerId!, contactIds);
+    await assertContactsBelongToCustomer(customerId!, contactIds, input.userId);
   }
   if (input.completeInteractionNow && !input.followUp?.content?.trim()) {
     throw new Error("请填写往来内容");
   }
 
   if (isInteraction && input.completeInteractionNow && customerId) {
-    const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date());
+    const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date(), {
+      forUserId: input.userId,
+    });
     if (pendingPlans.length > 0 && (!input.completedPendingKeys || input.completedPendingKeys.length === 0)) {
       throw new Error("请至少选择一条要完成的待跟进计划");
     }
@@ -277,12 +296,16 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
     if (!customerId) throw new Error("请选择客户");
     if (contactIds.length === 0) throw new Error("请至少选择一位联系人");
 
-    const customer = await getCustomerForUser(customerId, input.role, input.userId);
+    const customer = await getCustomerForUser(customerId, input.role, input.userId, {
+      allowFollowUpOnAnyCustomer: true,
+    });
     if (!customer) throw new Error("客户不存在或无权访问");
     await assertCustomerFollowUpWriteAccess(input.role, input.userId, customer);
 
     if (input.completeInteractionNow) {
-      const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date());
+      const pendingPlans = await getCustomerPendingFollowPlans(customerId, new Date(), {
+        forUserId: input.userId,
+      });
       if (pendingPlans.length > 0 && (!input.completedPendingKeys || input.completedPendingKeys.length === 0)) {
         throw new Error("请至少选择一条要完成的待跟进计划");
       }
@@ -303,7 +326,7 @@ export async function createSalesCheckIn(input: CheckInWriteInput) {
       }
     }
 
-    await assertContactsBelongToCustomer(customerId, contactIds);
+    await assertContactsBelongToCustomer(customerId, contactIds, input.userId);
 
     if (input.completeInteractionNow && !input.followUp?.content?.trim()) {
       throw new Error("请填写往来内容");
@@ -440,7 +463,7 @@ export async function listTodayCheckIns(role: UserRole, userId: string, status?:
     },
     orderBy: { checkedInAt: "desc" },
     include: {
-      customer: { select: { id: true, name: true, customerGrade: true } },
+      customer: { select: { id: true, name: true, customerType: true, customerGrade: true } },
       contact: { select: { id: true, name: true, title: true } },
       user: { select: { id: true, name: true } },
       followUp: { select: { id: true, method: true, content: true } },
@@ -529,7 +552,7 @@ export async function completeSalesCheckInManually(input: {
 
   const contactIds = normalizeContactIds(input);
   if (contactIds.length === 0) throw new Error("请至少选择一位联系人");
-  await assertContactsBelongToCustomer(checkIn.customerId, contactIds);
+  await assertContactsBelongToCustomer(checkIn.customerId, contactIds, input.userId);
   const primaryContactId = contactIds[0];
 
   if (primaryContactId !== checkIn.contactId) {

@@ -1,6 +1,7 @@
 import type { UserRole } from "@prisma/client";
 import { withReturnTo } from "@/lib/navigation/return-to";
 import { prisma } from "@/lib/prisma";
+import { hasPermissionSync } from "@/lib/rbac/has-permission";
 
 export const OPEN_ASSIGNMENT_STATUSES = ["PENDING", "PENDING_CONFIRM"] as const;
 
@@ -46,13 +47,25 @@ export async function listAllAssignmentsForUser(userId: string, take = 100) {
   });
 }
 
-export async function listAllAssignmentsForManager(take = 200) {
-  return prisma.salesWeeklyAssignment.findMany({
+/** 自己指派给自己：仅本人可见，其他人（含销管看团队）不展示 */
+export function isSelfAssignedVisibleToViewer(
+  row: { assigneeId: string; createdById: string },
+  viewerUserId: string
+) {
+  if (row.assigneeId !== row.createdById) return true;
+  return row.assigneeId === viewerUserId;
+}
+
+export async function listAllAssignmentsForManager(viewerUserId: string, take = 200) {
+  const rows = await prisma.salesWeeklyAssignment.findMany({
     where: { status: { not: "CANCELLED" } },
     orderBy: [{ dueAt: "asc" }],
-    take,
+    take: Math.min(take * 4, 800),
     include: listInclude,
   });
+  return rows
+    .filter((row) => isSelfAssignedVisibleToViewer(row, viewerUserId))
+    .slice(0, take);
 }
 
 export async function listPendingWeeklyAssignmentsForUser(
@@ -70,13 +83,19 @@ export async function listPendingWeeklyAssignmentsForUser(
   });
 }
 
-export async function listWeeklyAssignmentsForManager(take = 100): Promise<WeeklyAssignmentListItem[]> {
-  return prisma.salesWeeklyAssignment.findMany({
+export async function listWeeklyAssignmentsForManager(
+  viewerUserId: string,
+  take = 100
+): Promise<WeeklyAssignmentListItem[]> {
+  const rows = await prisma.salesWeeklyAssignment.findMany({
     where: { status: { not: "CANCELLED" } },
     orderBy: [{ dueAt: "asc" }],
-    take,
+    take: Math.min(take * 4, 400),
     include: listInclude,
   });
+  return rows
+    .filter((row) => isSelfAssignedVisibleToViewer(row, viewerUserId))
+    .slice(0, take);
 }
 
 export async function hasPendingWeeklyAssignmentForCustomer(
@@ -125,17 +144,23 @@ export function weeklyAssignmentFollowUpHref(
   return null;
 }
 
-export async function listPendingWeeklyAssignmentsForManager(take = 50): Promise<WeeklyAssignmentListItem[]> {
-  return prisma.salesWeeklyAssignment.findMany({
+export async function listPendingWeeklyAssignmentsForManager(
+  viewerUserId: string,
+  take = 50
+): Promise<WeeklyAssignmentListItem[]> {
+  const rows = await prisma.salesWeeklyAssignment.findMany({
     where: { status: { in: [...OPEN_ASSIGNMENT_STATUSES] } },
     orderBy: [{ dueAt: "asc" }],
-    take,
+    take: Math.min(take * 4, 200),
     include: listInclude,
   });
+  return rows
+    .filter((row) => isSelfAssignedVisibleToViewer(row, viewerUserId))
+    .slice(0, take);
 }
 
 export function canManageWeeklyAssignments(role: UserRole) {
-  return role === "SALES_MANAGER" || role === "ADMIN";
+  return hasPermissionSync(role, "today_work.manage_assignments");
 }
 
 export function assignmentStatusLabel(status: string) {

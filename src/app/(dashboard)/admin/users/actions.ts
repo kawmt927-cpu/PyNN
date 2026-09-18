@@ -83,6 +83,8 @@ export async function createUser(formData: FormData): Promise<ActionResult> {
         wecomUserId: parsed.wecomUserId ?? null,
         role: parsed.role,
         passwordHash,
+        includeInTeamPerformance: parsed.role !== "OTHER",
+        includeInMonthlyAssessment: parsed.role !== "OTHER",
         personnelProfile: { create: profile },
       },
     });
@@ -149,6 +151,8 @@ export async function updateUser(formData: FormData): Promise<ActionResult> {
       wecomUserId: string | null;
       role: UserRole;
       passwordHash?: string;
+      includeInTeamPerformance?: boolean;
+      includeInMonthlyAssessment?: boolean;
     } = {
       name: parsed.name.trim(),
       phone: parsed.phone ?? null,
@@ -156,6 +160,11 @@ export async function updateUser(formData: FormData): Promise<ActionResult> {
       wecomUserId: parsed.wecomUserId ?? null,
       role: parsed.role,
     };
+
+    if (parsed.role === "OTHER") {
+      data.includeInTeamPerformance = false;
+      data.includeInMonthlyAssessment = false;
+    }
 
     if (parsed.password) {
       data.passwordHash = await bcrypt.hash(parsed.password, 10);

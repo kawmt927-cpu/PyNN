@@ -29,6 +29,7 @@ export default async function MobileCustomerFollowUpsPage({ params }: Props) {
 
   const customer = await getCustomerForUser(id, session.user.role, session.user.id, {
     allowAssignedWeeklyTask: true,
+    allowFollowUpOnAnyCustomer: true,
   });
   if (!customer) {
     return (
@@ -42,15 +43,30 @@ export default async function MobileCustomerFollowUpsPage({ params }: Props) {
     );
   }
 
-  const canEdit = canEditCustomerFollowUp(session.user.role, session.user.id, customer);
+  const canEdit =
+    session.user.role === "SALES" ||
+    session.user.role === "SALES_MANAGER" ||
+    session.user.role === "ADMIN" ||
+    canEditCustomerFollowUp(session.user.role, session.user.id, customer);
+  const isOwnerOrAssistant = canEditCustomerFollowUp(
+    session.user.role,
+    session.user.id,
+    customer
+  );
   const now = new Date();
 
-  const [history, pendingPlans, stageOptions, gradeOptions] = await Promise.all([
-    getCustomerFollowUpHistory(id, 30),
-    getCustomerPendingFollowPlans(id, now),
-    getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
-    getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
-  ]);
+  const [history, pendingPlans, stageOptions, gradeOptions, channelGradeOptions, typeOptions] =
+    await Promise.all([
+      getCustomerFollowUpHistory(id, 30, {
+        includePendingForViewer: true,
+        viewerUserId: session.user.id,
+      }),
+      getCustomerPendingFollowPlans(id, now, { forUserId: session.user.id }),
+      getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
+      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_GRADE),
+      getConfigOptions(CONFIG_CATEGORY.CHANNEL_CUSTOMER_GRADE),
+      getConfigOptions(CONFIG_CATEGORY.CUSTOMER_TYPE),
+    ]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -60,20 +76,34 @@ export default async function MobileCustomerFollowUpsPage({ params }: Props) {
         </Link>
         <h1 className="mt-1 text-lg font-bold">客户跟进</h1>
         <p className="text-xs text-muted-foreground">
-          {canEdit ? "可记录跟进（无需写日报）" : "仅可查阅历史"}
+          {canEdit
+            ? isOwnerOrAssistant
+              ? "可记录跟进（无需写日报）"
+              : "非负责客户：提交后待管理确认"
+            : "仅可查阅历史"}
         </p>
       </header>
 
       <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 pb-10">
         {canEdit ? (
-          <FollowUpForm
-            customerId={customer.id}
-            customerName={customer.name}
-            currentCustomerGrade={customer.customerGrade}
-            stageOptions={stageOptions}
-            gradeOptions={gradeOptions}
-            pendingPlans={pendingPlans.map(serializeCustomerPendingFollowPlan)}
-          />
+          <>
+            {!isOwnerOrAssistant && session.user.role === "SALES" ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                该客户非你负责。提交后为「待确认」，需销售管理确认后正式入库。
+              </p>
+            ) : null}
+            <FollowUpForm
+              customerId={customer.id}
+              customerName={customer.name}
+              customerType={customer.customerType}
+              currentCustomerGrade={customer.customerGrade}
+              stageOptions={stageOptions}
+              gradeOptions={gradeOptions}
+              channelGradeOptions={channelGradeOptions}
+              typeOptions={typeOptions}
+              pendingPlans={pendingPlans.map(serializeCustomerPendingFollowPlan)}
+            />
+          </>
         ) : null}
 
         <section className="space-y-2">

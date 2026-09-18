@@ -5,6 +5,7 @@ export const PROJECT_TABS = [
   { id: "plan", label: "项目计划" },
   { id: "schedule", label: "资源排班" },
   { id: "costs", label: "发生费用" },
+  { id: "delivery", label: "验收变更" },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]["id"];
@@ -14,6 +15,7 @@ export function parseProjectTab(value: string | undefined): ProjectTab {
   if (value === "plan" || value === "phases") return "plan";
   if (value === "schedule") return "schedule";
   if (value === "costs") return "costs";
+  if (value === "delivery") return "delivery";
   return "overview";
 }
 

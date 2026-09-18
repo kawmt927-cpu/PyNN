@@ -112,10 +112,13 @@ export default async function MobileCheckInPage() {
                           checkInId={row.id}
                           customerId={row.customer.id}
                           customerName={row.customer.name}
+                          customerType={row.customer.customerType}
                           currentCustomerGrade={row.customer.customerGrade}
                           contactId={row.contact?.id}
                           stageOptions={interactionFormOptions.stageOptions}
                           gradeOptions={interactionFormOptions.gradeOptions}
+                          channelGradeOptions={interactionFormOptions.channelGradeOptions}
+                          typeOptions={interactionFormOptions.typeOptions}
                         />
                       ) : null}
                       <CheckInDeleteButton

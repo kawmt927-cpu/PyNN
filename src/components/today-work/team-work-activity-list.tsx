@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
-import type { TeamWorkActivityItem } from "@/lib/today-work/team-work-activity";
-import { kindLabel } from "@/lib/today-work/team-work-activity";
+import type { TeamWorkActivityItem } from "@/lib/today-work/team-work-activity-shared";
+import { kindLabel } from "@/lib/today-work/team-work-activity-shared";
 import {
   activityOpenMatches,
   parseActivityOpenParam,
@@ -17,6 +17,7 @@ import {
 } from "@/lib/sales-log/daily-report-format";
 import { DailyReportPreviewWithDialog } from "@/components/daily-reports/daily-report-preview-with-dialog";
 import { DailyReportBody } from "@/components/daily-reports/daily-report-body";
+import { DailyReportRiskReason } from "@/components/daily-reports/daily-report-risk-reason";
 import { DailyLogMakeupDialog } from "@/components/sales-log/daily-log-makeup-dialog";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,12 @@ function kindBadgeClass(kind: TeamWorkActivityItem["kind"]) {
   }
   if (kind === "follow_up") {
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200";
+  }
+  if (kind === "customer_create") {
+    return "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200";
+  }
+  if (kind === "opportunity_create") {
+    return "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200";
   }
   return "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200";
 }
@@ -102,6 +109,8 @@ function ActivityJournalCard({
   const isDailyLog = item.kind === "daily_log";
   const isFollowUp = item.kind === "follow_up";
   const isCheckIn = item.kind === "check_in";
+  const isCustomerCreate = item.kind === "customer_create";
+  const isOpportunityCreate = item.kind === "opportunity_create";
   const mergedWithCheckIn = isFollowUp && Boolean(item.checkInId);
   const pendingMakeup = Boolean(isDailyLog && item.logPendingMakeup);
   const canMakeup = pendingMakeup && Boolean(currentUserId && currentUserId === item.userId);
@@ -112,6 +121,10 @@ function ActivityJournalCard({
 
   const nextAt = item.nextFollowUpAt ? asDate(item.nextFollowUpAt) : null;
   const nextRelative = nextAt ? formatPendingFollowUpRelativeLabel(nextAt) : null;
+
+  const opportunityHref = item.opportunityId
+    ? `/opportunities/${item.opportunityId}`
+    : null;
 
   const headerParts: string[] = [];
   if (isFollowUp) {
@@ -125,6 +138,11 @@ function ActivityJournalCard({
       headerParts.push(item.contactNames?.[0] ?? item.subtitle.replace(/^联系人：/, ""));
     }
     headerParts.push(item.userName);
+  } else if (isCustomerCreate || isOpportunityCreate) {
+    headerParts.push(item.userName);
+    if (isOpportunityCreate && item.customerName) {
+      headerParts.push(item.customerName);
+    }
   } else {
     headerParts.push(item.userName);
     if (item.title) headerParts.push(item.title);
@@ -167,6 +185,11 @@ function ActivityJournalCard({
                 迟交
               </span>
             ) : null}
+            {isDailyLog && item.riskFlag ? (
+              <span className="rounded bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-950 dark:text-orange-200">
+                含风险
+              </span>
+            ) : null}
             {isDailyLog && item.logPendingMakeup ? (
               <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-200">
                 未提交
@@ -180,6 +203,11 @@ function ActivityJournalCard({
               ) : (
                 <span className="font-medium">{customerName}</span>
               )
+            ) : null}
+            {isOpportunityCreate && opportunityHref ? (
+              <Link href={opportunityHref} className="font-medium text-primary hover:underline">
+                {item.title}
+              </Link>
             ) : null}
           </div>
           <p className="font-medium text-foreground">{headerParts.filter(Boolean).join(" · ")}</p>
@@ -220,7 +248,7 @@ function ActivityJournalCard({
           )}
         </div>
       ) : isDailyLog && dailyContent ? (
-        <div className="mt-3">
+        <div className="mt-3 space-y-2">
           {showDailyDialog ? (
             <DailyReportPreviewWithDialog
               userName={item.userName}
@@ -229,10 +257,19 @@ function ActivityJournalCard({
               meta={item.meta}
               content={dailyContent}
               preview={dailyReportPlainPreview(dailyContent)}
+              riskFlag={item.riskFlag}
+              riskNotes={item.riskNotes}
               defaultOpen={isOpen}
             />
           ) : (
-            <DailyReportBody content={dailyContent} />
+            <>
+              <DailyReportRiskReason
+                riskFlag={item.riskFlag}
+                riskNotes={item.riskNotes}
+                compact
+              />
+              <DailyReportBody content={dailyContent} />
+            </>
           )}
         </div>
       ) : content ? (

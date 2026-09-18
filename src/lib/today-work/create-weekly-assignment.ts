@@ -1,7 +1,12 @@
 import type { FollowUpMethod, Prisma } from "@prisma/client";
 import { isCustomerResponsible } from "@/lib/customers/access";
 import { prisma } from "@/lib/prisma";
-import { assignmentKindLabel } from "@/lib/today-work/weekly-assignments";
+import {
+  assignmentKindLabel,
+  OPEN_ASSIGNMENT_STATUSES,
+} from "@/lib/today-work/weekly-assignments";
+
+const PAYMENT_COLLECTION_TITLE_PREFIX = "催收回款：";
 
 const FOLLOW_UP_METHODS = [
   "PHONE",
@@ -224,6 +229,21 @@ export async function createWeeklyAssignmentWithFollowUpPlan(input: CreateWeekly
   const anchorMethod = resolveAnchorMethod(input.plannedMethod ?? null);
   const now = new Date();
 
+  // 催收回款：同一标题只允许一条未完成指派，避免双击/重复提交出现两条待办
+  if (title.startsWith(PAYMENT_COLLECTION_TITLE_PREFIX)) {
+    const existingOpen = await prisma.salesWeeklyAssignment.findFirst({
+      where: {
+        title,
+        kind: "CUSTOMER_FOLLOW_UP",
+        status: { in: [...OPEN_ASSIGNMENT_STATUSES] },
+      },
+      select: { id: true },
+    });
+    if (existingOpen) {
+      throw new Error("该期回款已有未完成的催收指派，请勿重复创建");
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     if (claimFromPool) {
       const stillPool = await tx.customer.findUnique({
@@ -422,6 +442,7 @@ export async function confirmGeneralAssignment(input: {
     where: { id: input.assignmentId },
     select: {
       id: true,
+      title: true,
       kind: true,
       status: true,
       createdById: true,
@@ -432,7 +453,7 @@ export async function confirmGeneralAssignment(input: {
   if (row.status !== "PENDING_CONFIRM") throw new Error("任务当前不在待确认状态");
   if (row.createdById !== input.actorUserId) throw new Error("仅指派人可确认完成");
 
-  return prisma.salesWeeklyAssignment.update({
+  const updated = await prisma.salesWeeklyAssignment.update({
     where: { id: row.id },
     data: {
       status: "COMPLETED",
@@ -440,6 +461,17 @@ export async function confirmGeneralAssignment(input: {
       confirmedById: input.actorUserId,
     },
   });
+
+  const { resolveGeneralAssignmentConfirmNotifications } = await import(
+    "@/lib/notifications/app-notifications"
+  );
+  await resolveGeneralAssignmentConfirmNotifications({
+    assignmentId: updated.id,
+    outcome: "confirmed",
+    assignmentTitle: row.title,
+  });
+
+  return updated;
 }
 
 /** 指派人驳回，退回待完成 */
@@ -451,6 +483,7 @@ export async function rejectGeneralAssignment(input: {
     where: { id: input.assignmentId },
     select: {
       id: true,
+      title: true,
       kind: true,
       status: true,
       createdById: true,
@@ -461,7 +494,7 @@ export async function rejectGeneralAssignment(input: {
   if (row.status !== "PENDING_CONFIRM") throw new Error("任务当前不在待确认状态");
   if (row.createdById !== input.actorUserId) throw new Error("仅指派人可驳回");
 
-  return prisma.salesWeeklyAssignment.update({
+  const updated = await prisma.salesWeeklyAssignment.update({
     where: { id: row.id },
     data: {
       status: "PENDING",
@@ -471,4 +504,15 @@ export async function rejectGeneralAssignment(input: {
       confirmedById: null,
     },
   });
+
+  const { resolveGeneralAssignmentConfirmNotifications } = await import(
+    "@/lib/notifications/app-notifications"
+  );
+  await resolveGeneralAssignmentConfirmNotifications({
+    assignmentId: updated.id,
+    outcome: "rejected",
+    assignmentTitle: row.title,
+  });
+
+  return updated;
 }

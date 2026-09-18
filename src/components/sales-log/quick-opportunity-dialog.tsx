@@ -26,7 +26,13 @@ type Props = {
   customerName: string;
   stageOptions: ConfigOptionItem[];
   initialTitle?: string;
-  onCreated: (opportunity: { id: string; title: string }) => void;
+  /** 非负责人客户：提示将提交确认 */
+  pendingConfirmHint?: boolean;
+  onCreated: (opportunity: {
+    id: string;
+    title: string;
+    confirmStatus?: "CONFIRMED" | "PENDING_MANAGER" | "REJECTED";
+  }) => void;
 };
 
 export function QuickOpportunityDialog({
@@ -36,6 +42,7 @@ export function QuickOpportunityDialog({
   customerName,
   stageOptions,
   initialTitle = "",
+  pendingConfirmHint = false,
   onCreated,
 }: Props) {
   const [title, setTitle] = useState(initialTitle);
@@ -44,6 +51,7 @@ export function QuickOpportunityDialog({
   const [expectedCloseDate, setExpectedCloseDate] = useState(toExpectedCloseMonthInput(new Date()));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [awaitingDuplicateConfirm, setAwaitingDuplicateConfirm] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -52,10 +60,10 @@ export function QuickOpportunityDialog({
     setExpectedAmount("");
     setExpectedCloseDate(toExpectedCloseMonthInput(new Date()));
     setError(null);
+    setAwaitingDuplicateConfirm(false);
   }, [open, initialTitle]);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function createOpportunity(confirmDuplicate: boolean) {
     setError(null);
     startTransition(async () => {
       try {
@@ -69,19 +77,42 @@ export function QuickOpportunityDialog({
             stage,
             expectedAmount: Number(expectedAmount),
             expectedCloseDate,
+            confirmDuplicate,
           }),
         });
-        const data = (await res.json()) as { id?: string; title?: string; error?: string };
+        const data = (await res.json()) as {
+          id?: string;
+          title?: string;
+          error?: string;
+          message?: string;
+          needsConfirm?: boolean;
+          existingOpportunityId?: string;
+          confirmStatus?: "CONFIRMED" | "PENDING_MANAGER" | "REJECTED";
+        };
+        if (res.status === 409 && data.needsConfirm) {
+          setAwaitingDuplicateConfirm(true);
+          setError(data.error || "已存在同名商机，确认后仍可新建");
+          return;
+        }
         if (!res.ok || !data.id || !data.title) {
           setError(data.error || "创建商机失败");
           return;
         }
-        onCreated({ id: data.id, title: data.title });
+        onCreated({
+          id: data.id,
+          title: data.title,
+          confirmStatus: data.confirmStatus,
+        });
         onOpenChange(false);
       } catch {
         setError("创建商机失败，请稍后重试");
       }
     });
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    createOpportunity(awaitingDuplicateConfirm);
   }
 
   return (
@@ -90,13 +121,23 @@ export function QuickOpportunityDialog({
         <DialogHeader>
           <DialogTitle>新建商机</DialogTitle>
           <DialogDescription>
-            为客户「{customerName}」创建商机，保存后将自动关联到本次往来。
+            {pendingConfirmHint
+              ? `非负责客户「${customerName}」：保存后自动关联本次往来；联系人/商机/往来将随提交一并送审，确认后商机仍归你负责。`
+              : `为客户「${customerName}」创建商机，保存后将自动关联到本次往来。`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="quickOppTitle">商机名称 *</Label>
-            <Input id="quickOppTitle" value={title} onChange={(e) => setTitle(e.target.value)} required />
+            <Input
+              id="quickOppTitle"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setAwaitingDuplicateConfirm(false);
+              }}
+              required
+            />
           </div>
           <SelectField
             id="quickOppStage"
@@ -134,7 +175,11 @@ export function QuickOpportunityDialog({
               取消
             </Button>
             <Button type="submit" disabled={pending || !title.trim() || !stage || !expectedAmount}>
-              {pending ? "创建中…" : "创建并关联"}
+              {pending
+                ? "创建中…"
+                : awaitingDuplicateConfirm
+                  ? "确认仍要新建"
+                  : "创建并关联"}
             </Button>
           </div>
         </form>

@@ -6,8 +6,9 @@ import { prisma } from "@/lib/prisma";
 import {
   getOpportunityForUser,
   canEditOpportunityContent,
-  canFollowUpOpportunity,
-  canManageOpportunityStatus,
+  canFollowUpOpportunityForUser,
+  canManageOpportunityOwner,
+  canRestoreOpportunity,
 } from "@/lib/opportunities/access";
 import {
   CONFIG_CATEGORY,
@@ -21,6 +22,7 @@ import { OpportunityGradeDisplay } from "@/components/opportunities/opportunity-
 import { FOLLOW_UP_METHOD_LABELS, OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import {
   OPPORTUNITY_ABANDON_REASON_LABELS,
+  canAddOpportunityQuote,
   canSignOpportunity,
 } from "@/lib/opportunities/status";
 import { canEditContract } from "@/lib/contracts/access";
@@ -28,8 +30,11 @@ import { formatAmount } from "@/lib/opportunities/funnel";
 import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
 import { getOpportunityActivity } from "@/lib/opportunities/activity";
 import { OpportunityActivityList } from "@/components/opportunities/opportunity-activity-list";
+import { OpportunityQuotesPanel } from "@/components/opportunities/opportunity-quotes-panel";
 import { OpportunityRestoreStatusActions } from "@/components/opportunities/opportunity-restore-status-actions";
 import { BackLink } from "@/components/navigation/back-link";
+import { EntityDeleteButton } from "@/components/navigation/entity-delete-button";
+import { deleteOpportunity } from "@/app/(dashboard)/opportunities/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,10 +55,13 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const { id } = await params;
   const query = await searchParams;
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
-  const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id);
+  const opportunity = await getOpportunityForUser(id, session.user.role, session.user.id, {
+    allowAssignedWeeklyTask: true,
+    allowFollowUpOnAnyOpportunity: true,
+  });
   if (!opportunity) notFound();
 
-  const [full, activity, contracts, labelMaps, stageOptions, operationLogs, recentVisits] =
+  const [full, activity, contracts, quotes, labelMaps, stageOptions, operationLogs, recentVisits] =
     await Promise.all([
       prisma.opportunity.findUnique({
         where: { id },
@@ -72,6 +80,22 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
         select: { id: true, title: true, totalAmount: true, status: true },
         orderBy: { createdAt: "desc" },
       }),
+      prisma.opportunityQuote.findMany({
+        where: { opportunityId: id },
+        orderBy: [{ quotedAt: "desc" }, { createdAt: "desc" }],
+        include: {
+          createdBy: { select: { name: true } },
+          attachments: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              fileName: true,
+              mimeType: true,
+              sizeBytes: true,
+            },
+          },
+        },
+      }),
       getConfigOptionMaps([CONFIG_CATEGORY.OPPORTUNITY_STAGE, CONFIG_CATEGORY.OPPORTUNITY_GRADE]),
       getConfigOptions(CONFIG_CATEGORY.OPPORTUNITY_STAGE),
       listEntityOperationLogs(ENTITY_TYPES.OPPORTUNITY, id),
@@ -85,10 +109,16 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_GRADE] ?? {};
   const canEdit = canEditOpportunityContent(session.user.role, session.user.id, full);
-  const canFollowUp = canFollowUpOpportunity(session.user.role, session.user.id, full);
-  const canManageStatus = canManageOpportunityStatus(session.user.role);
+  const canFollowUp = await canFollowUpOpportunityForUser(
+    session.user.role,
+    session.user.id,
+    full
+  );
+  const canRestore = canRestoreOpportunity(session.user.role);
+  const canDelete = canManageOpportunityOwner(session.user.role);
   const isAbandoned = full.status === "ABANDONED";
   const canSign = canSignOpportunity(full.status) && canEditContract(session.user.role);
+  const canCreateQuote = canAddOpportunityQuote(full.status) && canEdit;
   const opportunitySnapshot = {
     stage: full.stage,
     expectedAmount: Number(full.expectedAmount),
@@ -130,11 +160,22 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">商机信息</CardTitle>
-            {canEdit && (
-              <Button asChild variant="outline" size="sm">
-                <Link href={withReturnTo(`/opportunities/${id}/edit`, selfPath)}>编辑</Link>
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {canEdit && (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={withReturnTo(`/opportunities/${id}/edit`, selfPath)}>编辑</Link>
+                </Button>
+              )}
+              {canDelete ? (
+                <EntityDeleteButton
+                  size="sm"
+                  variant="outline"
+                  confirmTitle="删除商机"
+                  confirmMessage={`确定删除商机「${full.title}」？删除后不可恢复。若仍有关联合同将无法删除。`}
+                  onDelete={deleteOpportunity.bind(null, id)}
+                />
+              ) : null}
+            </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p>
@@ -261,7 +302,29 @@ export default async function OpportunityDetailPage({ params, searchParams }: Pr
         </Card>
       </div>
 
-      {isAbandoned && canManageStatus && (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">报价单</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <OpportunityQuotesPanel
+            opportunityId={id}
+            canManage={canEdit}
+            canCreate={canCreateQuote}
+            quotes={quotes.map((row) => ({
+              id: row.id,
+              amount: Number(row.amount),
+              quotedAt: row.quotedAt.toISOString(),
+              notes: row.notes,
+              createdByName: row.createdBy.name,
+              createdAt: row.createdAt.toISOString(),
+              attachments: row.attachments,
+            }))}
+          />
+        </CardContent>
+      </Card>
+
+      {isAbandoned && canRestore && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">调整商机状态</CardTitle>

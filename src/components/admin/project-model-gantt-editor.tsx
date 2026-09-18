@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ScrollChain } from "@/components/ui/scroll-chain";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1315,7 +1316,7 @@ export function ProjectModelGanttEditor({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1">
       <div className="grid min-h-0 flex-1 items-stretch gap-3 lg:grid-cols-[minmax(200px,260px)_1fr]">
-        <div className="min-h-0 overflow-y-auto rounded-md border bg-muted/10 p-2">
+        <ScrollChain className="min-h-0 overflow-y-auto rounded-md border bg-muted/10 p-2">
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1439,7 +1440,7 @@ export function ProjectModelGanttEditor({
             )}
           </div>
           </div>
-        </div>
+        </ScrollChain>
 
         <div className="min-h-0 overflow-hidden rounded-md border bg-muted/10 p-2">
           {!selection ? (
@@ -1479,7 +1480,7 @@ export function ProjectModelGanttEditor({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
-        <div className="min-h-0 flex-1 overflow-auto">
+        <ScrollChain className="min-h-0 flex-1 overflow-auto">
           <div className="w-full" style={{ minWidth: ganttMinWidth }}>
             <div className="flex w-full border-b bg-muted/40 text-[10px] text-muted-foreground sticky top-0 z-10">
               <div
@@ -1546,7 +1547,7 @@ export function ProjectModelGanttEditor({
               ) : null}
             </div>
           </div>
-        </div>
+        </ScrollChain>
       </div>
     </div>
   );

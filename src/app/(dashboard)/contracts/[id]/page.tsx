@@ -20,14 +20,18 @@ import {
 import {
   CONTRACT_STATUS_LABELS,
   SIGNING_TYPE_LABELS,
+  CONTRACT_BUSINESS_TYPE_LABELS,
 } from "@/lib/permissions";
 import { DEAL_PARTY_ROLE_LABELS } from "@/lib/deals/party-roles";
 import { formatAmount } from "@/lib/opportunities/funnel";
+import { format } from "date-fns";
 import { BackLink } from "@/components/navigation/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallmentProgressChart } from "@/components/contracts/installment-progress-chart";
+import { InstallmentCollectionPanel } from "@/components/contracts/installment-collection-panel";
 import { ContractPaymentPanel } from "@/components/contracts/contract-payment-panel";
+import { ContractDepositsPanel } from "@/components/contracts/contract-deposits-panel";
 import { ContractInvoicePanel } from "@/components/contracts/contract-invoice-panel";
 import { ExternalCostPayoutPanel } from "@/components/contracts/external-cost-payout-panel";
 import { ContractAttachmentsPanel } from "@/components/contracts/contract-attachments-panel";
@@ -46,12 +50,22 @@ import {
   deleteContractInvoiceRecord,
   addExternalCostPayoutRecord,
   deleteExternalCostPayoutRecord,
+  updateInstallmentCollectionSettings,
+  updateInstallmentCollectionStatus,
+  voidExternalCostProduct,
+  restoreExternalCostProduct,
+  addContractDepositRecovery,
+  deleteContractDepositRecovery,
 } from "@/app/(dashboard)/contracts/actions";
+import { depositOutstandingAmount } from "@/lib/contracts/deposits";
 import {
   ENTITY_TYPES,
   listEntityOperationLogs,
 } from "@/lib/audit/entity-operation-log";
 import { EntityOperationLogList } from "@/components/audit/entity-operation-log-list";
+import { ExternalCostVoidButton } from "@/components/contracts/external-cost-void-button";
+import { ContractProjectPanel } from "@/components/contracts/contract-project-panel";
+import { canCreateProject } from "@/lib/projects/access";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -74,7 +88,18 @@ export default async function ContractDetailPage({ params, searchParams }: Props
       submittedBy: { select: { name: true } },
       approvedBy: { select: { name: true } },
       opportunity: { select: { id: true, title: true, expectedAmount: true } },
-      project: { select: { id: true, name: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          progressPercent: true,
+          phases: {
+            orderBy: { sortOrder: "asc" },
+            select: { id: true, name: true, status: true },
+          },
+        },
+      },
       parties: {
         include: { customer: { select: { id: true, name: true } } },
         orderBy: { createdAt: "asc" },
@@ -90,10 +115,24 @@ export default async function ContractDetailPage({ params, searchParams }: Props
           },
         },
       },
-      installments: { orderBy: { periodNumber: "asc" } },
+      installments: {
+        orderBy: { periodNumber: "asc" },
+        include: {
+          phase: { select: { id: true, name: true, status: true } },
+        },
+      },
       paymentRecords: {
         orderBy: { paidAt: "desc" },
         include: { recordedBy: { select: { name: true } } },
+      },
+      deposits: {
+        orderBy: { paidOutAt: "asc" },
+        include: {
+          recoveries: {
+            orderBy: { recoveredAt: "desc" },
+            include: { recordedBy: { select: { name: true } } },
+          },
+        },
       },
       invoiceRecords: {
         orderBy: { invoicedAt: "desc" },
@@ -136,10 +175,10 @@ export default async function ContractDetailPage({ params, searchParams }: Props
   );
 
   const productSelfCost = contract.products
-    .filter((row) => row.costType !== "EXTERNAL")
+    .filter((row) => !row.voidedAt && row.costType !== "EXTERNAL")
     .reduce((sum, row) => sum + Number(row.costAmount || row.actualCostPrice), 0);
   const externalCostTotal = contract.products
-    .filter((row) => row.costType === "EXTERNAL")
+    .filter((row) => !row.voidedAt && row.costType === "EXTERNAL")
     .reduce((sum, row) => sum + Number(row.costAmount || row.actualCostPrice), 0);
 
   const businessCosts = await prisma.salesCost.findMany({
@@ -163,7 +202,18 @@ export default async function ContractDetailPage({ params, searchParams }: Props
   const allCostTotal = productSelfCost + externalCostTotal + businessCostTotal;
 
   const signed = isSignedContractStatus(contract.status);
+  const canCreateProjectForContract = canCreateProject(session.user.role);
+  const canOpenProjectPage =
+    session.user.role === "ADMIN" ||
+    session.user.role === "PROJECT_ADMIN" ||
+    session.user.role === "PROJECT_MANAGER" ||
+    session.user.role === "PROJECT_STAFF";
   const canEdit = canEditContract(session.user.role);
+  const canVoidExternal =
+    (session.user.role === "SALES" ||
+      session.user.role === "SALES_MANAGER" ||
+      session.user.role === "ADMIN") &&
+    (canEdit || contract.ownerId === session.user.id);
   const canHandleRejected = canHandleRejectedContract(session.user.role, session.user.id, {
     ownerId: contract.ownerId,
     submittedById: contract.submittedById,
@@ -232,6 +282,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             title: contract.title,
             totalAmount: totalAmount,
             signingType: contract.signingType,
+            businessType: contract.businessType,
             signCustomerId: contract.signCustomerId,
             signCustomerName: contract.signCustomer.name,
             endUserCustomerId: contract.endUserCustomerId,
@@ -241,25 +292,47 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             paymentMethod: contract.paymentMethod ?? undefined,
             ownerId: contract.ownerId,
             signedAt: contract.signedAt?.toISOString(),
+            maintenanceStartAt: contract.maintenanceStartAt?.toISOString(),
+            maintenanceEndAt: contract.maintenanceEndAt?.toISOString(),
+            maintenanceTotalAmount:
+              contract.maintenanceTotalAmount != null
+                ? Number(contract.maintenanceTotalAmount)
+                : null,
+            annualMaintenanceAmount:
+              contract.annualMaintenanceAmount != null
+                ? Number(contract.annualMaintenanceAmount)
+                : null,
             notes: contract.notes ?? undefined,
-            products: contract.products.map((row) => ({
-              productServiceId: row.productServiceId,
-              productName: row.productName,
-              description: row.description,
-              costAmount: Number(row.costAmount || row.actualCostPrice),
-              costType: row.costType,
-              externalInstallments: row.externalInstallments.map((item) => ({
-                periodNumber: item.periodNumber,
-                amount: Number(item.amount),
-                condition: item.condition,
-                dueAt: item.dueAt?.toISOString(),
+            products: contract.products
+              .filter((row) => !row.voidedAt)
+              .map((row) => ({
+                id: row.id,
+                hasPayouts: row.externalPayoutRecords.length > 0,
+                productServiceId: row.productServiceId,
+                productName: row.productName,
+                description: row.description,
+                costAmount: Number(row.costAmount || row.actualCostPrice),
+                costType: row.costType,
+                externalInstallments: row.externalInstallments.map((item) => ({
+                  periodNumber: item.periodNumber,
+                  amount: Number(item.amount),
+                  condition: item.condition,
+                  dueAt: item.dueAt?.toISOString(),
+                })),
               })),
-            })),
             installments: contract.installments.map((row) => ({
               periodNumber: row.periodNumber,
               amount: Number(row.amount),
               condition: row.condition,
               dueAt: row.dueAt?.toISOString(),
+            })),
+            deposits: contract.deposits.map((row) => ({
+              id: row.id,
+              hasRecoveries: row.recoveries.length > 0,
+              amount: Number(row.amount),
+              paidOutAt: row.paidOutAt.toISOString(),
+              recoverCondition: row.recoverCondition,
+              notes: row.notes,
             })),
           }}
           submitLabel="重新提交审核"
@@ -359,6 +432,32 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             <span className="text-muted-foreground">签约类型：</span>
             {SIGNING_TYPE_LABELS[contract.signingType]}
           </p>
+          <p>
+            <span className="text-muted-foreground">业务类型：</span>
+            {CONTRACT_BUSINESS_TYPE_LABELS[contract.businessType]}
+          </p>
+          {contract.businessType === "MAINTENANCE" ? (
+            <>
+              <p>
+                <span className="text-muted-foreground">维保时段：</span>
+                {contract.maintenanceStartAt && contract.maintenanceEndAt
+                  ? `${format(contract.maintenanceStartAt, "yyyy-MM-dd")} ~ ${format(contract.maintenanceEndAt, "yyyy-MM-dd")}`
+                  : "—"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">维保总额：</span>
+                {contract.maintenanceTotalAmount != null
+                  ? formatAmount(Number(contract.maintenanceTotalAmount))
+                  : "—"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">每年维保额度：</span>
+                {contract.annualMaintenanceAmount != null
+                  ? formatAmount(Number(contract.annualMaintenanceAmount))
+                  : "—"}
+              </p>
+            </>
+          ) : null}
           {contract.paymentMethod && (
             <p>
               <span className="text-muted-foreground">支付方式：</span>
@@ -450,14 +549,6 @@ export default async function ContractDetailPage({ params, searchParams }: Props
               {contract.approvedBy.name}
             </p>
           )}
-          {contract.project && (
-            <p>
-              <span className="text-muted-foreground">关联项目：</span>
-              <Link href="/projects" className="text-primary hover:underline">
-                {contract.project.name}
-              </Link>
-            </p>
-          )}
           {contract.notes && (
             <div>
               <p className="text-muted-foreground">备注</p>
@@ -484,7 +575,7 @@ export default async function ContractDetailPage({ params, searchParams }: Props
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">成本构成</CardTitle>
-            {contract.products.some((row) => row.costType === "EXTERNAL") ? (
+            {contract.products.some((row) => row.costType === "EXTERNAL" && !row.voidedAt) ? (
               <Button asChild variant="outline" size="sm">
                 <Link href={`/contracts/external-costs?contractId=${contract.id}`}>
                   外部成本维护
@@ -502,15 +593,25 @@ export default async function ContractDetailPage({ params, searchParams }: Props
                       <th className="pb-2 pr-4">名称</th>
                       <th className="pb-2 pr-4">类型</th>
                       <th className="pb-2 pr-4">成本 / 应付</th>
-                      <th className="pb-2">备注</th>
+                      <th className="pb-2 pr-4">备注</th>
+                      <th className="pb-2" />
                     </tr>
                   </thead>
                   <tbody>
                     {contract.products.map((row) => {
                       const paid = sumPaymentRecords(row.externalPayoutRecords);
+                      const isVoided = Boolean(row.voidedAt);
                       return (
-                        <tr key={row.id} className="border-b">
-                          <td className="py-2 pr-4">{row.productName}</td>
+                        <tr
+                          key={row.id}
+                          className={`border-b ${isVoided ? "text-muted-foreground" : ""}`}
+                        >
+                          <td className="py-2 pr-4">
+                            {row.productName}
+                            {isVoided ? (
+                              <span className="ml-2 text-xs">已作废</span>
+                            ) : null}
+                          </td>
                           <td className="py-2 pr-4">
                             {row.costType === "EXTERNAL" ? "外部成本合同" : "产品本身"}
                           </td>
@@ -522,7 +623,21 @@ export default async function ContractDetailPage({ params, searchParams }: Props
                               </span>
                             ) : null}
                           </td>
-                          <td className="py-2 text-muted-foreground">{row.description || "—"}</td>
+                          <td className="py-2 pr-4 text-muted-foreground">
+                            {row.description || "—"}
+                          </td>
+                          <td className="py-2 text-right">
+                            {row.costType === "EXTERNAL" && canVoidExternal ? (
+                              <ExternalCostVoidButton
+                                productId={row.id}
+                                productName={row.productName}
+                                voided={isVoided}
+                                hasPayouts={row.externalPayoutRecords.length > 0}
+                                onVoid={voidExternalCostProduct}
+                                onRestore={restoreExternalCostProduct}
+                              />
+                            ) : null}
+                          </td>
                         </tr>
                       );
                     })}
@@ -567,17 +682,46 @@ export default async function ContractDetailPage({ params, searchParams }: Props
         </Card>
       )}
 
+      {signed ? (
+        <ContractProjectPanel
+          returnTo={selfPath}
+          canCreateProject={canCreateProjectForContract}
+          canOpenProjectPage={canOpenProjectPage}
+          project={
+            contract.project
+              ? {
+                  id: contract.project.id,
+                  name: contract.project.name,
+                  status: contract.project.status,
+                  progressPercent: contract.project.progressPercent,
+                  phases: contract.project.phases,
+                }
+              : null
+          }
+          createProjectHref={withReturnTo(
+            `/projects/new?contractId=${contract.id}`,
+            selfPath
+          )}
+        />
+      ) : null}
+
       {contract.installments.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">回款进度</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             {signed ? (
               <InstallmentProgressChart
                 rows={waterfallRows}
                 totalPaid={totalPaid}
                 totalAmount={totalAmount}
+                contractId={contract.id}
+                collectionStatusById={Object.fromEntries(
+                  contract.installments.map((row) => [row.id, row.collectionStatus])
+                )}
+                canEditStatus={canEditContract(session.user.role)}
+                onSaveStatus={updateInstallmentCollectionStatus}
               />
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -594,6 +738,28 @@ export default async function ContractDetailPage({ params, searchParams }: Props
                 ))}
               </ul>
             )}
+            {signed && canEditContract(session.user.role) ? (
+              <InstallmentCollectionPanel
+                contractId={contract.id}
+                phases={contract.project?.phases ?? []}
+                rows={contract.installments.map((row) => ({
+                  id: row.id,
+                  periodNumber: row.periodNumber,
+                  amount: Number(row.amount),
+                  condition: row.condition,
+                  phaseId: row.phaseId,
+                  phaseName: row.phase?.name ?? null,
+                  phaseStatus: row.phase?.status ?? null,
+                  collectionStatus: row.collectionStatus,
+                }))}
+                onSave={updateInstallmentCollectionSettings}
+              />
+            ) : null}
+            {signed && !contract.project ? (
+              <p className="text-xs text-muted-foreground">
+                尚未关联实施项目时无法绑定阶段；无项目时可在上方自由设置催收状态，阶段完成后仅会把「未开始」升为「可催款」。
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       )}
@@ -613,6 +779,38 @@ export default async function ContractDetailPage({ params, searchParams }: Props
             notes: row.notes,
             recordedBy: row.recordedBy,
           }))}
+        />
+      )}
+
+      {signed && (
+        <ContractDepositsPanel
+          canRecord={canRecordContractPayment(session.user.role)}
+          canDelete={canManageContractApproval(session.user.role)}
+          onAddRecovery={addContractDepositRecovery}
+          onDeleteRecovery={deleteContractDepositRecovery}
+          deposits={contract.deposits.map((row) => {
+            const amount = Number(row.amount);
+            const recoveredAmount = row.recoveries.reduce(
+              (sum, item) => sum + Number(item.amount),
+              0
+            );
+            return {
+              id: row.id,
+              amount,
+              paidOutAt: row.paidOutAt.toISOString(),
+              recoverCondition: row.recoverCondition,
+              notes: row.notes,
+              recoveredAmount,
+              outstandingAmount: depositOutstandingAmount(amount, row.recoveries),
+              recoveries: row.recoveries.map((item) => ({
+                id: item.id,
+                amount: Number(item.amount),
+                recoveredAt: item.recoveredAt.toISOString(),
+                notes: item.notes,
+                recordedBy: item.recordedBy,
+              })),
+            };
+          })}
         />
       )}
 
@@ -652,8 +850,10 @@ export default async function ContractDetailPage({ params, searchParams }: Props
                 key={row.id}
                 productId={row.id}
                 productName={row.productName}
+                productNotes={row.description}
                 costAmount={Number(row.costAmount || row.actualCostPrice)}
                 totalPaid={paid}
+                voided={Boolean(row.voidedAt)}
                 canDelete={canManageContractApproval(session.user.role)}
                 onAdd={addExternalCostPayoutRecord}
                 onDelete={deleteExternalCostPayoutRecord}

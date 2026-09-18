@@ -11,6 +11,10 @@ export type InvoiceOcrResult = {
   notes: string | null;
   confidence: "high" | "medium" | "low";
   rawSummary: string | null;
+  /** 发票内容是否与所选费用类别相符 */
+  categoryMatch: boolean | null;
+  /** 模型判断的实际类别简述 */
+  categoryGuess: string | null;
 };
 
 const SYSTEM = `你是中国增值税发票识别助手。根据用户提供的发票图片或从 PDF 抽取的文本，提取结构化字段。
@@ -23,6 +27,8 @@ const SYSTEM = `你是中国增值税发票识别助手。根据用户提供的�
 - notes: string|null 可简述购买方或备注，一两句内
 - confidence: "high"|"medium"|"low"
 - rawSummary: string|null 一句话说明识别依据
+- categoryMatch: boolean|null 若用户提供了「期望费用类别」，判断票面内容是否属于该类（是 true / 否 false / 无法判断 null）
+- categoryGuess: string|null 根据票面判断更可能属于哪类费用（如飞机票、住宿、餐饮等），简短中文
 无法辨认的字段填 null。不要编造。`;
 
 function mimeToDataUrl(mimeType: string, bytes: Buffer): string {
@@ -76,6 +82,15 @@ function normalizeResult(raw: unknown): InvoiceOcrResult {
     }
   }
 
+  let categoryMatch: boolean | null = null;
+  if (typeof obj.categoryMatch === "boolean") {
+    categoryMatch = obj.categoryMatch;
+  } else if (obj.categoryMatch === "true" || obj.categoryMatch === "yes") {
+    categoryMatch = true;
+  } else if (obj.categoryMatch === "false" || obj.categoryMatch === "no") {
+    categoryMatch = false;
+  }
+
   return {
     amount: num(obj.amount),
     taxRatePercent: tax,
@@ -85,6 +100,8 @@ function normalizeResult(raw: unknown): InvoiceOcrResult {
     notes: str(obj.notes),
     confidence,
     rawSummary: str(obj.rawSummary),
+    categoryMatch,
+    categoryGuess: str(obj.categoryGuess),
   };
 }
 
@@ -196,10 +213,15 @@ export async function extractInvoiceFieldsFromFile(input: {
   bytes: Buffer;
   mimeType: string;
   fileName?: string;
+  /** 用户所选费用类别标签，用于校验票面是否相符 */
+  expectedCategoryLabel?: string | null;
 }): Promise<InvoiceOcrResult> {
   assertInvoiceOcrSupported(input.mimeType, input.fileName);
   const config = await requireAiConfig();
   const label = input.fileName ? `（文件名：${input.fileName}）` : "";
+  const expectedHint = input.expectedCategoryLabel?.trim()
+    ? `\n期望费用类别：「${input.expectedCategoryLabel.trim()}」。请根据票面内容判断是否属于该类，填写 categoryMatch 与 categoryGuess。`
+    : "\n未指定期望类别时，categoryMatch 填 null，仍可填写 categoryGuess。";
 
   if (isPdf(input.mimeType, input.fileName)) {
     const pdfText = await extractPdfTextViaMoonshot({
@@ -216,7 +238,7 @@ export async function extractInvoiceFieldsFromFile(input: {
         { role: "system", content: SYSTEM },
         {
           role: "user",
-          content: `以下是从发票 PDF 抽取的文本${label}，请提取价税合计、税率（几个点）、发票号码、开票日期，输出 JSON。\n\n----- PDF 文本开始 -----\n${pdfText.slice(0, 120000)}\n----- PDF 文本结束 -----`,
+          content: `以下是从发票 PDF 抽取的文本${label}，请提取价税合计、税率（几个点）、发票号码、开票日期，输出 JSON。${expectedHint}\n\n----- PDF 文本开始 -----\n${pdfText.slice(0, 120000)}\n----- PDF 文本结束 -----`,
         },
       ],
     });
@@ -236,7 +258,7 @@ export async function extractInvoiceFieldsFromFile(input: {
           },
           {
             type: "text",
-            text: `请识别这张发票${label}，提取价税合计、税率（几个点）、发票号码、开票日期。输出 JSON。`,
+            text: `请识别这张发票${label}，提取价税合计、税率（几个点）、发票号码、开票日期。输出 JSON。${expectedHint}`,
           },
         ],
       },

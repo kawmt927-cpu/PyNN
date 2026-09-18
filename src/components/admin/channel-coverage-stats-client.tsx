@@ -32,7 +32,7 @@ export function ChannelCoverageStatsClient({ data, canEditTargets }: Props) {
           hint={`沉寂 ${totals.inactive}`}
         />
         <Kpi
-          label="未分类 / 未填省"
+          label="未分类 / 未填·待挂省"
           value={`${totals.unclassified} / ${totals.unassignedProvince}`}
         />
       </div>

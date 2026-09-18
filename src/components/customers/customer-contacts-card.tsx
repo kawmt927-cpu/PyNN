@@ -5,16 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContactList } from "@/components/customers/contact-list";
 import type { ConfigOptionItem } from "@/lib/config-options";
-import type { Contact } from "@prisma/client";
+import type { ContactFormContact } from "@/components/customers/contact-form";
 
 type Props = {
   customerId: string;
-  contacts: Contact[];
+  contacts: ContactFormContact[];
   readOnly?: boolean;
   titleOptions: ConfigOptionItem[];
   departmentOptions: ConfigOptionItem[];
   roleOptions: ConfigOptionItem[];
   showDepartment?: boolean;
+  showResponsibleProvinces?: boolean;
 };
 
 export function CustomerContactsCard({
@@ -25,6 +26,7 @@ export function CustomerContactsCard({
   departmentOptions,
   roleOptions,
   showDepartment = true,
+  showResponsibleProvinces = false,
 }: Props) {
   const [addOpen, setAddOpen] = useState(false);
 
@@ -50,6 +52,7 @@ export function CustomerContactsCard({
           departmentOptions={departmentOptions}
           roleOptions={roleOptions}
           showDepartment={showDepartment}
+          showResponsibleProvinces={showResponsibleProvinces}
           addOpen={addOpen}
           onAddOpenChange={setAddOpen}
         />

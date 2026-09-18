@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,11 @@ import {
 import { PlannedFollowUpDateField } from "@/components/sales-log/planned-follow-up-date-field";
 import { toPlannedFollowUpInputValue } from "@/lib/dates/local-date";
 import { toExpectedCloseMonthInput } from "@/lib/opportunities/expected-close-date";
+import {
+  CompletePendingFollowUpDialog,
+  type AssignmentCompletionMode,
+} from "@/components/customers/complete-pending-follow-up-dialog";
+import type { PendingAssignmentForFollowUp } from "@/lib/today-work/assignment-follow-up-complete";
 import type { ConfigOptionItem } from "@/lib/config-options";
 import type { FollowUpMethod } from "@prisma/client";
 
@@ -40,6 +45,10 @@ type FollowUpInitial = {
 type Props = {
   mode: "create" | "edit";
   opportunityId: string;
+  /** 关联客户：创建时用于拉取未完成指派任务 */
+  customerId?: string | null;
+  /** 非负责人代录时展示待确认提示 */
+  pendingConfirmHint?: boolean;
   opportunity: OpportunityFollowUpSnapshot;
   stageOptions: ConfigOptionItem[];
   initialFollowUp?: FollowUpInitial;
@@ -94,6 +103,8 @@ function buildFormState(
 export function OpportunityFollowUpForm({
   mode,
   opportunityId,
+  customerId,
+  pendingConfirmHint = false,
   opportunity,
   stageOptions,
   initialFollowUp,
@@ -104,13 +115,51 @@ export function OpportunityFollowUpForm({
   const [form, setForm] = useState(() => buildFormState(opportunity, initialFollowUp));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [assignments, setAssignments] = useState<PendingAssignmentForFollowUp[]>([]);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [assignmentMode, setAssignmentMode] = useState<AssignmentCompletionMode>(null);
+  const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (mode !== "create" || !customerId) {
+      setAssignments([]);
+      return;
+    }
+    let cancelled = false;
+    setAssignmentsLoading(true);
+    void fetch(`/api/customers/${encodeURIComponent(customerId)}/pending-follow-plans`, {
+      credentials: "include",
+    })
+      .then((res) => (res.ok ? res.json() : { assignments: [] }))
+      .then((data: { assignments?: PendingAssignmentForFollowUp[] }) => {
+        if (cancelled) return;
+        const rows = (data.assignments ?? []).filter(
+          (a) => !a.opportunityId || a.opportunityId === opportunityId
+        );
+        setAssignments(rows);
+        setAssignmentMode(null);
+        setSelectedAssignmentIds([]);
+      })
+      .catch(() => {
+        if (!cancelled) setAssignments([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAssignmentsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, customerId, opportunityId]);
 
   function patchForm(patch: Partial<typeof form>) {
     setForm((prev) => ({ ...prev, ...patch }));
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function buildFormData(opts?: {
+    skipAssignmentCompletion?: boolean;
+    completedAssignmentIds?: string[];
+  }) {
     const formData = new FormData();
     formData.set("opportunityId", opportunityId);
     if (mode === "edit" && initialFollowUp) {
@@ -127,9 +176,25 @@ export function OpportunityFollowUpForm({
     formData.set("winProbability", form.winProbability);
     formData.set("competitor", form.competitor);
     formData.set("notes", form.notes);
+    if (opts) {
+      formData.set(
+        "skipAssignmentCompletion",
+        opts.skipAssignmentCompletion ? "true" : "false"
+      );
+      for (const id of opts.completedAssignmentIds ?? []) {
+        formData.append("completedAssignmentIds", id);
+      }
+    }
+    return formData;
+  }
 
+  function runSubmit(opts?: {
+    skipAssignmentCompletion?: boolean;
+    completedAssignmentIds?: string[];
+  }) {
     startTransition(async () => {
       setError(null);
+      const formData = buildFormData(opts);
       const result =
         mode === "create"
           ? await createOpportunityFollowUp(formData)
@@ -140,6 +205,7 @@ export function OpportunityFollowUpForm({
         return;
       }
 
+      setCompleteDialogOpen(false);
       if (result.redirectTo) {
         router.push(result.redirectTo);
         router.refresh();
@@ -148,8 +214,24 @@ export function OpportunityFollowUpForm({
     });
   }
 
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (assignmentsLoading) return;
+    if (mode === "create" && assignments.length > 0) {
+      setCompleteDialogOpen(true);
+      return;
+    }
+    runSubmit();
+  }
+
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-6">
+      {pendingConfirmHint && mode === "create" ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          该商机非你负责。提交后为「待确认」，需销售管理确认后正式入库；商机字段变更仅在确认后生效。
+        </p>
+      ) : null}
       <div className="space-y-3">
         <p className="text-sm font-medium text-muted-foreground">跟进信息</p>
         <div className="grid gap-4 md:grid-cols-2">
@@ -286,7 +368,7 @@ export function OpportunityFollowUpForm({
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={pending}>
+        <Button type="submit" size="sm" disabled={pending || assignmentsLoading}>
           {pending ? "保存中…" : mode === "create" ? "保存跟进" : "保存修改"}
         </Button>
         {onCancel && (
@@ -296,5 +378,26 @@ export function OpportunityFollowUpForm({
         )}
       </div>
     </form>
+
+    <CompletePendingFollowUpDialog
+      open={completeDialogOpen}
+      onOpenChange={setCompleteDialogOpen}
+      assignments={assignments}
+      assignmentMode={assignmentMode}
+      onAssignmentModeChange={setAssignmentMode}
+      selectedAssignmentIds={selectedAssignmentIds}
+      onSelectedAssignmentIdsChange={setSelectedAssignmentIds}
+      planItems={[]}
+      selectedPlanKeys={[]}
+      onSelectedPlanKeysChange={() => {}}
+      onConfirm={() =>
+        runSubmit({
+          skipAssignmentCompletion: assignmentMode === "skip",
+          completedAssignmentIds: assignmentMode === "complete" ? selectedAssignmentIds : [],
+        })
+      }
+      pending={pending}
+    />
+    </>
   );
 }
