@@ -1,8 +1,11 @@
 //! Local Cursor IDE status (macOS MVP spike).
 //!
 //! Primary signal: Hooks → `~/.cursor/desktop-companion-status.json`
-//! (supports **multiple agents** keyed by conversation id + workspace project name).
-//! Secondary: whether a Cursor process appears to be running.
+//! (supports **multiple agents** keyed by `conversation_id`).
+//! Display names: explicit agent/composer title from hooks when present, else
+//! workspace basename, else short conversation id — see `resolve` +
+//! [`disambiguate_agent_names`]. Secondary: whether a Cursor process appears
+//! to be running.
 //!
 //! Not Cloud Agents API. See docs/spending-and-local-status.md and
 //! docs/agent-status-aggregation.md.
@@ -61,6 +64,11 @@ struct StatusAgent {
     id: Option<String>,
     #[serde(default)]
     name: Option<String>,
+    /// How hooks chose `name` (explicit / workspace_basename / conversation_id / …).
+    /// Kept for forward-compat / debugging; not shown in UI yet.
+    #[allow(dead_code)]
+    #[serde(default)]
+    name_source: Option<String>,
     #[serde(default)]
     workspace_root: Option<String>,
     /// working | done | needs-input | failed | unknown
@@ -74,6 +82,8 @@ struct StatusAgent {
     /// hooks stop status: completed | aborted | error
     #[serde(default)]
     stop_status: Option<String>,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 /// Poll local IDE status for tray / panel.
@@ -140,6 +150,7 @@ fn expand_agents(raw: &StatusFile, path: &Path) -> Vec<AgentSnapshot> {
         for a in &raw.agents {
             out.push(map_agent(a, file_age));
         }
+        disambiguate_agent_names(&mut out);
         return out;
     }
 
@@ -152,29 +163,44 @@ fn expand_agents(raw: &StatusFile, path: &Path) -> Vec<AgentSnapshot> {
                 .clone()
                 .or_else(|| project_name_from_root(raw.workspace_root.as_deref()))
                 .or_else(|| Some("本机 Cursor IDE".into())),
+            name_source: None,
             workspace_root: raw.workspace_root.clone(),
             status: status.clone(),
             detail: raw.detail.clone(),
             source: raw.source.clone(),
             updated_at: raw.updated_at.clone(),
             stop_status: raw.stop_status.clone(),
+            conversation_id: None,
         };
         out.push(map_agent(&legacy, file_age));
     }
+    disambiguate_agent_names(&mut out);
     out
 }
 
 fn map_agent(raw: &StatusAgent, file_age: Option<Duration>) -> AgentSnapshot {
     let source = raw.source.clone().unwrap_or_else(|| "hooks".into());
-    let project = raw
-        .name
+    let conversation_id = raw
+        .conversation_id
         .clone()
-        .or_else(|| project_name_from_root(raw.workspace_root.as_deref()))
-        .unwrap_or_else(|| "本机 Cursor IDE".into());
+        .or_else(|| raw.id.clone())
+        .unwrap_or_default();
+    let project = resolve_agent_display_name(
+        raw.name.as_deref(),
+        raw.workspace_root.as_deref(),
+        Some(conversation_id.as_str()),
+    );
     let id = raw
         .id
         .clone()
-        .unwrap_or_else(|| format!("local-{}", project));
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            if !conversation_id.is_empty() {
+                conversation_id.clone()
+            } else {
+                format!("local-{}", project)
+            }
+        });
 
     let mut base_detail = raw
         .detail
@@ -231,6 +257,70 @@ fn map_agent(raw: &StatusAgent, file_age: Option<Duration>) -> AgentSnapshot {
         status: ui,
         detail,
         updated_at,
+    }
+}
+
+/// Display-name priority for one agent row (before multi-row disambiguation).
+///
+/// 1. Non-empty `name` from status file (hooks may have set explicit title or basename)
+/// 2. Workspace root basename
+/// 3. Short conversation id → `Agent · <suffix>`
+pub fn resolve_agent_display_name(
+    name: Option<&str>,
+    workspace_root: Option<&str>,
+    conversation_id: Option<&str>,
+) -> String {
+    if let Some(n) = name.map(str::trim).filter(|s| !s.is_empty()) {
+        return n.to_string();
+    }
+    if let Some(p) = project_name_from_root(workspace_root) {
+        return p;
+    }
+    if let Some(suf) = short_conversation_suffix(conversation_id) {
+        return format!("Agent · {suf}");
+    }
+    "本机 Cursor IDE".into()
+}
+
+/// Last 6 alphanumeric chars of a conversation / agent id (stable short label).
+pub fn short_conversation_suffix(id: Option<&str>) -> Option<String> {
+    let id = id?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let alnum: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if alnum.len() >= 6 {
+        Some(alnum[alnum.len() - 6..].to_string())
+    } else if !alnum.is_empty() {
+        Some(alnum)
+    } else {
+        Some(id.chars().take(8).collect())
+    }
+}
+
+/// When two+ agents would show the same label but have different ids, append ` · <suffix>`.
+pub fn disambiguate_agent_names(agents: &mut [AgentSnapshot]) {
+    use std::collections::HashMap;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for a in agents.iter() {
+        *counts.entry(a.name.clone()).or_insert(0) += 1;
+    }
+    for a in agents.iter_mut() {
+        if counts.get(&a.name).copied().unwrap_or(0) <= 1 {
+            continue;
+        }
+        let Some(suf) = short_conversation_suffix(Some(a.id.as_str())) else {
+            continue;
+        };
+        let tagged = format!(" · {suf}");
+        if a.name.ends_with(&tagged) {
+            continue;
+        }
+        if a.name.is_empty() {
+            a.name = format!("Agent · {suf}");
+        } else {
+            a.name = format!("{}{tagged}", a.name);
+        }
     }
 }
 
@@ -356,6 +446,83 @@ mod tests {
     }
 
     #[test]
+    fn resolve_prefers_explicit_name() {
+        assert_eq!(
+            resolve_agent_display_name(
+                Some("Vibecoding 助手"),
+                Some("/Users/me/Projects/PyNN"),
+                Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+            ),
+            "Vibecoding 助手"
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_workspace_then_id() {
+        assert_eq!(
+            resolve_agent_display_name(None, Some("/tmp/CRM"), Some("cid-111111")),
+            "CRM"
+        );
+        assert_eq!(
+            resolve_agent_display_name(
+                None,
+                None,
+                Some("aaaaaaaa-bbbb-cccc-dddd-123456abcdef")
+            ),
+            "Agent · abcdef"
+        );
+    }
+
+    #[test]
+    fn disambiguate_same_workspace_basename() {
+        let mut agents = vec![
+            AgentSnapshot {
+                id: "aaaaaaaa-bbbb-cccc-dddd-111111aaaaaa".into(),
+                name: "PyNN".into(),
+                status: AgentUiStatus::Working,
+                detail: None,
+                updated_at: Utc::now(),
+            },
+            AgentSnapshot {
+                id: "aaaaaaaa-bbbb-cccc-dddd-222222bbbbbb".into(),
+                name: "PyNN".into(),
+                status: AgentUiStatus::Done,
+                detail: None,
+                updated_at: Utc::now(),
+            },
+        ];
+        disambiguate_agent_names(&mut agents);
+        assert_ne!(agents[0].name, agents[1].name);
+        assert!(agents[0].name.starts_with("PyNN · "));
+        assert!(agents[1].name.starts_with("PyNN · "));
+        assert!(agents[0].name.contains("aaaaaa"));
+        assert!(agents[1].name.contains("bbbbbb"));
+    }
+
+    #[test]
+    fn disambiguate_leaves_unique_names_alone() {
+        let mut agents = vec![
+            AgentSnapshot {
+                id: "c1".into(),
+                name: "Vibecoding 助手".into(),
+                status: AgentUiStatus::Working,
+                detail: None,
+                updated_at: Utc::now(),
+            },
+            AgentSnapshot {
+                id: "c2".into(),
+                name: "CRM".into(),
+                status: AgentUiStatus::Done,
+                detail: None,
+                updated_at: Utc::now(),
+            },
+        ];
+        disambiguate_agent_names(&mut agents);
+        assert_eq!(agents[0].name, "Vibecoding 助手");
+        assert_eq!(agents[1].name, "CRM");
+    }
+
+    #[test]
     fn maps_multi_agent_file() {
         let _guard = ENV_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!(
@@ -380,6 +547,30 @@ mod tests {
         );
         assert!(agents.iter().any(|a| a.name == "proj-a"));
         assert!(agents.iter().any(|a| a.name == "proj-b"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn maps_colliding_workspace_names_uniquely() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "dc-local-status-collide-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(STATUS_FILE_NAME);
+        let mut f = fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"{{"version":1,"agents":[{{"id":"aaaaaaaa-bbbb-cccc-dddd-111111aaaaaa","name":"PyNN","conversationId":"aaaaaaaa-bbbb-cccc-dddd-111111aaaaaa","status":"working","source":"hooks"}},{{"id":"aaaaaaaa-bbbb-cccc-dddd-222222bbbbbb","name":"PyNN","conversationId":"aaaaaaaa-bbbb-cccc-dddd-222222bbbbbb","status":"done","source":"hooks"}}]}}"#
+        )
+        .unwrap();
+        std::env::set_var("DESKTOP_COMPANION_STATUS_FILE", &path);
+        let (_ui, agents) = poll_local_cursor_status();
+        std::env::remove_var("DESKTOP_COMPANION_STATUS_FILE");
+        assert_eq!(agents.len(), 2);
+        assert_ne!(agents[0].name, agents[1].name);
+        assert!(agents.iter().all(|a| a.name.starts_with("PyNN · ")));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -35,7 +35,7 @@ npm run tauri dev
    定时刷新会重读会话，**不必反复粘贴 Cookie**。紧急时才展开手动粘贴。失败只打开 Spending，不造假数字。
 
 2. **本机 Hooks（状态色 · 多 Agent）**  
-   见 [`hooks/README.md`](./hooks/README.md)：把模板装到 `~/.cursor/`，跑一轮 Agent，确认 `~/.cursor/desktop-companion-status.json` 的 `agents[]` 有更新。面板按**项目名**列出各 Agent；托盘色圆叠加用量 %。未装 hooks → 托盘灰色「未知」。
+   见 [`hooks/README.md`](./hooks/README.md)：把模板装到 `~/.cursor/`，跑一轮 Agent，确认 `~/.cursor/desktop-companion-status.json` 的 `agents[]` 有更新。面板按**显示名**列出各 Agent（显式标题 → 工作区文件夹名 → 短 conversation id；重名加后缀）；托盘色圆叠加用量 %。未装 hooks → 托盘灰色「未知」。
 
 不必配置 API Key。设置弹窗 → 高级：可选手动开 Cloud Agents（暂缓）；自定义 HTTP 源一般不必用。
 

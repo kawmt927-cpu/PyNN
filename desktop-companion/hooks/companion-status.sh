@@ -2,12 +2,18 @@
 # Cursor Hooks → ~/.cursor/desktop-companion-status.json for desktop-companion.
 # Usage: companion-status.sh <eventName>   (JSON event on stdin)
 #
-# Writes a **multi-agent** status file. Each conversation_id is one agent row;
-# display name = basename of the first workspace_roots entry (project/workspace).
-# See hooks.json.example and docs/agent-status-aggregation.md
+# Writes a **multi-agent** status file. Each conversation_id is one agent row.
+# Display name priority (see docs/agent-status-aggregation.md):
+#   1) agent/composer/conversation display name if present in hook JSON
+#   2) basename of workspace_roots[0]
+#   3) short conversation_id suffix
+# Duplicate labels with different conversation_ids are disambiguated with · <suffix>.
 #
 # 待跟进: hooks do not emit an official wait-for-user / mode-switch event.
 # Companion approximates NeedsInput after a completed stop ages without a new turn.
+#
+# Never log secrets (tokens, cookies, full prompts). Payload keys may be noted
+# in nameSource for debugging; values for name fields only when used as labels.
 
 set -euo pipefail
 
@@ -20,7 +26,8 @@ INPUT="$(cat || true)"
 # Prefer python3 for JSON upsert (multi-agent). Fail soft to minimal single write.
 if command -v python3 >/dev/null 2>&1; then
   EVENT_NAME="$EVENT_NAME" STATUS_FILE="$STATUS_FILE" INPUT="$INPUT" python3 - <<'PY'
-import json, os, sys, time
+import json, os, re, time
+from collections import Counter
 from pathlib import Path
 
 event = os.environ.get("EVENT_NAME", "unknown")
@@ -32,19 +39,99 @@ try:
 except Exception:
     payload = {}
 
+if not isinstance(payload, dict):
+    payload = {}
+
 def first(*keys, default=None):
     for k in keys:
         if k in payload and payload[k] not in (None, ""):
             return payload[k]
     return default
 
-conversation_id = first("conversation_id", "conversationId", default="")
-generation_id = first("generation_id", "generationId", default="")
+def short_id(cid: str) -> str:
+    if not cid:
+        return ""
+    alnum = re.sub(r"[^0-9A-Za-z]", "", cid)
+    if len(alnum) >= 6:
+        return alnum[-6:]
+    return alnum or cid[:8]
+
+# Undocumented / forward-looking name keys. Official Cursor Hooks common schema
+# (docs, 2026) documents conversation_id, generation_id, model, workspace_roots,
+# transcript_path, etc. — NOT an agent/composer display title. We still probe
+# these so future Cursor versions or undocumented fields light up immediately.
+EXPLICIT_NAME_KEYS = (
+    "agent_name",
+    "agentName",
+    "composer_name",
+    "composerName",
+    "conversation_title",
+    "conversationTitle",
+    "conversation_name",
+    "conversationName",
+    "display_name",
+    "displayName",
+    "title",
+    "project_name",
+    "projectName",
+)
+
+def pick_explicit_name(data: dict):
+    for k in EXPLICIT_NAME_KEYS:
+        v = data.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip(), k
+    for nest_key in ("composer", "agent", "conversation", "project"):
+        nest = data.get(nest_key)
+        if not isinstance(nest, dict):
+            continue
+        for k in ("name", "title", "display_name", "displayName"):
+            v = nest.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip(), f"{nest_key}.{k}"
+    return None, None
+
+def resolve_display_name(conversation_id: str, workspace_root: str):
+    explicit, src = pick_explicit_name(payload)
+    if explicit:
+        return explicit, f"explicit:{src}"
+    if workspace_root:
+        base = Path(workspace_root).name
+        if base:
+            return base, "workspace_basename"
+    suf = short_id(conversation_id)
+    if suf:
+        return f"Agent · {suf}", "conversation_id"
+    return "本机 Cursor IDE", "fallback"
+
+def disambiguate_agent_names(agents: list) -> None:
+    """Ensure distinct conversation rows never share an identical label."""
+    counts = Counter()
+    for a in agents:
+        if isinstance(a, dict):
+            counts[str(a.get("name") or "")] += 1
+    for a in agents:
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name") or "")
+        if counts.get(name, 0) <= 1:
+            continue
+        cid = str(a.get("conversationId") or a.get("id") or "")
+        suf = short_id(cid)
+        if not suf:
+            continue
+        if name.endswith(f" · {suf}"):
+            continue
+        a["name"] = f"{name} · {suf}" if name else f"Agent · {suf}"
+        a["nameSource"] = f"{a.get('nameSource') or 'unknown'}+disambiguate"
+
+conversation_id = str(first("conversation_id", "conversationId", default="") or "")
+generation_id = str(first("generation_id", "generationId", default="") or "")
 roots = first("workspace_roots", "workspaceRoots", default=[]) or []
 if isinstance(roots, str):
     roots = [roots]
 workspace_root = roots[0] if roots else ""
-project = Path(workspace_root).name if workspace_root else "本机 Cursor IDE"
+project, name_source = resolve_display_name(conversation_id, workspace_root)
 
 stop_status = ""
 status = "unknown"
@@ -64,12 +151,13 @@ elif event == "stop":
 else:
     detail = f"unhandled:{event}"
 
-agent_id = conversation_id or (f"ws:{project}" if project else "local-ide")
+agent_id = conversation_id or (f"ws:{Path(workspace_root).name}" if workspace_root else "local-ide")
 updated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 agent = {
     "id": agent_id,
     "name": project,
+    "nameSource": name_source,
     "workspaceRoot": workspace_root or None,
     "status": status,
     "detail": detail,
@@ -106,6 +194,7 @@ if not isinstance(agents, list):
             "source": doc.get("source") or "hooks",
             "updatedAt": doc.get("updatedAt"),
             "stopStatus": doc.get("stopStatus"),
+            "conversationId": doc.get("conversationId"),
         })
 
 replaced = False
@@ -127,6 +216,15 @@ agents = sorted(
     reverse=True,
 )[:20]
 
+disambiguate_agent_names(agents)
+
+# Refresh `project` from the row we just wrote (may have · suffix).
+for a in agents:
+    if isinstance(a, dict) and a.get("id") == agent_id:
+        project = a.get("name") or project
+        name_source = a.get("nameSource") or name_source
+        break
+
 out = {
     "version": 1,
     "agents": agents,
@@ -138,7 +236,9 @@ out = {
     "stopStatus": stop_status or None,
     "id": agent_id,
     "name": project,
+    "nameSource": name_source,
     "workspaceRoot": workspace_root or None,
+    "conversationId": conversation_id or None,
 }
 out = {k: v for k, v in out.items() if v is not None}
 
