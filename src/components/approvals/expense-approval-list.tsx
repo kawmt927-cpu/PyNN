@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { format } from "date-fns";
 import { APPROVAL_TYPE_LABELS } from "@/lib/approvals/constants";
-import { EXPENSE_CLAIM_STATUS_LABELS } from "@/lib/expenses/labels";
+import {
+  EXPENSE_CLAIM_KIND_LABELS,
+  formatExpenseClaimStepStatus,
+} from "@/lib/expenses/labels";
 
 export type ExpenseApprovalListItem = {
   id: string;
@@ -12,6 +15,8 @@ export type ExpenseApprovalListItem = {
   paidAt?: Date | null;
   applicant: { name: string };
   manager?: { name: string } | null;
+  claimKind?: string;
+  currentStepName?: string | null;
 };
 
 type Props = {
@@ -36,7 +41,9 @@ export function ExpenseApprovalList({
         <li key={row.id} className="rounded-md border p-4 text-sm">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="rounded bg-muted px-2 py-0.5 text-xs">
-              {APPROVAL_TYPE_LABELS.EXPENSE}
+              {row.claimKind
+                ? EXPENSE_CLAIM_KIND_LABELS[row.claimKind] ?? APPROVAL_TYPE_LABELS.EXPENSE
+                : APPROVAL_TYPE_LABELS.EXPENSE}
             </span>
             <span className="font-medium">{row.title}</span>
             <span className="text-muted-foreground">·</span>
@@ -48,8 +55,13 @@ export function ExpenseApprovalList({
             </span>
           </div>
           <p className="text-muted-foreground">
-            状态：{EXPENSE_CLAIM_STATUS_LABELS[row.status] ?? row.status} · 金额 ¥
-            {row.totalAmount.toFixed(2)}
+            状态：
+            {formatExpenseClaimStepStatus(
+              row.status,
+              row.manager?.name,
+              row.currentStepName
+            )}{" "}
+            · 金额 ¥{row.totalAmount.toFixed(2)}
             {row.manager ? ` · 上级 ${row.manager.name}` : ""}
           </p>
           <div className="mt-3">

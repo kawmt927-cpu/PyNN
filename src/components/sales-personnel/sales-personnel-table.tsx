@@ -101,7 +101,7 @@ export function SalesPersonnelTable({ items }: Props) {
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
-            <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+            <tr className="border-b bg-muted/40 text-left align-middle text-muted-foreground">
               <th className="px-3 py-2">姓名</th>
               <th className="px-3 py-2">角色</th>
               <th className="px-3 py-2">手机 / 邮箱</th>
@@ -113,19 +113,21 @@ export function SalesPersonnelTable({ items }: Props) {
           <tbody>
             {items.map((item) => (
               <tr key={item.userId} className="border-b align-middle">
-                <td className="px-3 py-2 font-medium">{item.name}</td>
-                <td className="px-3 py-2">{ROLE_LABELS[item.role] ?? item.role}</td>
-                <td className="px-3 py-2 text-muted-foreground">
+                <td className="px-3 py-2 align-middle font-medium">{item.name}</td>
+                <td className="px-3 py-2 align-middle">
+                  {ROLE_LABELS[item.role] ?? item.role}
+                </td>
+                <td className="px-3 py-2 align-middle text-muted-foreground">
                   {item.phone || item.email || "—"}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 align-middle">
                   {item.enabled ? (
                     <span className="text-emerald-700">启用</span>
                   ) : (
                     <span className="text-muted-foreground">停用 / 无档案</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-center">
+                <td className="px-3 py-2 text-center align-middle">
                   {item.enabled ? (
                     <input
                       type="checkbox"
@@ -137,7 +139,7 @@ export function SalesPersonnelTable({ items }: Props) {
                     <span className="text-muted-foreground">—</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-center">
+                <td className="px-3 py-2 text-center align-middle">
                   {item.enabled ? (
                     <input
                       type="checkbox"

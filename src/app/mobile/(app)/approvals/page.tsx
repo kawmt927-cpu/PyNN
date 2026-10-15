@@ -218,7 +218,6 @@ export default async function MobileApprovalsPage({ searchParams }: Props) {
         step: step!,
         user: session.user,
         managerId: claim.managerId,
-        isFirstActiveStep: true,
       })
     );
   });
@@ -286,6 +285,7 @@ export default async function MobileApprovalsPage({ searchParams }: Props) {
                     "payout" in row
                       ? (row.payout as { paidAt: Date } | null | undefined)
                       : null;
+                  const step = getClaimCurrentStep(row);
                   return {
                     id: row.id,
                     title: row.title,
@@ -295,6 +295,8 @@ export default async function MobileApprovalsPage({ searchParams }: Props) {
                     paidAt: payout?.paidAt ?? null,
                     applicant: row.applicant,
                     manager: row.manager,
+                    claimKind: "claimKind" in row ? String(row.claimKind) : undefined,
+                    currentStepName: step?.name ?? null,
                   };
                 })}
               />

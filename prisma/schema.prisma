@@ -378,6 +378,7 @@ model User {
   personnelHrFilesUploaded PersonnelHrDocumentFile[] @relation("PersonnelHrDocumentUploader")
   personnelLeaves        PersonnelLeave[]                 @relation("PersonnelLeaveSubject")
   personnelLeavesCreated PersonnelLeave[]                 @relation("PersonnelLeaveCreator")
+  wecomCheckinAbsences   WecomCheckinAbsence[]
   customerClaimsRequested CustomerClaimRequest[] @relation("ClaimRequester")
   customerClaimsReviewed  CustomerClaimRequest[] @relation("ClaimReviewer")
   contractsAsOurRep       Contract[]             @relation("ContractOurRep")
@@ -495,8 +496,10 @@ model PersonnelMonthlyCostAdjustment {
   copiedSnapshot         String?
   /** 相对来源月的增减说明，如「基本工资增加了 500」 */
   changeSummary          String?
-  /** 关账时锁定的个人实际出勤天数 */
-  attendanceDays         Int?
+  /** 关账时锁定的个人实际出勤天数（可含半天，如 21.5）；可人工改） */
+  attendanceDays         Float?
+  /** 关账时系统按请假算出的出勤快照；与 attendanceDays 不同表示人工改过 */
+  attendanceDaysSystem   Float?
 
   // ─── 完整工资条明细（方案 C；不直接进项目人天公式）───
   /** 发放主体：北京 / 上海 / 未拆分 */
@@ -1241,6 +1244,9 @@ model Project {
   plannedEndAt    DateTime?
   actualStartAt   DateTime?
   actualEndAt     DateTime?
+  /** 合同约定实施周期；前期手工填，后续与合同字段联动 */
+  contractAgreedStartAt DateTime?
+  contractAgreedEndAt   DateTime?
   notes           String?
   /** 最近套用的项目模型（供模板任务可选项） */
   sourceModelId   String?
@@ -2161,6 +2167,8 @@ model ExpenseInvoice {
   /** 费用类别建议键，如 customer_visit / project_site / admin_office */
   categoryKey        String?
   amount             Decimal?
+  /** 审批人复核/核销金额；空则视为与 amount 一致 */
+  reviewedAmount     Decimal?
   /** OCR 识别金额；用户可改 amount，不一致时对照此值 */
   ocrAmount          Decimal?
   taxRatePercent     Decimal?
@@ -2277,6 +2285,60 @@ model CompanyCalendarYearSync {
   updatedAt  DateTime  @updatedAt
 }
 
+/** 企微请假同步运行状态（单行 id=default） */
+model WecomLeaveSyncState {
+  id              String   @id @default("default")
+  /** idle | ok | failed | skipped */
+  lastStatus      String   @default("idle")
+  lastMessage     String?
+  lastImported    Int      @default(0)
+  lastCancelled   Int      @default(0)
+  lastScanned     Int      @default(0)
+  /** pull | push | manual */
+  lastTrigger     String?
+  lastSyncedAt    DateTime?
+  updatedAt       DateTime @updatedAt
+}
+
+/**
+ * 企微打卡缺勤（缺卡/旷工）。
+ * 来自打卡日报，非审批模板；补卡校准后同步会清除。
+ * 不影响日报催交；计入人员成本出勤缺勤天数。
+ */
+model WecomCheckinAbsence {
+  id             String   @id @default(cuid())
+  userId         String
+  dayKey         String
+  /** 企微 exception：3=缺卡，4=旷工 */
+  exceptionCode  Int
+  /** active | cleared */
+  status         String   @default("active")
+  /** 缺勤占比，默认全天 1；缺卡多次仍按天计 */
+  dayFraction    Float    @default(1)
+  syncedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dayKey])
+  @@index([dayKey, status])
+  @@index([userId, status, dayKey])
+}
+
+/** 企微打卡缺勤同步状态（单行 id=default） */
+model WecomCheckinSyncState {
+  id            String   @id @default("default")
+  lastStatus    String   @default("idle")
+  lastMessage   String?
+  lastUpserted  Int      @default(0)
+  lastCleared   Int      @default(0)
+  lastScanned   Int      @default(0)
+  lastTrigger   String?
+  lastSyncedAt  DateTime?
+  updatedAt     DateTime @updatedAt
+}
+
 // ─── 请假假种与出勤 ───────────────────────────────────────
 
 /** 假种及计薪/出勤规则（行政可改系数） */
@@ -2336,6 +2398,11 @@ model PersonnelLeaveDay {
   /** 与假种同步冗余，便于查询时不 join */
   countsAsAbsence   Boolean @default(true)
   exemptDailyReport Boolean @default(true)
+  /**
+   * 当日请假占比：1=全天，0.5=半天。
+   * 免日报仅 dayFraction>=1；人员成本按该值计扣款/缺勤。
+   */
+  dayFraction Float   @default(1)
   /** manual | wecom */
   source      String  @default("manual")
   /** active | cancelled */

@@ -31,6 +31,7 @@ export const TRAVEL_EXPENSE_FEE_KEYS = [
 export const FEE_ONLY_KEYS = [
   "business_entertainment",
   "office",
+  "communication",
   "other",
 ] as const;
 
@@ -167,7 +168,7 @@ export const DEFAULT_EXPENSE_FEE_CATEGORIES: ExpenseFeeCategoryView[] = [
   },
   {
     key: "business_entertainment",
-    label: "商务招待",
+    label: "招待费",
     enforceHotelCap: false,
     suggestedTarget: "SALES",
     enabled: true,
@@ -175,11 +176,19 @@ export const DEFAULT_EXPENSE_FEE_CATEGORIES: ExpenseFeeCategoryView[] = [
   },
   {
     key: "office",
-    label: "办公杂费",
+    label: "办公费",
     enforceHotelCap: false,
     suggestedTarget: "NONE",
     enabled: true,
     sortOrder: 50,
+  },
+  {
+    key: "communication",
+    label: "通讯费",
+    enforceHotelCap: false,
+    suggestedTarget: "NONE",
+    enabled: true,
+    sortOrder: 55,
   },
   {
     key: "other",

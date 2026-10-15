@@ -101,7 +101,7 @@ export const DEFAULT_EXPENSE_FLOW_STEPS: Omit<ExpenseFlowStepConfig, "id">[] = [
   },
   {
     sortOrder: 1,
-    name: "行政确认",
+    name: "一级复核",
     mappings: [
       {
         id: "map-hr-confirm",
@@ -113,7 +113,7 @@ export const DEFAULT_EXPENSE_FLOW_STEPS: Omit<ExpenseFlowStepConfig, "id">[] = [
   },
   {
     sortOrder: 2,
-    name: "管理员打款",
+    name: "完成打款",
     mappings: [
       {
         id: "map-payout",

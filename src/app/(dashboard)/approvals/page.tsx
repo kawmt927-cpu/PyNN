@@ -482,15 +482,20 @@ export default async function ApprovalsPage({ searchParams }: Props) {
               />
             ) : type === APPROVAL_TYPE.EXPENSE ? (
               <ExpenseApprovalList
-                items={pendingExpensesFiltered.map((row) => ({
-                  id: row.id,
-                  title: row.title,
-                  status: row.status,
-                  totalAmount: Number(row.totalAmount),
-                  submittedAt: row.submittedAt,
-                  applicant: row.applicant,
-                  manager: row.manager,
-                }))}
+                items={pendingExpensesFiltered.map((row) => {
+                  const step = getClaimCurrentStep(row);
+                  return {
+                    id: row.id,
+                    title: row.title,
+                    status: row.status,
+                    totalAmount: Number(row.totalAmount),
+                    submittedAt: row.submittedAt,
+                    applicant: row.applicant,
+                    manager: row.manager,
+                    claimKind: row.claimKind,
+                    currentStepName: step?.name ?? null,
+                  };
+                })}
               />
             ) : (
               <CustomerClaimApprovalList items={pendingClaims} showActions />
@@ -524,16 +529,21 @@ export default async function ApprovalsPage({ searchParams }: Props) {
               />
             ) : type === APPROVAL_TYPE.EXPENSE ? (
               <ExpenseApprovalList
-                items={recentExpenses.map((row) => ({
-                  id: row.id,
-                  title: row.title,
-                  status: row.status,
-                  totalAmount: Number(row.totalAmount),
-                  submittedAt: row.submittedAt,
-                  paidAt: row.paidAt,
-                  applicant: row.applicant,
-                  manager: row.manager,
-                }))}
+                items={recentExpenses.map((row) => {
+                  const step = getClaimCurrentStep(row);
+                  return {
+                    id: row.id,
+                    title: row.title,
+                    status: row.status,
+                    totalAmount: Number(row.totalAmount),
+                    submittedAt: row.submittedAt,
+                    paidAt: row.paidAt,
+                    applicant: row.applicant,
+                    manager: row.manager,
+                    claimKind: row.claimKind,
+                    currentStepName: step?.name ?? null,
+                  };
+                })}
               />
             ) : (
               <CustomerClaimApprovalList items={recentClaims} />

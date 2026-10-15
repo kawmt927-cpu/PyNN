@@ -108,25 +108,95 @@ export const EXPENSE_CLAIM_STATUS_LABELS: Record<string, string> = {
   DRAFT: "草稿",
   PENDING_MANAGER: "待上级审批",
   REJECTED: "已驳回",
-  PENDING_HR: "待行政确认",
-  PENDING_PAYOUT: "待管理员打款",
-  PAID: "已打款结案",
+  PENDING_HR: "待一级复核",
+  PENDING_PAYOUT: "待打款",
+  PAID: "已通过",
 };
 
-/** 我的报销列表用的状态文案 */
+/** 我的报销首页四态筛选 */
+export type ExpenseMineChip =
+  | "all"
+  | "draft"
+  | "pending"
+  | "approved"
+  | "rejected";
+
+export const EXPENSE_MINE_CHIPS: Array<{
+  key: ExpenseMineChip;
+  label: string;
+}> = [
+  { key: "all", label: "全部" },
+  { key: "draft", label: "草稿" },
+  { key: "pending", label: "审批中" },
+  { key: "approved", label: "已通过" },
+  { key: "rejected", label: "已驳回" },
+];
+
+export function parseExpenseMineChip(
+  raw: string | undefined | null
+): ExpenseMineChip {
+  if (
+    raw === "draft" ||
+    raw === "pending" ||
+    raw === "approved" ||
+    raw === "rejected"
+  ) {
+    return raw;
+  }
+  return "all";
+}
+
+/** 对外四态（首页 chips / 列表徽标） */
+export function expenseClaimChipStatus(status: string): {
+  chip: Exclude<ExpenseMineChip, "all">;
+  label: string;
+} {
+  if (status === "DRAFT") return { chip: "draft", label: "草稿" };
+  if (status === "REJECTED") return { chip: "rejected", label: "已驳回" };
+  if (status === "PAID") return { chip: "approved", label: "已通过" };
+  if (
+    status === "PENDING_MANAGER" ||
+    status === "PENDING_HR" ||
+    status === "PENDING_PAYOUT"
+  ) {
+    return { chip: "pending", label: "审批中" };
+  }
+  return { chip: "pending", label: EXPENSE_CLAIM_STATUS_LABELS[status] ?? status };
+}
+
+export function expenseStatusesForMineChip(
+  chip: ExpenseMineChip
+): string[] | null {
+  if (chip === "all") return null;
+  if (chip === "draft") return ["DRAFT"];
+  if (chip === "rejected") return ["REJECTED"];
+  if (chip === "approved") return ["PAID"];
+  return ["PENDING_MANAGER", "PENDING_HR", "PENDING_PAYOUT"];
+}
+
+/** 我的报销列表用的状态文案（四态） */
 export function formatExpenseClaimListStatus(
   status: string,
-  managerName?: string | null
+  _managerName?: string | null
+): string {
+  return expenseClaimChipStatus(status).label;
+}
+
+/** 审批中心等需要细粒度步骤时使用 */
+export function formatExpenseClaimStepStatus(
+  status: string,
+  managerName?: string | null,
+  stepName?: string | null
 ): string {
   if (status === "DRAFT") return "草稿";
+  if (status === "REJECTED") return "已驳回";
+  if (status === "PAID") return "已通过";
   if (status === "PENDING_MANAGER") {
     const name = managerName?.trim();
     return name ? `当前待${name}审批` : "当前待上级审批";
   }
-  if (status === "REJECTED") return "已驳回";
-  if (status === "PENDING_HR") return "待行政确认";
-  if (status === "PENDING_PAYOUT") return "待管理员打款";
-  if (status === "PAID") return "已打款";
+  if (status === "PENDING_HR") return stepName?.trim() || "待一级复核";
+  if (status === "PENDING_PAYOUT") return stepName?.trim() || "待打款";
   return EXPENSE_CLAIM_STATUS_LABELS[status] ?? status;
 }
 

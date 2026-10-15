@@ -30,6 +30,7 @@ import {
 } from "@/lib/contracts/invoice-ocr";
 import { getExpenseFeeCategoryByKey } from "@/lib/expenses/fee-categories";
 import { evaluateHotelCapForInvoices } from "@/lib/expenses/hotel-cap";
+import { validateTripDateRanges } from "@/lib/expenses/trip-date-rules";
 import {
   approvalRecordStepForFlow,
   approverCandidateFilter,
@@ -182,7 +183,11 @@ export async function createExpenseClaimDraft(
       claimKind === "TRAVEL"
         ? { kind: "OTHER" as const, categoryKey: "lodging", title: "住宿费" }
         : claimKind === "FEE"
-          ? { kind: "OTHER" as const, categoryKey: "other", title: "其他" }
+          ? {
+              kind: "OTHER" as const,
+              categoryKey: "business_entertainment",
+              title: "招待费",
+            }
           : {
               kind: "OTHER" as const,
               categoryKey: "lodging",
@@ -204,6 +209,111 @@ export async function createExpenseClaimDraft(
     return { id: claim.id };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "创建失败" };
+  }
+}
+
+/** 复用已有单据的行程与费用明细，生成新草稿 */
+export async function reuseExpenseClaimDraft(
+  sourceClaimId: string
+): Promise<ActionResult & { id?: string }> {
+  try {
+    const session = await requireRole([...ALL_AUTHED_ROLES]);
+    if (!(await hasPermission(session.user.role, "expense.access"))) {
+      return { error: "无权使用报销功能" };
+    }
+    const source = await prisma.expenseClaim.findUnique({
+      where: { id: sourceClaimId },
+      include: {
+        trips: { orderBy: { sortOrder: "asc" } },
+        items: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            invoices: { orderBy: { sortOrder: "asc" } },
+          },
+        },
+      },
+    });
+    if (!source) return { error: "源报销单不存在" };
+    const canReuse =
+      source.applicantId === session.user.id ||
+      source.beneficiaryId === session.user.id;
+    if (!canReuse) return { error: "无权复用该报销单" };
+    if (source.status === "DRAFT") {
+      return { error: "请选择已提交过的报销单进行复用" };
+    }
+
+    const claim = await prisma.expenseClaim.create({
+      data: {
+        applicantId: session.user.id,
+        beneficiaryId: session.user.id,
+        projectId: source.claimKind === "PROJECT" ? source.projectId : null,
+        claimKind: source.claimKind,
+        title: source.title,
+        description: source.description,
+        status: "DRAFT",
+      },
+    });
+
+    const itemIdMap = new Map<string, string>();
+    for (const item of source.items) {
+      const created = await prisma.expenseClaimItem.create({
+        data: {
+          claimId: claim.id,
+          kind: item.kind,
+          sortOrder: item.sortOrder,
+          title: item.title,
+          categoryKey: item.categoryKey,
+          customerId: item.customerId,
+          projectId: item.projectId,
+          notes: item.notes,
+        },
+      });
+      itemIdMap.set(item.id, created.id);
+
+      for (const inv of item.invoices) {
+        const amount = inv.amount != null ? Number(inv.amount) : null;
+        await prisma.expenseInvoice.create({
+          data: {
+            claimId: claim.id,
+            itemId: created.id,
+            fileName: amount != null ? `复用额度-${amount.toFixed(2)}` : "复用额度",
+            mimeType: "text/plain",
+            sizeBytes: 0,
+            storageKey: `manual://reuse-${created.id}-${inv.sortOrder}`,
+            categoryKey: inv.categoryKey,
+            amount: inv.amount,
+            costTarget: inv.costTarget,
+            salesCostType: inv.salesCostType,
+            customerId: inv.customerId,
+            projectId: inv.projectId,
+            costCategory: inv.costCategory,
+            sortOrder: inv.sortOrder,
+          },
+        });
+      }
+    }
+
+    for (const trip of source.trips) {
+      await prisma.expenseTrip.create({
+        data: {
+          claimId: claim.id,
+          itemId: trip.itemId ? itemIdMap.get(trip.itemId) ?? null : null,
+          sortOrder: trip.sortOrder,
+          startDate: trip.startDate,
+          endDate: trip.endDate,
+          fromCity: trip.fromCity,
+          city: trip.city,
+          customerId: trip.customerId,
+          description: trip.description,
+        },
+      });
+    }
+
+    await recalculateClaimTotal(claim.id);
+    revalidateExpense(claim.id, claim.projectId);
+    return { id: claim.id };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "复用失败" };
   }
 }
 
@@ -435,17 +545,35 @@ export async function addExpenseTrip(
       if (!item) return { error: "费用行不存在" };
     }
 
-    const startDate = new Date(String(formData.get("startDate") ?? ""));
+    const startRaw = String(formData.get("startDate") ?? "").trim();
     const endRaw = String(formData.get("endDate") ?? "").trim();
-    const endDate = endRaw ? new Date(endRaw) : startDate;
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      return { error: "行程日期无效" };
+    if (!startRaw) return { error: "请填写出发日期" };
+    const startDate = parseExpenseDateInput(startRaw);
+    const endDate = parseExpenseDateInput(endRaw || startRaw);
+    if (!startDate || !endDate) {
+      return { error: "行程日期无效（请使用日历选择）" };
     }
-    if (endDate < startDate) return { error: "到达日期不能早于出发日期" };
+    if (endDate < startDate) return { error: "出发日期不能晚于到达日期" };
     const fromCity = String(formData.get("fromCity") ?? "").trim() || null;
     const city = String(formData.get("city") ?? "").trim() || null;
     if (!fromCity) return { error: "请填写出发地" };
     if (!city) return { error: "请填写到达地点" };
+    const existingTrips = await prisma.expenseTrip.findMany({
+      where: { claimId },
+      select: { startDate: true, endDate: true },
+      orderBy: [{ startDate: "asc" }, { endDate: "asc" }],
+    });
+    const overlapCheck = validateTripDateRanges([
+      ...existingTrips.map((t) => ({
+        startDate: formatExpenseDateKey(t.startDate),
+        endDate: formatExpenseDateKey(t.endDate),
+      })),
+      {
+        startDate: formatExpenseDateKey(startDate),
+        endDate: formatExpenseDateKey(endDate),
+      },
+    ]);
+    if (overlapCheck.error) return { error: overlapCheck.error };
     const customerId = String(formData.get("customerId") ?? "").trim() || null;
     const description = String(formData.get("description") ?? "").trim() || null;
     const maxOrder = await prisma.expenseTrip.aggregate({
@@ -488,17 +616,35 @@ export async function updateExpenseTrip(tripId: string, formData: FormData): Pro
     const loaded = await requireEditableClaim(trip.claimId);
     if ("error" in loaded && loaded.error) return { error: loaded.error };
 
-    const startDate = new Date(String(formData.get("startDate") ?? ""));
+    const startRaw = String(formData.get("startDate") ?? "").trim();
     const endRaw = String(formData.get("endDate") ?? "").trim();
-    const endDate = endRaw ? new Date(endRaw) : startDate;
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      return { error: "行程日期无效" };
+    if (!startRaw) return { error: "请填写出发日期" };
+    const startDate = parseExpenseDateInput(startRaw);
+    const endDate = parseExpenseDateInput(endRaw || startRaw);
+    if (!startDate || !endDate) {
+      return { error: "行程日期无效（请使用日历选择）" };
     }
-    if (endDate < startDate) return { error: "到达日期不能早于出发日期" };
+    if (endDate < startDate) return { error: "出发日期不能晚于到达日期" };
     const fromCity = String(formData.get("fromCity") ?? "").trim() || null;
     const city = String(formData.get("city") ?? "").trim() || null;
     if (!fromCity) return { error: "请填写出发地" };
     if (!city) return { error: "请填写到达地点" };
+    const siblings = await prisma.expenseTrip.findMany({
+      where: { claimId: trip.claimId, id: { not: tripId } },
+      select: { startDate: true, endDate: true },
+      orderBy: [{ startDate: "asc" }, { endDate: "asc" }],
+    });
+    const overlapCheck = validateTripDateRanges([
+      ...siblings.map((t) => ({
+        startDate: formatExpenseDateKey(t.startDate),
+        endDate: formatExpenseDateKey(t.endDate),
+      })),
+      {
+        startDate: formatExpenseDateKey(startDate),
+        endDate: formatExpenseDateKey(endDate),
+      },
+    ]);
+    if (overlapCheck.error) return { error: overlapCheck.error };
     await prisma.expenseTrip.update({
       where: { id: tripId },
       data: {
@@ -515,6 +661,37 @@ export async function updateExpenseTrip(tripId: string, formData: FormData): Pro
   } catch (error) {
     return { error: error instanceof Error ? error.message : "更新行程失败" };
   }
+}
+
+function formatExpenseDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 解析 `<input type="date">` 的 YYYY-MM-DD 为本地日历日，避免 UTC 歧义 */
+function parseExpenseDateInput(value: string): Date | null {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const dt = new Date(y, mo - 1, d);
+    if (
+      Number.isNaN(dt.getTime()) ||
+      dt.getFullYear() !== y ||
+      dt.getMonth() !== mo - 1 ||
+      dt.getDate() !== d
+    ) {
+      return null;
+    }
+    return dt;
+  }
+  const dt = new Date(s);
+  return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
 export async function saveExpenseTrips(
@@ -548,14 +725,17 @@ export async function saveExpenseTrips(
 
     for (let i = 0; i < tripsInput.length; i++) {
       const row = tripsInput[i];
-      const startDate = new Date(String(row.startDate ?? ""));
+      const startRaw = String(row.startDate ?? "").trim();
       const endRaw = String(row.endDate ?? "").trim();
-      const endDate = endRaw ? new Date(endRaw) : startDate;
-      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-        return { error: `第 ${i + 1} 段行程日期无效` };
+      if (!startRaw) {
+        return { error: `第 ${i + 1} 段请填写出发日期` };
       }
-      if (endDate < startDate) {
-        return { error: `第 ${i + 1} 段到达日期不能早于出发日期` };
+      const startDate = parseExpenseDateInput(startRaw);
+      const endDate = parseExpenseDateInput(endRaw || startRaw);
+      if (!startDate || !endDate) {
+        return {
+          error: `第 ${i + 1} 段行程日期无效（请使用日历选择 YYYY-MM-DD）`,
+        };
       }
       const fromCity = String(row.fromCity ?? "").trim();
       const city = String(row.city ?? "").trim();
@@ -564,6 +744,14 @@ export async function saveExpenseTrips(
       const id = String(row.id ?? "").trim() || null;
       parsed.push({ id, startDate, endDate, fromCity, city });
     }
+
+    const dateCheck = validateTripDateRanges(
+      tripsInput.map((row) => ({
+        startDate: String(row.startDate ?? "").trim(),
+        endDate: String(row.endDate ?? "").trim() || String(row.startDate ?? "").trim(),
+      }))
+    );
+    if (dateCheck.error) return { error: dateCheck.error };
 
     parsed.sort((a, b) => {
       const ds = a.startDate.getTime() - b.startDate.getTime();
@@ -789,6 +977,61 @@ export async function updateExpenseInvoiceMeta(
     });
     await recalculateClaimTotal(invoice.claimId);
     revalidateExpense(invoice.claimId);
+    return {};
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "保存失败" };
+  }
+}
+
+/** 审批人填写复核/核销金额（不改申请金额） */
+export async function updateExpenseInvoiceReviewedAmount(
+  invoiceId: string,
+  formData: FormData
+): Promise<ActionResult> {
+  try {
+    const session = await requireRole([...ALL_AUTHED_ROLES]);
+    const invoice = await prisma.expenseInvoice.findUnique({
+      where: { id: invoiceId },
+      include: { claim: true },
+    });
+    if (!invoice) return { error: "明细不存在" };
+    const claim = invoice.claim;
+    if (
+      claim.status !== "PENDING_MANAGER" &&
+      claim.status !== "PENDING_HR" &&
+      claim.status !== "PENDING_PAYOUT"
+    ) {
+      return { error: "当前状态不可填写复核金额" };
+    }
+    const step = getClaimCurrentStep(claim);
+    const stepIndex = getClaimCurrentStepIndex(claim);
+    if (
+      !step ||
+      !userCanActOnFlowStep({
+        step,
+        user: session.user,
+        managerId: claim.managerId,
+        isFirstActiveStep: stepIndex === 0,
+      })
+    ) {
+      return { error: "无权填写复核金额" };
+    }
+
+    const raw = String(formData.get("reviewedAmount") ?? "").trim();
+    if (!raw) {
+      await prisma.expenseInvoice.update({
+        where: { id: invoiceId },
+        data: { reviewedAmount: null },
+      });
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) return { error: "复核金额无效" };
+      await prisma.expenseInvoice.update({
+        where: { id: invoiceId },
+        data: { reviewedAmount: n },
+      });
+    }
+    revalidateExpense(claim.id);
     return {};
   } catch (error) {
     return { error: error instanceof Error ? error.message : "保存失败" };

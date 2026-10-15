@@ -4,19 +4,23 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ALL_AUTHED_ROLES,
-  EXPENSE_CLAIM_KIND_LABELS,
-  formatExpenseClaimListStatus,
+  EXPENSE_MINE_CHIPS,
+  expenseStatusesForMineChip,
+  parseExpenseMineChip,
+  type ExpenseMineChip,
 } from "@/lib/expenses/labels";
 import { CreateExpenseClaimButton } from "@/components/expenses/create-expense-claim-button";
 import { ExpenseClaimTable } from "@/components/expenses/expense-claim-list";
+import { ExpenseMineStatusFilter } from "@/components/expenses/expense-mine-status-filter";
 import { isExpenseFeatureEnabled } from "@/lib/expenses/feature-flag";
-import {
-  getClaimCurrentStep,
-  userCanActOnFlowStep,
-} from "@/lib/expenses/approval-flow";
+import { toExpenseMineListRow, formatExpensePlaces } from "@/lib/expenses/list-rows";
 import { hasPermission } from "@/lib/rbac/has-permission";
 
-export default async function ExpensesPage() {
+type Props = {
+  searchParams: Promise<{ status?: string }>;
+};
+
+export default async function ExpensesPage({ searchParams }: Props) {
   if (!isExpenseFeatureEnabled()) {
     redirect("/today-work");
   }
@@ -25,164 +29,150 @@ export default async function ExpensesPage() {
     redirect("/today-work");
   }
   const userId = session.user.id;
+  const { status: statusRaw } = await searchParams;
+  const activeChip = parseExpenseMineChip(statusRaw);
+  const statusFilter = expenseStatusesForMineChip(activeChip);
 
-  const [mine, toApprove, pendingHrAll, pendingPayAll, projects] = await Promise.all([
+  const mineWhere = {
+    OR: [{ applicantId: userId }, { beneficiaryId: userId }],
+  };
+
+  const [mineAll, mine, projects, recentSource] = await Promise.all([
+    prisma.expenseClaim.findMany({
+      where: mineWhere,
+      select: { status: true },
+      take: 500,
+    }),
     prisma.expenseClaim.findMany({
       where: {
-        OR: [{ applicantId: userId }, { beneficiaryId: userId }],
+        ...mineWhere,
+        ...(statusFilter ? { status: { in: statusFilter as never } } : {}),
       },
       orderBy: { updatedAt: "desc" },
       take: 80,
       include: {
-        manager: { select: { name: true } },
-        beneficiary: { select: { name: true } },
-        applicant: { select: { name: true } },
-        project: { select: { name: true } },
+        trips: {
+          select: {
+            fromCity: true,
+            city: true,
+            startDate: true,
+            endDate: true,
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+        items: {
+          select: { categoryKey: true, title: true },
+          orderBy: { sortOrder: "asc" },
+        },
       },
-    }),
-    prisma.expenseClaim.findMany({
-      where: { managerId: userId, status: "PENDING_MANAGER" },
-      orderBy: { submittedAt: "asc" },
-      take: 50,
-      include: {
-        applicant: { select: { name: true } },
-        manager: { select: { name: true } },
-      },
-    }),
-    prisma.expenseClaim.findMany({
-      where: { status: "PENDING_HR" },
-      orderBy: { submittedAt: "asc" },
-      take: 80,
-      include: { applicant: { select: { name: true } }, manager: { select: { name: true } } },
-    }),
-    prisma.expenseClaim.findMany({
-      where: { status: "PENDING_PAYOUT" },
-      orderBy: { submittedAt: "asc" },
-      take: 80,
-      include: { applicant: { select: { name: true } }, manager: { select: { name: true } } },
     }),
     prisma.project.findMany({
       select: { id: true, name: true },
       orderBy: { updatedAt: "desc" },
       take: 200,
     }),
+    prisma.expenseClaim.findFirst({
+      where: {
+        OR: [{ applicantId: userId }, { beneficiaryId: userId }],
+        status: { in: ["PENDING_MANAGER", "PENDING_HR", "PENDING_PAYOUT", "PAID"] },
+      },
+      orderBy: { submittedAt: "desc" },
+      include: {
+        trips: {
+          select: { fromCity: true, city: true },
+          orderBy: { sortOrder: "asc" },
+        },
+      },
+    }),
   ]);
 
-  const toHr = pendingHrAll.filter((c) => {
-    const step = getClaimCurrentStep(c);
-    return (
-      step &&
-      userCanActOnFlowStep({
-        step,
-        user: session.user,
-        managerId: c.managerId,
-      })
-    );
-  });
-  const toPay = pendingPayAll.filter((c) => {
-    const step = getClaimCurrentStep(c);
-    return (
-      step &&
-      userCanActOnFlowStep({
-        step,
-        user: session.user,
-        managerId: c.managerId,
-      })
-    );
-  });
+  const counts: Record<ExpenseMineChip, number> = {
+    all: mineAll.length,
+    draft: 0,
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+  };
+  for (const row of mineAll) {
+    if (row.status === "DRAFT") counts.draft += 1;
+    else if (row.status === "REJECTED") counts.rejected += 1;
+    else if (row.status === "PAID") counts.approved += 1;
+    else if (
+      row.status === "PENDING_MANAGER" ||
+      row.status === "PENDING_HR" ||
+      row.status === "PENDING_PAYOUT"
+    ) {
+      counts.pending += 1;
+    }
+  }
 
-  const mineRows = mine.map((c) => ({
-    id: c.id,
-    kindLabel: EXPENSE_CLAIM_KIND_LABELS[c.claimKind] ?? c.claimKind,
-    title: c.title,
-    amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
-    statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
-    at: c.updatedAt,
-    canDelete:
-      c.applicantId === userId && (c.status === "DRAFT" || c.status === "REJECTED"),
-  }));
+  const mineRows = mine.map((c) => toExpenseMineListRow(c, userId));
+  const filteredCount =
+    activeChip === "all" ? counts.all : counts[activeChip];
+
+  const recentReuse = recentSource
+    ? {
+        id: recentSource.id,
+        claimKind: recentSource.claimKind as "TRAVEL" | "FEE" | "PROJECT",
+        title: recentSource.title,
+        submittedAt: recentSource.submittedAt?.toISOString() ?? null,
+        placesLabel: formatExpensePlaces(recentSource.trips),
+      }
+    : null;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">报销</h1>
+          <h1 className="text-2xl font-semibold">
+            我的报销（{counts.all}）
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            审批流程可在「系统配置 → 报销设置」中调整；提交时锁定流程快照。草稿可删除，指定上级审批时填写成本归属。
+            待办请在「通知与审批」处理。审批流程可在系统配置中调整。
           </p>
         </div>
-        <CreateExpenseClaimButton projects={projects} />
+        <CreateExpenseClaimButton
+          projects={projects}
+          recentReuse={recentReuse}
+        />
       </div>
 
-      {toApprove.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>待我审批（{toApprove.length}）</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExpenseClaimTable
-              rows={toApprove.map((c) => ({
-                id: c.id,
-                title: c.title,
-                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
-                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
-                at: c.submittedAt,
-              }))}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {toHr.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>待我确认（{toHr.length}）</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExpenseClaimTable
-              rows={toHr.map((c) => ({
-                id: c.id,
-                title: c.title,
-                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
-                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
-                at: c.submittedAt,
-              }))}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {toPay.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>待我打款（{toPay.length}）</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExpenseClaimTable
-              rows={toPay.map((c) => ({
-                id: c.id,
-                title: c.title,
-                amountLabel: `¥${Number(c.totalAmount).toFixed(2)}`,
-                statusLabel: formatExpenseClaimListStatus(c.status, c.manager?.name),
-                at: c.submittedAt,
-              }))}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
+      <ExpenseMineStatusFilter counts={counts} active={activeChip} />
 
       <Card>
-        <CardHeader>
-          <CardTitle>我的报销（{mineRows.length}）</CardTitle>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium text-muted-foreground">
+            {EXPENSE_MINE_CHIPS.find((c) => c.key === activeChip)?.label ??
+              "全部"}
+            （{filteredCount}）
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {mineRows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">暂无报销单，点击右上角新建。</p>
+            <div className="rounded-lg border border-dashed px-4 py-10 text-center">
+              <p className="text-sm text-muted-foreground">
+                {activeChip === "all"
+                  ? "该分组下暂无报销记录"
+                  : "该分组下暂无报销记录"}
+              </p>
+              <div className="mt-4 flex justify-center">
+                <CreateExpenseClaimButton
+                  projects={projects}
+                  recentReuse={recentReuse}
+                  label="新建一笔报销"
+                  variant="outline"
+                />
+              </div>
+            </div>
           ) : (
             <ExpenseClaimTable rows={mineRows} />
           )}
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">
+        系统会在每天 09:00 推送待处理提醒；草稿自动保存最近 30 天，过期后自动清理。
+      </p>
     </div>
   );
 }

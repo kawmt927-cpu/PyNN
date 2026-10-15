@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PersonnelCostBatchEditor } from "@/components/personnel/personnel-cost-batch-editor";
 import { PersonnelInfoTable } from "@/components/personnel/personnel-info-table";
@@ -10,6 +10,7 @@ import {
   PersonnelTabs,
   type PersonnelTabId,
 } from "@/components/personnel/personnel-tabs";
+import { HelpHint } from "@/components/ui/help-hint";
 import { getPersonAllocationSplit } from "@/lib/projects/cost-summary";
 import {
   canAccessPersonnelPage,
@@ -152,6 +153,7 @@ export default async function PersonnelPage({ searchParams }: Props) {
           adjustmentAmount: true,
           leaveDeductionAmount: true,
           attendanceDays: true,
+          attendanceDaysSystem: true,
           notes: true,
           confirmedAt: true,
           payrollEntity: true,
@@ -237,9 +239,16 @@ export default async function PersonnelPage({ searchParams }: Props) {
       const leaveDeductionAmount = monthConfirmed
         ? Number(monthRecord?.leaveDeductionAmount ?? 0)
         : leavePreview.leaveDeductionTotal;
+      const systemAttendanceDays = leavePreview.attendanceDays;
       const attendanceDays = monthConfirmed
-        ? (monthRecord?.attendanceDays ?? leavePreview.attendanceDays)
-        : leavePreview.attendanceDays;
+        ? (monthRecord?.attendanceDays ?? systemAttendanceDays)
+        : systemAttendanceDays;
+      // 历史无系统快照时，用锁定出勤本身，避免误标「已手工修改」
+      const attendanceDaysSystem = monthConfirmed
+        ? (monthRecord?.attendanceDaysSystem ??
+          monthRecord?.attendanceDays ??
+          systemAttendanceDays)
+        : systemAttendanceDays;
       const absenceDays = leavePreview.absenceDays;
       const monthlyCost = computeMonthlyCost({
         baseSalary,
@@ -303,6 +312,7 @@ export default async function PersonnelPage({ searchParams }: Props) {
         monthAdjustment,
         leaveDeductionAmount,
         attendanceDays,
+        attendanceDaysSystem,
         absenceDays,
         changeSummary: monthRecord?.changeSummary ?? null,
         monthlyCost,
@@ -324,10 +334,16 @@ export default async function PersonnelPage({ searchParams }: Props) {
     return a.name.localeCompare(b.name, "zh-CN");
   });
 
-  /** 成本页：在职 + 本月已有成本记录的离职人员（便于关账） */
+  /**
+   * 成本页：在职默认纳入；离职默认不出现。
+   * 仅当本月已有成本记录（含人事手动「添加离职人员」）时才显示离职人员；下月无记录则仍默认不出现。
+   */
   const costItems = items.filter(
     (item) => !item.resigned || item.hasMonthRecord
   );
+  const resignedCandidates = items
+    .filter((item) => item.resigned && !item.hasMonthRecord)
+    .map((item) => ({ userId: item.userId, name: item.name }));
   const recorded = costItems.filter((item) => item.hasMonthRecord);
   const monthFullyConfirmed =
     recorded.length > 0 && recorded.every((item) => item.monthConfirmed);
@@ -335,16 +351,28 @@ export default async function PersonnelPage({ searchParams }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">
-            {activeTab === "costs" ? "人员成本" : "实施人员"}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {activeTab === "info"
-              ? "仅含系统角色为项目经理、项目人员的账号（含离职）；离职且当月无排期时不展示投入数值。类型由项目管理员维护。"
-              : "按月维护人员成本。未确认月份可直接改奖金、扣罚等，点「保存」并二次确认后整月一并生效；确认前不进项目人天核算。"}
-          </p>
-        </div>
+        <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold">
+          {activeTab === "costs" ? "人员成本" : "实施人员"}
+          <HelpHint
+            label={activeTab === "costs" ? "人员成本说明" : "实施人员说明"}
+            content={
+              activeTab === "info" ? (
+                <p>
+                  仅含系统角色为项目经理、项目人员的账号（含离职）；离职且当月无排期时不展示投入数值。类型由项目管理员维护。
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <p>
+                    按月维护人员成本。未确认月份可直接改奖金、扣罚等，点「保存」并二次确认后整月一并生效；确认前不进项目人天核算。
+                  </p>
+                  <p>
+                    离职人员默认不列入；离职当月需关账时可用「添加离职人员」（仅本月，下月仍默认不出现）。
+                  </p>
+                </div>
+              )
+            }
+          />
+        </h1>
         {activeTab === "costs" && canCosts ? (
           <Button asChild variant="outline" size="sm">
             <Link href="/admin/cost-ledger">成本台账</Link>
@@ -361,15 +389,35 @@ export default async function PersonnelPage({ searchParams }: Props) {
 
       {activeTab === "info" ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">
-              人员信息
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                ({items.length} 人 · {year}年{month}月 · 公司出勤 {monthWorkdays} 天 · 事后关账)
+          <CardContent className="space-y-3 p-6">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h3 className="inline-flex items-center gap-1.5 text-lg font-semibold leading-none tracking-tight">
+                人员信息
+                <HelpHint
+                  label="人员信息说明"
+                  content={
+                    <div className="space-y-2">
+                      <p>
+                        {canInfo
+                          ? "维护人员类型；展示当月投入概况。"
+                          : "查看人员类型与当月投入概况（只读）。"}
+                        {canCosts
+                          ? " 成本明细请到「人员成本」标签编辑。"
+                          : " 月成本由行政人事在「人员成本」中维护。"}
+                      </p>
+                      <p>
+                        离职且当月无排期时投入数值显示为 —。当前 {year}年{month}月（工作日{" "}
+                        {monthWorkdays} 天）。
+                      </p>
+                    </div>
+                  }
+                />
+              </h3>
+              <span className="text-sm text-muted-foreground">
+                ({items.length} 人 · {year}年{month}月 · 公司出勤 {monthWorkdays} 天 ·
+                事后关账)
               </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+            </div>
             <PersonnelInfoTable
               items={items.map((item) => ({
                 userId: item.userId,
@@ -385,9 +433,6 @@ export default async function PersonnelPage({ searchParams }: Props) {
                 resigned: item.resigned,
                 hideMonthMetrics: item.hideMonthMetrics,
               }))}
-              year={year}
-              month={month}
-              monthWorkdays={monthWorkdays}
               canEditTypes={canInfo}
               showCostColumns={canCosts}
             />
@@ -416,28 +461,45 @@ export default async function PersonnelPage({ searchParams }: Props) {
             )}
           </div>
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">
-                月成本批量编辑
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({costItems.length} 人 · {year}年{month}月 · 公司出勤 {monthWorkdays} 天
-                  {costItems.length > 0
-                    ? monthFullyConfirmed
-                      ? " · 已确认生效"
-                      : " · 待确认"
-                    : ""}
-                  )
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+            <CardContent className="p-6">
               <PersonnelCostBatchEditor
                 key={`${year}-${month}`}
-                items={costItems}
+                items={costItems.map((item) => ({
+                  userId: item.userId,
+                  name: item.name,
+                  email: item.email,
+                  contributionBase: item.contributionBase,
+                  baseSalary: item.baseSalary,
+                  socialSecurityCompany: item.socialSecurityCompany,
+                  housingFundCompany: item.housingFundCompany,
+                  bonus: item.bonus,
+                  penaltyAmount: item.penaltyAmount,
+                  monthAdjustment: item.monthAdjustment,
+                  leaveDeductionAmount: item.leaveDeductionAmount,
+                  attendanceDays: item.attendanceDays,
+                  attendanceDaysSystem: item.attendanceDaysSystem,
+                  absenceDays: item.absenceDays,
+                  changeSummary: item.changeSummary,
+                  hasMonthRecord: item.hasMonthRecord,
+                  monthConfirmed: item.monthConfirmed,
+                  resigned: item.resigned,
+                  weekEffectiveDays: item.weekEffectiveDays,
+                  weekCost: item.weekCost,
+                  projectCount: item.projectCount,
+                  payrollSlip: item.payrollSlip,
+                }))}
                 year={year}
                 month={month}
                 monthWorkdays={monthWorkdays}
                 monthFullyConfirmed={monthFullyConfirmed}
+                resignedCandidates={resignedCandidates}
+                titleMeta={`${costItems.length} 人 · ${year}年${month}月 · 公司出勤 ${monthWorkdays} 天${
+                  costItems.length > 0
+                    ? monthFullyConfirmed
+                      ? " · 已确认生效"
+                      : " · 待确认"
+                    : ""
+                }`}
               />
             </CardContent>
           </Card>

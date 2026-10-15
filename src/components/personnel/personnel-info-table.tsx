@@ -39,9 +39,6 @@ function typeValue(value: PersonnelType | null | undefined): string {
 
 type Props = {
   items: PersonnelInfoItem[];
-  year: number;
-  month: number;
-  monthWorkdays: number;
   /** 是否可编辑人员类型；默认 true */
   canEditTypes?: boolean;
   /** 是否展示薪资/人力成本列；项目管理员仅看投入概况 */
@@ -50,9 +47,6 @@ type Props = {
 
 export function PersonnelInfoTable({
   items,
-  year,
-  month,
-  monthWorkdays,
   canEditTypes = true,
   showCostColumns = true,
 }: Props) {
@@ -95,30 +89,21 @@ export function PersonnelInfoTable({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          {canEditTypes
-            ? "维护人员类型；展示当月投入概况。"
-            : "查看人员类型与当月投入概况（只读）。"}
-          {showCostColumns
-            ? " 成本明细请到「人员成本」标签编辑。"
-            : " 月成本由行政人事在「人员成本」中维护。"}
-          {` 当前 ${year}年${month}月（工作日 ${monthWorkdays} 天）。`}
-        </p>
-        {canEditTypes && isDirty ? (
-          <Button type="button" onClick={handleSave} disabled={pending}>
+    <div className="space-y-3">
+      {canEditTypes && isDirty ? (
+        <div className="flex items-center justify-end">
+          <Button type="button" size="sm" onClick={handleSave} disabled={pending}>
             {pending ? "保存中…" : "保存类型"}
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full min-w-[700px] text-sm">
           <thead>
-            <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+            <tr className="border-b bg-muted/40 text-left align-middle text-muted-foreground">
               <th className="px-3 py-2 text-center">姓名</th>
               <th className="px-2 py-2">类型</th>
               {showCostColumns ? (
@@ -144,7 +129,7 @@ export function PersonnelInfoTable({
                   item.resigned && "bg-muted/30 text-muted-foreground"
                 )}
               >
-                <td className="px-3 py-2 text-center font-medium">
+                <td className="px-3 py-2 text-center align-middle font-medium">
                   <span className="inline-flex flex-wrap items-center justify-center gap-1.5">
                     <span className={item.resigned ? "text-muted-foreground" : undefined}>
                       {item.name}
@@ -156,7 +141,7 @@ export function PersonnelInfoTable({
                     ) : null}
                   </span>
                 </td>
-                <td className="px-2 py-2 min-w-[130px]">
+                <td className="min-w-[130px] px-2 py-2 align-middle">
                   {canEditTypes && !item.resigned ? (
                     <SelectField
                       id={`info-type-${item.userId}`}
@@ -180,21 +165,21 @@ export function PersonnelInfoTable({
                 </td>
                 {showCostColumns ? (
                   <>
-                    <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
+                    <td className="whitespace-nowrap px-2 py-2 align-middle text-muted-foreground">
                       {item.hideMonthMetrics
                         ? "—"
                         : item.monthlyCost != null
                           ? formatAmount(item.monthlyCost)
                           : "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
+                    <td className="whitespace-nowrap px-2 py-2 align-middle text-muted-foreground">
                       {item.hideMonthMetrics
                         ? "—"
                         : item.monthAdjustment !== 0
                           ? formatAmount(item.monthAdjustment)
                           : "—"}
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap font-medium">
+                    <td className="whitespace-nowrap px-2 py-2 align-middle font-medium">
                       {item.hideMonthMetrics
                         ? "—"
                         : item.effectiveMonthlyCost != null
@@ -203,11 +188,11 @@ export function PersonnelInfoTable({
                     </td>
                   </>
                 ) : null}
-                <td className="px-2 py-2 whitespace-nowrap">
+                <td className="whitespace-nowrap px-2 py-2 align-middle">
                   {item.hideMonthMetrics ? "—" : item.monthEffectiveDays}
                 </td>
                 {showCostColumns ? (
-                  <td className="px-2 py-2 whitespace-nowrap">
+                  <td className="whitespace-nowrap px-2 py-2 align-middle">
                     {item.hideMonthMetrics
                       ? "—"
                       : item.monthCost > 0
@@ -215,7 +200,7 @@ export function PersonnelInfoTable({
                         : "—"}
                   </td>
                 ) : null}
-                <td className="px-2 py-2">
+                <td className="px-2 py-2 align-middle">
                   {item.hideMonthMetrics ? "—" : item.projectCount}
                 </td>
               </tr>

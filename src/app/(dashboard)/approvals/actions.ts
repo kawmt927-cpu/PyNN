@@ -156,6 +156,11 @@ export async function approveFollowUpConfirm(formData: FormData) {
       confirmStatus: "CONFIRMED",
       confirmedById: session.user.id,
     });
+    const { closeDuePendingFollowPlansForCustomer } = await import("@/lib/follow-ups/unified");
+    await closeDuePendingFollowPlansForCustomer(tx, followUp.customerId, {
+      now: new Date(),
+      excludeFollowUpIds: [followUpId],
+    });
   });
 
   if (addAsAssistant) {

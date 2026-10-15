@@ -31,6 +31,7 @@ import {
   updateExpenseClaimItem,
   updateExpenseInvoiceAllocation,
   updateExpenseInvoiceMeta,
+  updateExpenseInvoiceReviewedAmount,
   uploadExpenseInvoice,
 } from "@/app/(dashboard)/expenses/actions";
 import {
@@ -74,7 +75,12 @@ import {
   TRIP_TIER_DAY_LABELS,
 } from "@/lib/expenses/trip-days";
 import { evaluateHotelCapClient, computeLodgingCapPreview } from "@/lib/expenses/hotel-cap-client";
+import {
+  tripRowDateHint,
+  validateTripDateRanges,
+} from "@/lib/expenses/trip-date-rules";
 import type { ActionResult } from "@/lib/action-result";
+import { cn } from "@/lib/utils";
 
 type UserOption = { id: string; name: string };
 type ProjectOption = { id: string; name: string };
@@ -84,6 +90,7 @@ type InvoiceRow = {
   id: string;
   fileName: string;
   amount: unknown;
+  reviewedAmount?: unknown;
   ocrAmount?: unknown;
   storageKey?: string;
   invoiceNo: string | null;
@@ -203,6 +210,10 @@ const TYPE_STYLE: Record<
     className: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
   },
   office: { icon: Briefcase, className: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200" },
+  communication: {
+    icon: Ticket,
+    className: "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-200",
+  },
   other: { icon: CircleEllipsis, className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" },
 };
 
@@ -224,7 +235,11 @@ const FEE_ONLY_KEY_SET = new Set<string>(FEE_ONLY_KEYS);
 
 function dateInputValue(d: Date | null) {
   if (!d) return "";
-  return d.toISOString().slice(0, 10);
+  // 用本地日历日，避免 toISOString 的 UTC 偏移把日期改错
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 type DraftTrip = {
@@ -280,6 +295,8 @@ export function ExpenseClaimEditor(props: {
   /** 当前配置流程是否需要提交人指定上级 */
   requiresSuperiorPick?: boolean;
   superiorStepName?: string | null;
+  /** 当前待办步骤名（审批操作区标题） */
+  currentStepName?: string | null;
   hotelPolicy: EffectiveExpenseTravelPolicy;
   cityHotelHints: CityHotelHint[];
   feeCategories: ExpenseFeeCategoryView[];
@@ -298,6 +315,9 @@ export function ExpenseClaimEditor(props: {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [hotelConfirmMsg, setHotelConfirmMsg] = useState<string | null>(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const currentStepLabel = props.currentStepName?.trim() || null;
   const [description, setDescription] = useState(props.initialDescription ?? "");
   const [beneficiaryId, setBeneficiaryId] = useState(props.initialBeneficiaryId);
   const [managerId, setManagerId] = useState(() => {
@@ -401,13 +421,14 @@ export function ExpenseClaimEditor(props: {
     hotelPolicy: props.hotelPolicy,
   });
 
+  const invoiceCount = props.items.reduce((n, item) => n + item.invoices.length, 0);
+  const totalAmount = props.items.reduce(
+    (sum, item) =>
+      sum + item.invoices.reduce((s, inv) => s + Number(inv.amount ?? 0), 0),
+    0
+  );
+
   function renderItemCards() {
-    const invoiceCount = props.items.reduce((n, item) => n + item.invoices.length, 0);
-    const totalAmount = props.items.reduce(
-      (sum, item) =>
-        sum + item.invoices.reduce((s, inv) => s + Number(inv.amount ?? 0), 0),
-      0
-    );
     return (
       <div className={isMobilePath ? "rounded-md border" : "overflow-x-auto rounded-md border"}>
         <div className={isMobilePath ? undefined : "min-w-[40rem]"}>
@@ -436,6 +457,9 @@ export function ExpenseClaimEditor(props: {
                 item={item}
                 editable={editable}
                 isManagerMode={isManagerMode}
+                canEditReviewedAmount={
+                  isManagerMode || props.mode === "hr"
+                }
                 pending={pending}
                 customers={props.customers}
                 projects={props.projects}
@@ -460,18 +484,69 @@ export function ExpenseClaimEditor(props: {
   }
 
   if (editable) {
+    const tripDayCount = (() => {
+      if (claimTrips.length === 0) return 0;
+      let total = 0;
+      for (const t of claimTrips) {
+        const ms = t.endDate.getTime() - t.startDate.getTime();
+        total += Math.max(1, Math.floor(ms / 86400000) + 1);
+      }
+      return total;
+    })();
+
     return (
       <div className="space-y-6">
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">填报人：{props.applicantName}</p>
-          {claimKind === "PROJECT" ? (
-            <p className="rounded-full border bg-violet-50 px-3 py-1 text-xs text-violet-900 dark:bg-violet-950 dark:text-violet-200">
-              项目：{claimProjectName ?? "未选择"}
-            </p>
-          ) : null}
-        </div>
+        <section className="rounded-lg border bg-muted/30 p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">单据信息</p>
+              <p className="text-xs text-muted-foreground">
+                以下字段由系统自动生成 · 只读
+              </p>
+            </div>
+            <span className="rounded-full border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+              自动生成
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <p className="text-xs text-muted-foreground">填单人</p>
+              <p className="text-sm font-medium">{props.applicantName}</p>
+            </div>
+            {showClaimTrips ? (
+              <div>
+                <p className="text-xs text-muted-foreground">出差天数</p>
+                <p className="text-sm font-medium tabular-nums">
+                  {tripDayCount > 0 ? `${tripDayCount} 天` : "—"}
+                </p>
+              </div>
+            ) : null}
+            <div>
+              <p className="text-xs text-muted-foreground">费用合计</p>
+              <p className="text-sm font-medium tabular-nums">
+                ¥{totalAmount.toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">附件张数</p>
+              <p className="text-sm font-medium tabular-nums">{invoiceCount} 张</p>
+            </div>
+            {claimKind === "PROJECT" ? (
+              <div>
+                <p className="text-xs text-muted-foreground">归属项目</p>
+                <p className="text-sm font-medium">{claimProjectName ?? "未选择"}</p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        {claimKind === "FEE" ? (
+          <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+            费用类型与凭证要求：招待费需填写招待事由与人数；办公费、通讯费需上传发票；补助类费用不属于费用报销范围，请到差旅报销中单独申请。
+          </p>
+        ) : null}
 
         {showClaimTrips ? (
           <ClaimTripsSection
@@ -486,8 +561,13 @@ export function ExpenseClaimEditor(props: {
         ) : null}
 
         <section className="space-y-2">
-          {showClaimTrips ? (
-            <h2 className="text-sm font-medium">费用明细</h2>
+          <h2 className="text-sm font-medium">
+            {claimKind === "PROJECT" ? "项目费用明细" : "费用明细"}
+          </h2>
+          {claimKind === "PROJECT" ? (
+            <p className="text-xs text-muted-foreground">
+              可按项目分组填写；默认归属当前单据项目，也可在明细中调整。
+            </p>
           ) : null}
           {renderItemCards()}
           <Button
@@ -499,11 +579,11 @@ export function ExpenseClaimEditor(props: {
               const fd = new FormData();
               const defaultKey =
                 claimKind === "FEE"
-                  ? "other"
+                  ? "business_entertainment"
                   : typeFeeCategories[0]?.key ?? "lodging";
               const defaultLabel =
                 typeFeeCategories.find((c) => c.key === defaultKey)?.label ??
-                (claimKind === "FEE" ? "其他" : "住宿费");
+                (claimKind === "FEE" ? "招待费" : "住宿费");
               fd.set("kind", "OTHER");
               fd.set("categoryKey", defaultKey);
               fd.set("title", defaultLabel);
@@ -513,7 +593,7 @@ export function ExpenseClaimEditor(props: {
               run(() => addExpenseClaimItem(props.claimId, fd));
             }}
           >
-            添加一行
+            {claimKind === "PROJECT" ? "新增费用明细" : "添加一行"}
           </Button>
         </section>
 
@@ -719,10 +799,17 @@ export function ExpenseClaimEditor(props: {
         ))}
       </datalist>
 
-      {isManagerMode ? (
-        <section className="space-y-3 rounded-md border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
-          <h2 className="font-medium">审核操作</h2>
-          {hotelCapStatus.exceeded ? (
+      {isManagerMode || props.mode === "hr" || props.mode === "finance" ? (
+        <section className="space-y-3 rounded-md border p-4">
+          <h2 className="font-medium">
+            {currentStepLabel ??
+              (isManagerMode
+                ? "上级审批"
+                : props.mode === "hr"
+                  ? "一级复核"
+                  : "完成打款")}
+          </h2>
+          {isManagerMode && hotelCapStatus.exceeded ? (
             <div className="rounded-md border border-amber-400/80 bg-amber-100/80 px-3 py-2 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-50">
               <p className="font-medium">住宿超标提示</p>
               <p className="mt-1 text-xs leading-relaxed">{hotelCapStatus.message}</p>
@@ -741,121 +828,127 @@ export function ExpenseClaimEditor(props: {
             </div>
           ) : null}
           <p className="text-sm text-muted-foreground">
-            请先在上方各发票中保存成本归属，全部填写后方可通过。
+            {isManagerMode
+              ? "请先在上方各发票中保存成本归属，并可填写复核金额；通过将推进至下一节点。"
+              : props.mode === "hr"
+                ? "核对单据并录入复核金额后通过；通过将推进至下一节点。"
+                : "确认后将按每张发票归属写入销售成本（挂实际报销人）或项目成本。"}
+            {" "}
+            驳回必须填写原因，原因将持久保存。
           </p>
-          <div className="flex flex-wrap gap-3">
+
+          {props.mode === "finance" ? (
             <form
-              className="flex flex-wrap items-end gap-2"
+              className="flex flex-wrap items-end gap-3"
               onSubmit={(e) => {
                 e.preventDefault();
                 const fd = new FormData(e.currentTarget);
-                run(() => approveExpenseByManager(props.claimId, fd));
+                run(() => payoutExpenseClaim(props.claimId, fd));
               }}
             >
               <div className="space-y-1">
-                <Label>审批意见</Label>
-                <Input name="comment" placeholder="可选" />
+                <Label>打款日期</Label>
+                <Input
+                  name="paidAt"
+                  type="date"
+                  defaultValue={new Date().toISOString().slice(0, 10)}
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>备注</Label>
+                <Input name="notes" placeholder="可选" />
               </div>
               <Button type="submit" disabled={pending}>
-                通过并提交行政确认
+                确认已打款并结案
               </Button>
             </form>
-            <form
-              className="flex flex-wrap items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                run(() => rejectExpenseByManager(props.claimId, fd));
-              }}
-            >
-              <div className="space-y-1">
-                <Label>驳回原因</Label>
-                <Input name="comment" placeholder="必填建议" required />
-              </div>
-              <Button type="submit" variant="outline" disabled={pending}>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              <form
+                className="flex flex-wrap items-end gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.currentTarget);
+                  run(() =>
+                    isManagerMode
+                      ? approveExpenseByManager(props.claimId, fd)
+                      : approveExpenseByHr(props.claimId, fd)
+                  );
+                }}
+              >
+                <div className="space-y-1">
+                  <Label>审批意见</Label>
+                  <Input name="comment" placeholder="可选" />
+                </div>
+                <Button type="submit" disabled={pending}>
+                  通过
+                </Button>
+              </form>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  setRejectReason("");
+                  setRejectOpen(true);
+                }}
+              >
                 驳回
               </Button>
-            </form>
-          </div>
+            </div>
+          )}
         </section>
       ) : null}
 
-      {props.mode === "hr" ? (
-        <section className="space-y-3 rounded-md border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
-          <h2 className="font-medium">行政确认</h2>
+      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <DialogContent className="max-w-md space-y-4 p-5">
+          <DialogHeader>
+            <DialogTitle>驳回这笔申请</DialogTitle>
+          </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            核对票据与归属后确认，将提交管理员终审打款。
+            驳回原因为必填项，填写后将持久保存，申请人及各环节审批人均可查看。
           </p>
-          <div className="flex flex-wrap gap-3">
-            <form
-              className="flex flex-wrap items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                run(() => approveExpenseByHr(props.claimId, fd));
-              }}
-            >
-              <div className="space-y-1">
-                <Label>确认意见</Label>
-                <Input name="comment" placeholder="可选" />
-              </div>
-              <Button type="submit" disabled={pending}>
-                确认并提交管理员
-              </Button>
-            </form>
-            <form
-              className="flex flex-wrap items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                run(() => rejectExpenseByHr(props.claimId, fd));
-              }}
-            >
-              <div className="space-y-1">
-                <Label>驳回原因</Label>
-                <Input name="comment" placeholder="必填建议" required />
-              </div>
-              <Button type="submit" variant="outline" disabled={pending}>
-                驳回
-              </Button>
-            </form>
+          <div className="space-y-1.5">
+            <Label htmlFor="reject-reason">驳回原因 *</Label>
+            <Textarea
+              id="reject-reason"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="请说明驳回原因"
+              rows={4}
+            />
           </div>
-        </section>
-      ) : null}
-
-      {props.mode === "finance" ? (
-        <section className="space-y-3 rounded-md border p-4">
-          <h2 className="font-medium">管理员终审打款</h2>
-          <p className="text-sm text-muted-foreground">
-            确认后将按每张发票归属写入销售成本（挂实际报销人）或项目成本。
-          </p>
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const fd = new FormData(e.currentTarget);
-              run(() => payoutExpenseClaim(props.claimId, fd));
-            }}
-          >
-            <div className="space-y-1">
-              <Label>打款日期</Label>
-              <Input
-                name="paidAt"
-                type="date"
-                defaultValue={new Date().toISOString().slice(0, 10)}
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>备注</Label>
-              <Input name="notes" placeholder="可选" />
-            </div>
-            <Button type="submit" disabled={pending}>
-              确认已打款并结案
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setRejectOpen(false)}
+            >
+              取消
             </Button>
-          </form>
-        </section>
-      ) : null}
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={pending || !rejectReason.trim()}
+              onClick={() => {
+                const fd = new FormData();
+                fd.set("comment", rejectReason.trim());
+                run(async () => {
+                  const result = isManagerMode
+                    ? await rejectExpenseByManager(props.claimId, fd)
+                    : await rejectExpenseByHr(props.claimId, fd);
+                  if (!result.error) setRejectOpen(false);
+                  return result;
+                });
+              }}
+            >
+              确认驳回
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -867,6 +960,7 @@ function ItemRow(props: {
   item: ClaimItemRow;
   editable: boolean;
   isManagerMode: boolean;
+  canEditReviewedAmount?: boolean;
   pending: boolean;
   customers: CustomerOption[];
   projects: ProjectOption[];
@@ -876,7 +970,16 @@ function ItemRow(props: {
   hotelCapExceeded?: boolean;
   run: (action: () => Promise<ActionResult>) => void;
 }) {
-  const { item, editable, isManagerMode, pending, run, claimKind, claimProjectId } = props;
+  const {
+    item,
+    editable,
+    isManagerMode,
+    canEditReviewedAmount = false,
+    pending,
+    run,
+    claimKind,
+    claimProjectId,
+  } = props;
   const isTravel = item.kind === "TRAVEL";
   const typeKey = isTravel
     ? item.categoryKey && TRAVEL_FEE_KEY_SET.has(item.categoryKey)
@@ -893,6 +996,9 @@ function ItemRow(props: {
       !inv.fileName.includes("无发票")
   );
   const claimed = primary ? Number(primary.amount ?? 0) : 0;
+  const [reviewedAmount, setReviewedAmount] = useState(() =>
+    primary?.reviewedAmount != null ? money(primary.reviewedAmount) : ""
+  );
   const recognized = primary?.ocrAmount != null ? Number(primary.ocrAmount) : null;
   const amountMismatch =
     hasRealInvoice &&
@@ -1163,6 +1269,30 @@ function ItemRow(props: {
               ¥{money(primary?.amount ?? 0)}
             </span>
           )}
+          {canEditReviewedAmount && primary ? (
+            <div className="mt-1">
+              <Input
+                value={reviewedAmount}
+                disabled={pending}
+                inputMode="decimal"
+                placeholder="复核金额"
+                title="审批人填写的复核/核销金额"
+                className="h-7 w-full text-xs tabular-nums"
+                onChange={(e) => setReviewedAmount(e.target.value)}
+                onBlur={() => {
+                  const fd = new FormData();
+                  fd.set("reviewedAmount", reviewedAmount.trim());
+                  run(() =>
+                    updateExpenseInvoiceReviewedAmount(primary.id, fd)
+                  );
+                }}
+              />
+            </div>
+          ) : primary?.reviewedAmount != null && !editable ? (
+            <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+              复核 ¥{money(primary.reviewedAmount)}
+            </p>
+          ) : null}
         </div>
 
         <div className="min-w-0">
@@ -1437,6 +1567,31 @@ function ItemRow(props: {
   );
 }
 
+function emptyDraftTrip(): DraftTrip {
+  return {
+    key: `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: null,
+    startDate: "",
+    endDate: "",
+    fromCity: "",
+    city: "",
+  };
+}
+
+function validateSingleTripFields(row: DraftTrip, label = "本段"): string | null {
+  if (!row.startDate.trim()) return `${label}请填写出发日期`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(row.startDate.trim())) {
+    return `${label}出发日期格式不正确`;
+  }
+  const end = (row.endDate || row.startDate).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return `${label}到达日期格式不正确`;
+  }
+  if (!row.fromCity.trim()) return `${label}请填写出发地`;
+  if (!row.city.trim()) return `${label}请填写到达地点`;
+  return null;
+}
+
 function ClaimTripsSection(props: {
   claimId: string;
   trips: TripRow[];
@@ -1447,43 +1602,43 @@ function ClaimTripsSection(props: {
   run: (action: () => Promise<ActionResult>) => void;
 }) {
   const { trips, editable, pending, run, cityHotelHints, hotelPolicy } = props;
-  const [confirmKey, setConfirmKey] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [drafts, setDrafts] = useState<DraftTrip[]>(() => tripsToDrafts(trips));
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  /** 同时只编辑/新增一段，避免改日期时列表重排导致对不上号 */
+  const [composer, setComposer] = useState<DraftTrip | null>(null);
 
-  useEffect(() => {
-    setDrafts(tripsToDrafts(trips));
-    setDirty(false);
-  }, [trips]);
+  const savedRows = tripsToDrafts(trips);
+  const savedDateValidation = validateTripDateRanges(
+    savedRows.map((r) => ({ startDate: r.startDate, endDate: r.endDate }))
+  );
 
-  function updateDraft(key: string, patch: Partial<DraftTrip>) {
-    setDrafts((prev) => {
-      const next = prev.map((row) => (row.key === key ? { ...row, ...patch } : row));
-      return sortDraftTrips(next);
-    });
-    setDirty(true);
-  }
+  const previewRows: DraftTrip[] = (() => {
+    if (!composer) return savedRows;
+    if (composer.id) {
+      return sortDraftTrips(
+        savedRows.map((r) => (r.id === composer.id ? composer : r))
+      );
+    }
+    return sortDraftTrips([...savedRows, composer]);
+  })();
 
-  function addDraftRow() {
-    const key = `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setDrafts((prev) => [
-      ...prev,
-      { key, id: null, startDate: "", endDate: "", fromCity: "", city: "" },
-    ]);
-    setDirty(true);
-  }
+  const previewDateValidation = validateTripDateRanges(
+    previewRows.map((r) => ({ startDate: r.startDate, endDate: r.endDate }))
+  );
 
-  function removeDraftLocal(key: string) {
-    setDrafts((prev) => prev.filter((row) => row.key !== key));
-    setDirty(true);
-  }
+  const composerIndex = composer
+    ? previewRows.findIndex((r) => r.key === composer.key)
+    : -1;
+  const composerIssue =
+    composerIndex >= 0 ? previewDateValidation.rowIssues[composerIndex]! : null;
+  const composerDateHint = composerIssue ? tripRowDateHint(composerIssue) : null;
 
   const daySummary = summarizeTripDaysByTier(
-    drafts
-      .filter((t) => t.startDate && t.endDate && (t.city || t.fromCity))
+    previewRows
+      .filter((t) => t.startDate && (t.endDate || t.startDate) && (t.city || t.fromCity))
       .map((t) => ({
         startDate: t.startDate,
-        endDate: t.endDate,
+        endDate: t.endDate || t.startDate,
         fromCity: t.fromCity,
         city: t.city,
       })),
@@ -1499,9 +1654,9 @@ function ClaimTripsSection(props: {
   ).filter(([, days]) => days > 0);
 
   const lodgingCap = computeLodgingCapPreview({
-    trips: drafts.map((t) => ({
+    trips: previewRows.map((t) => ({
       startDate: t.startDate,
-      endDate: t.endDate,
+      endDate: t.endDate || t.startDate,
       fromCity: t.fromCity,
       city: t.city,
     })),
@@ -1509,163 +1664,303 @@ function ClaimTripsSection(props: {
     hotelPolicy,
   });
 
-  const confirmRow = confirmKey
-    ? drafts.find((row) => row.key === confirmKey) ?? null
+  const composing = composer !== null;
+  const canAddNext =
+    editable &&
+    !pending &&
+    !composing &&
+    !savedDateValidation.hasDateProblems;
+
+  function patchComposer(patch: Partial<DraftTrip>) {
+    setLocalError(null);
+    setComposer((prev) => (prev ? { ...prev, ...patch } : prev));
+  }
+
+  function startCreate() {
+    if (!canAddNext) return;
+    setLocalError(null);
+    setComposer(emptyDraftTrip());
+  }
+
+  function startEdit(row: DraftTrip) {
+    if (!editable || pending || composing) return;
+    setLocalError(null);
+    setComposer({ ...row });
+  }
+
+  function cancelComposer() {
+    setLocalError(null);
+    setComposer(null);
+  }
+
+  function saveComposer() {
+    if (!composer) return;
+    const fieldError = validateSingleTripFields(composer);
+    if (fieldError) {
+      setLocalError(fieldError);
+      return;
+    }
+    if (previewDateValidation.hasDateProblems && previewDateValidation.error) {
+      setLocalError(previewDateValidation.error);
+      return;
+    }
+    setLocalError(null);
+    const payload = previewRows.map((row) => ({
+      id: row.id,
+      startDate: row.startDate.trim(),
+      endDate: (row.endDate || row.startDate).trim(),
+      fromCity: row.fromCity.trim(),
+      city: row.city.trim(),
+    }));
+    run(async () => {
+      const result = await saveExpenseTrips(props.claimId, payload);
+      if (result.error) {
+        setLocalError(result.error);
+        return result;
+      }
+      setComposer(null);
+      setLocalError(null);
+      return result;
+    });
+  }
+
+  const confirmRow = confirmId
+    ? savedRows.find((row) => row.id === confirmId) ?? null
     : null;
+
+  const listRows = savedRows.filter(
+    (row) => !(composer?.id && row.id === composer.id)
+  );
 
   return (
     <section className="space-y-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-medium">行程</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            按段填写出发/到达时间与地点；可一次保存全部行程，列表按出发日期排序。
-          </p>
-        </div>
-        {editable ? (
-          <Button
-            type="button"
-            size="sm"
-            disabled={pending || !dirty || drafts.length === 0}
-            onClick={() => {
-              const payload = sortDraftTrips(drafts).map((row) => ({
-                id: row.id,
-                startDate: row.startDate,
-                endDate: row.endDate || row.startDate,
-                fromCity: row.fromCity,
-                city: row.city,
-              }));
-              run(() => saveExpenseTrips(props.claimId, payload));
-            }}
-          >
-            保存行程
-          </Button>
-        ) : null}
+      <div>
+        <h2 className="text-sm font-medium">行程信息</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          一次只录入或编辑一段；保存并通过校验后，才能添加下一段。各段日期不可重叠，出发不得晚于到达。
+        </p>
       </div>
 
-      {drafts.length === 0 && !editable ? (
+      {localError ? (
+        <p className="text-sm text-destructive">{localError}</p>
+      ) : !composing &&
+        savedDateValidation.hasDateProblems &&
+        savedDateValidation.error ? (
+        <p className="text-sm text-destructive">
+          {savedDateValidation.error}。请先点「编辑」修正后再添加新段。
+        </p>
+      ) : null}
+
+      {listRows.length === 0 && !composing && !editable ? (
         <p className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
           未填写行程
         </p>
       ) : (
         <div className="overflow-hidden rounded-md border">
-          <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 border-b bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:grid">
-            <span>出发日期</span>
-            <span>到达日期</span>
-            <span>出发地</span>
-            <span>到达地点</span>
-            <span className="w-14 text-right">操作</span>
-          </div>
-          <ul className="divide-y">
-            {drafts.map((row, idx) => (
-              <li key={row.key} className="px-3 py-2.5">
-                {editable ? (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto] sm:items-end">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground sm:sr-only">
-                        出发日期
-                      </Label>
-                      <Input
-                        type="date"
-                        required
-                        className="h-9 w-full"
-                        value={row.startDate}
-                        disabled={pending}
-                        onChange={(e) =>
-                          updateDraft(row.key, { startDate: e.target.value })
-                        }
-                      />
+          {(listRows.length > 0 || !editable) && (
+            <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 border-b bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:grid">
+              <span>出发日期</span>
+              <span>到达日期</span>
+              <span>出发地</span>
+              <span>到达地点</span>
+              <span className="w-20 text-right">操作</span>
+            </div>
+          )}
+          {listRows.length > 0 ? (
+            <ul className="divide-y">
+              {listRows.map((row) => {
+                const savedIdx = savedRows.findIndex((r) => r.key === row.key);
+                const issue =
+                  savedIdx >= 0
+                    ? savedDateValidation.rowIssues[savedIdx]!
+                    : null;
+                const dateHint = issue ? tripRowDateHint(issue) : null;
+                return (
+                  <li
+                    key={row.key}
+                    className={cn(
+                      "px-3 py-2.5",
+                      dateHint && "bg-destructive/5"
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                          <span className="text-xs text-muted-foreground">
+                            第 {savedIdx + 1} 段
+                          </span>
+                          <span className="tabular-nums">
+                            {row.startDate}
+                            {row.endDate && row.endDate !== row.startDate
+                              ? ` ~ ${row.endDate}`
+                              : ""}
+                          </span>
+                          <span className="text-muted-foreground">·</span>
+                          <span>
+                            {row.fromCity || "—"}
+                            <span className="text-muted-foreground"> → </span>
+                            {row.city || "—"}
+                          </span>
+                        </div>
+                        {dateHint ? (
+                          <p className="text-xs text-destructive">{dateHint}</p>
+                        ) : null}
+                      </div>
+                      {editable ? (
+                        <div className="flex shrink-0 gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8"
+                            disabled={pending || composing}
+                            onClick={() => startEdit(row)}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-destructive"
+                            disabled={pending || composing}
+                            onClick={() => row.id && setConfirmId(row.id)}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground sm:sr-only">
-                        到达日期
-                      </Label>
-                      <Input
-                        type="date"
-                        required
-                        className="h-9 w-full"
-                        value={row.endDate}
-                        disabled={pending}
-                        onChange={(e) =>
-                          updateDraft(row.key, { endDate: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground sm:sr-only">
-                        出发地
-                      </Label>
-                      <ProvinceCityPicker
-                        name={`fromCity-${row.key}`}
-                        required
-                        value={row.fromCity}
-                        placeholder="选择出发城市"
-                        disabled={pending}
-                        onValueChange={(city) =>
-                          updateDraft(row.key, { fromCity: city })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground sm:sr-only">
-                        到达地点
-                      </Label>
-                      <ProvinceCityPicker
-                        name={`city-${row.key}`}
-                        required
-                        value={row.city}
-                        placeholder="选择到达城市"
-                        disabled={pending}
-                        onValueChange={(city) => updateDraft(row.key, { city })}
-                      />
-                    </div>
-                    <div className="flex justify-end sm:pb-0.5">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-9 text-destructive"
-                        disabled={pending}
-                        onClick={() => setConfirmKey(row.key)}
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-                    <span className="text-xs text-muted-foreground">第 {idx + 1} 段</span>
-                    <span className="tabular-nums">
-                      {row.startDate}
-                      {row.endDate && row.endDate !== row.startDate
-                        ? ` ~ ${row.endDate}`
-                        : ""}
-                    </span>
-                    <span className="text-muted-foreground">·</span>
-                    <span>
-                      {row.fromCity || "—"}
-                      <span className="text-muted-foreground"> → </span>
-                      {row.city || "—"}
-                    </span>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          {composer ? (
+            <div
+              className={cn(
+                "space-y-2 border-t bg-muted/10 px-3 py-3",
+                composerDateHint && "bg-destructive/5"
+              )}
+            >
+              <p className="text-xs font-medium text-muted-foreground">
+                {(() => {
+                  if (!composer.id) return `新增第 ${savedRows.length + 1} 段`;
+                  const idx = savedRows.findIndex((r) => r.id === composer.id);
+                  return `编辑第 ${idx >= 0 ? idx + 1 : "?"} 段`;
+                })()}
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">出发日期</Label>
+                  <Input
+                    type="date"
+                    required
+                    aria-invalid={Boolean(composerDateHint)}
+                    className={cn(
+                      "h-9 w-full",
+                      composerDateHint &&
+                        "border-destructive focus-visible:ring-destructive"
+                    )}
+                    value={composer.startDate}
+                    disabled={pending}
+                    onChange={(e) =>
+                      patchComposer({ startDate: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">到达日期</Label>
+                  <Input
+                    type="date"
+                    required
+                    aria-invalid={Boolean(composerDateHint)}
+                    className={cn(
+                      "h-9 w-full",
+                      composerDateHint &&
+                        "border-destructive focus-visible:ring-destructive"
+                    )}
+                    value={composer.endDate}
+                    disabled={pending}
+                    onChange={(e) =>
+                      patchComposer({ endDate: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">出发地</Label>
+                  <ProvinceCityPicker
+                    name={`fromCity-${composer.key}`}
+                    required
+                    value={composer.fromCity}
+                    placeholder="选择出发城市"
+                    disabled={pending}
+                    onValueChange={(city) => patchComposer({ fromCity: city })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">到达地点</Label>
+                  <ProvinceCityPicker
+                    name={`city-${composer.key}`}
+                    required
+                    value={composer.city}
+                    placeholder="选择到达城市"
+                    disabled={pending}
+                    onValueChange={(city) => patchComposer({ city })}
+                  />
+                </div>
+              </div>
+              {composerDateHint ? (
+                <p className="text-xs text-destructive">{composerDateHint}</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={pending || Boolean(composerDateHint)}
+                  onClick={saveComposer}
+                >
+                  保存此段
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={cancelComposer}
+                >
+                  取消
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {editable ? (
             <div className="border-t bg-muted/20 px-3 py-2">
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={pending}
-                onClick={addDraftRow}
+                disabled={!canAddNext}
+                onClick={startCreate}
+                title={
+                  composing
+                    ? "请先保存或取消当前编辑"
+                    : savedDateValidation.hasDateProblems
+                      ? "请先修正已有行程的日期问题"
+                      : undefined
+                }
               >
                 添加一段
               </Button>
-              {dirty ? (
+              {composing ? (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  请先保存或取消当前这一段
+                </span>
+              ) : savedDateValidation.hasDateProblems ? (
                 <span className="ml-2 text-xs text-amber-700 dark:text-amber-400">
-                  有未保存的修改
+                  请先修正已有行程后再添加
                 </span>
               ) : null}
             </div>
@@ -1687,7 +1982,8 @@ function ClaimTripsSection(props: {
             ))}
             <span className="text-muted-foreground">·</span>
             <span>
-              总共 <span className="font-medium tabular-nums">{daySummary.total}</span> 天
+              总共 <span className="font-medium tabular-nums">{daySummary.total}</span>{" "}
+              天
             </span>
           </p>
           {lodgingCap ? (
@@ -1703,7 +1999,7 @@ function ClaimTripsSection(props: {
             </p>
           ) : null}
         </div>
-      ) : drafts.length === 0 && editable ? (
+      ) : savedRows.length === 0 && !composing && editable ? (
         <p className="text-xs text-amber-700 dark:text-amber-400">
           提交前请至少添加一段行程。
         </p>
@@ -1715,16 +2011,12 @@ function ClaimTripsSection(props: {
         message="确定删除这一段行程？"
         confirmLabel="删除"
         pending={pending}
-        onCancel={() => setConfirmKey(null)}
+        onCancel={() => setConfirmId(null)}
         onConfirm={() => {
           const row = confirmRow;
-          setConfirmKey(null);
-          if (!row) return;
-          if (row.id) {
-            run(() => removeExpenseTrip(row.id!));
-          } else {
-            removeDraftLocal(row.key);
-          }
+          setConfirmId(null);
+          if (!row?.id) return;
+          run(() => removeExpenseTrip(row.id!));
         }}
       />
     </section>

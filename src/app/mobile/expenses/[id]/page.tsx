@@ -4,7 +4,8 @@ import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   ALL_AUTHED_ROLES,
-  EXPENSE_CLAIM_STATUS_LABELS,
+  EXPENSE_CLAIM_KIND_LABELS,
+  expenseClaimChipStatus,
 } from "@/lib/expenses/labels";
 import { claimInclude, canViewClaim } from "@/lib/expenses/service";
 import {
@@ -24,7 +25,11 @@ import {
   expenseEditorClaimProps,
   loadExpenseEditorOptions,
 } from "@/lib/expenses/editor-options";
+import { latestExpenseRejectInfo } from "@/lib/expenses/approval-progress";
 import { ExpenseClaimEditor } from "@/components/expenses/expense-claim-editor";
+import { ExpenseRejectBanner } from "@/components/expenses/expense-reject-banner";
+import { ExpenseApprovalProgress } from "@/components/expenses/expense-approval-progress";
+import { buildExpenseApprovalProgressNodes } from "@/lib/expenses/approval-progress";
 import { format } from "date-fns";
 
 type Props = { params: Promise<{ id: string }> };
@@ -76,43 +81,58 @@ export default async function MobileExpenseClaimDetailPage({ params }: Props) {
     listExpenseFeeCategories(),
   ]);
 
+  const chip = expenseClaimChipStatus(claim.status);
+  const rejectInfo = latestExpenseRejectInfo(claim);
+  const progressNodes = buildExpenseApprovalProgressNodes(claim);
+  const kindLabel =
+    EXPENSE_CLAIM_KIND_LABELS[claim.claimKind] ?? claim.claimKind;
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 pb-8 pt-4">
       <div>
         <Link href="/mobile/expenses" className="text-sm text-muted-foreground hover:underline">
-          返回报销列表
+          返回上一级
         </Link>
-        <h1 className="mt-1 text-xl font-semibold leading-snug">{claim.title}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-semibold leading-snug">{kindLabel}</h1>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+            {chip.label}
+          </span>
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">
           填报 {claim.applicant.name}
           {claim.beneficiaryId !== claim.applicantId
             ? ` · 报销人 ${claim.beneficiary.name}`
             : ""}{" "}
-          · {EXPENSE_CLAIM_STATUS_LABELS[claim.status] ?? claim.status} · 合计 ¥
-          {Number(claim.totalAmount).toFixed(2)}
-          {claim.manager ? ` · 上级 ${claim.manager.name}` : ""}
+          · 合计 ¥{Number(claim.totalAmount).toFixed(2)}
         </p>
-        {claim.rejectReason ? (
-          <p className="mt-2 text-sm text-destructive">驳回原因：{claim.rejectReason}</p>
-        ) : null}
       </div>
+
+      {claim.status === "REJECTED" && rejectInfo.reason ? (
+        <ExpenseRejectBanner
+          reason={rejectInfo.reason}
+          actorName={rejectInfo.actorName}
+          at={rejectInfo.at}
+        />
+      ) : null}
+
+      {claim.status !== "DRAFT" ? (
+        <ExpenseApprovalProgress nodes={progressNodes} />
+      ) : null}
 
       <div className="rounded-lg border bg-card p-3">
         <p className="mb-3 text-sm font-medium">
           {mode === "edit"
             ? "编辑报销单"
-            : mode === "manager"
-              ? `${currentStep?.name ?? "上级审批"}（请填写成本归属）`
-              : mode === "hr"
-                ? currentStep?.name ?? "审批确认"
-              : mode === "finance"
-                ? currentStep?.name ?? "打款结案"
-                : "报销单详情"}
+            : mode === "manager" || mode === "hr" || mode === "finance"
+              ? currentStep?.name ?? "审批"
+              : "报销单详情"}
         </p>
         <ExpenseClaimEditor
           mode={mode}
           {...expenseEditorClaimProps(claim)}
+          currentStepName={currentStep?.name ?? null}
           initialBeneficiaryId={
             capability.canProxyBeneficiary
               ? claim.beneficiaryId

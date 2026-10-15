@@ -83,3 +83,17 @@ export function buildChangeSummary(
   ].filter((x): x is string => Boolean(x));
   return marks.length > 0 ? marks.join("；") : null;
 }
+
+/** 人工改出勤时追加说明，如「实际出勤 18 天，修改为 16 天」 */
+export function appendAttendanceChangeNote(
+  base: string | null | undefined,
+  systemDays: number,
+  finalDays: number
+): string | null {
+  const a = Math.round(systemDays * 100) / 100;
+  const b = Math.round(finalDays * 100) / 100;
+  if (Math.abs(a - b) < 0.001) return base?.trim() || null;
+  const note = `实际出勤 ${a} 天，修改为 ${b} 天`;
+  const prev = base?.trim();
+  return prev ? `${prev}；${note}` : note;
+}

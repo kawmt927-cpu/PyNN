@@ -12,9 +12,11 @@ import {
   resolveDailyRateForMonth,
   resolveEffectiveMonthlyCost,
 } from "@/lib/personnel/daily-rate";
+import { materializeMonthCostDraftForUser } from "@/lib/personnel/ensure-month-costs";
 import { computeLeaveDeductionPreview } from "@/lib/personnel/leave-pay";
 import { ensureDefaultLeaveTypes } from "@/lib/personnel/leave-types";
 import {
+  appendAttendanceChangeNote,
   buildChangeSummary,
   parseCopiedSnapshot,
   type CostComposition,
@@ -74,8 +76,21 @@ export type PersonnelCostRowInput = {
   bonus: string;
   penaltyAmount: string;
   monthAdjustment: string;
+  /** 实际出勤天数（可人工改；空则用系统按请假算出的值） */
+  attendanceDays?: string;
   monthAdjustmentNotes?: string;
 };
+
+function parseAttendanceDays(raw: unknown, label = "实际出勤天数"): number | null {
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label}无效`);
+  }
+  return Math.round(value * 100) / 100;
+}
 
 /** 批量更新实施人员类型（人员信息标签） */
 export async function updatePersonnelTypesBatch(
@@ -164,9 +179,12 @@ export async function updatePersonnelCostsBatch(input: {
         socialSecurityCompany,
         housingFundCompany,
       });
-      if (leavePreview.attendanceDays <= 0) {
+      const systemAttendanceDays = leavePreview.attendanceDays;
+      const attendanceDays =
+        parseAttendanceDays(row.attendanceDays) ?? systemAttendanceDays;
+      if (attendanceDays <= 0) {
         throw new Error(
-          `${row.userId} 在 ${input.year}-${input.month} 实际出勤为 0，无法关账（请检查请假与公司日历）`
+          `${row.userId} 在 ${input.year}-${input.month} 实际出勤为 0，无法关账（请检查请假与公司日历，或手工改正出勤天数）`
         );
       }
 
@@ -190,9 +208,13 @@ export async function updatePersonnelCostsBatch(input: {
         penaltyAmount,
         monthAdjustment,
       };
-      const changeSummary = buildChangeSummary(
-        composition,
-        parseCopiedSnapshot(existing?.copiedSnapshot)
+      const changeSummary = appendAttendanceChangeNote(
+        buildChangeSummary(
+          composition,
+          parseCopiedSnapshot(existing?.copiedSnapshot)
+        ),
+        systemAttendanceDays,
+        attendanceDays
       );
 
       await prisma.personnelMonthlyCostAdjustment.upsert({
@@ -215,7 +237,8 @@ export async function updatePersonnelCostsBatch(input: {
           penaltyAmount,
           adjustmentAmount: monthAdjustment,
           leaveDeductionAmount: leavePreview.leaveDeductionTotal,
-          attendanceDays: leavePreview.attendanceDays,
+          attendanceDays,
+          attendanceDaysSystem: systemAttendanceDays,
           notes: null,
           changeSummary,
           confirmedAt: now,
@@ -229,7 +252,8 @@ export async function updatePersonnelCostsBatch(input: {
           penaltyAmount,
           adjustmentAmount: monthAdjustment,
           leaveDeductionAmount: leavePreview.leaveDeductionTotal,
-          attendanceDays: leavePreview.attendanceDays,
+          attendanceDays,
+          attendanceDaysSystem: systemAttendanceDays,
           notes: null,
           changeSummary,
           confirmedAt: now,
@@ -253,7 +277,7 @@ export async function updatePersonnelCostsBatch(input: {
           effectiveMonthly,
           input.year,
           input.month,
-          leavePreview.attendanceDays
+          attendanceDays
         );
         await prisma.personnelProfile.update({
           where: { userId: row.userId },
@@ -267,6 +291,113 @@ export async function updatePersonnelCostsBatch(input: {
     revalidatePath("/projects/schedule");
     revalidatePath("/projects");
     revalidatePath("/projects", "layout");
+    return {};
+  } catch (error) {
+    return formatError(error);
+  }
+}
+
+/**
+ * 将已离职实施人员手动纳入指定月份成本表（仅本月生效；下月默认仍不出现）。
+ */
+export async function includeResignedPersonnelInMonthCosts(input: {
+  year: number;
+  month: number;
+  userIds: string[];
+}): Promise<ActionResult> {
+  try {
+    await requireRole(["HR", "ADMIN"]);
+    if (!input.year || input.month < 1 || input.month > 12) {
+      return { error: "月份无效" };
+    }
+    if (isFutureYearMonth(input.year, input.month)) {
+      return { error: "不能维护尚未到达的月份" };
+    }
+    const userIds = [...new Set(input.userIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (userIds.length === 0) return { error: "请选择要纳入的离职人员" };
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        personnelProfile: { select: { enabled: true } },
+      },
+    });
+    if (users.length !== userIds.length) {
+      return { error: "存在无效人员，已中止" };
+    }
+    for (const user of users) {
+      if (!isImplementationListUser(user.role)) {
+        return { error: `${user.name} 不是实施人员名单成员` };
+      }
+      if (user.personnelProfile?.enabled !== false) {
+        return { error: `${user.name} 仍为在职，无需手动纳入` };
+      }
+      await materializeMonthCostDraftForUser({
+        userId: user.id,
+        year: input.year,
+        month: input.month,
+        allowEmpty: true,
+      });
+    }
+
+    revalidatePath("/personnel");
+    return {};
+  } catch (error) {
+    return formatError(error);
+  }
+}
+
+/**
+ * 将已离职人员移出指定月份成本表（仅未确认草稿可删；下月本就不会默认出现）。
+ */
+export async function excludeResignedPersonnelFromMonthCosts(input: {
+  year: number;
+  month: number;
+  userId: string;
+}): Promise<ActionResult> {
+  try {
+    await requireRole(["HR", "ADMIN"]);
+    if (!input.year || input.month < 1 || input.month > 12) {
+      return { error: "月份无效" };
+    }
+    const userId = String(input.userId ?? "").trim();
+    if (!userId) return { error: "缺少用户" };
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        role: true,
+        personnelProfile: { select: { enabled: true } },
+      },
+    });
+    if (!user || !isImplementationListUser(user.role)) {
+      return { error: "人员无效" };
+    }
+    if (user.personnelProfile?.enabled !== false) {
+      return { error: "仅可移出离职人员；在职人员请勿移出" };
+    }
+
+    const row = await prisma.personnelMonthlyCostAdjustment.findUnique({
+      where: {
+        userId_year_month: {
+          userId,
+          year: input.year,
+          month: input.month,
+        },
+      },
+      select: { id: true, confirmedAt: true },
+    });
+    if (!row) return { error: "本月无该人员成本记录" };
+    if (row.confirmedAt) {
+      return { error: "本月成本已确认，不能移出；如需调整请走编辑保存" };
+    }
+
+    await prisma.personnelMonthlyCostAdjustment.delete({ where: { id: row.id } });
+    revalidatePath("/personnel");
     return {};
   } catch (error) {
     return formatError(error);
