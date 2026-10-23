@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>塔塔钓鱼</title>
+<style>
+  :root {
+    --bg: #e7f2ef;
+    --ink: #14302c;
+    --card: #f7fffc;
+    --line: #c5ddd4;
+    --green: #1c8f55;
+    --green-ink: #f4fff8;
+    --stop: #c4513a;
+    --stop-ink: #fff8f6;
+    --muted: #5d746c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  main {
+    max-width: 440px;
+    margin: 24px auto;
+    padding: 0 16px 32px;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button, input, select {
+    font: inherit;
+  }
+  button {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button.active {
+    background: var(--green);
+    color: var(--green-ink);
+    border-color: var(--green);
+  }
+  button.active.stop {
+    background: var(--stop);
+    border-color: var(--stop);
+    color: var(--stop-ink);
+  }
+  label { display: flex; gap: 6px; align-items: center; }
+  input[type="number"] { width: 72px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); }
+  .hint, .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .status { font-weight: 700; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stats b { display: block; font-size: 28px; }
+  #log {
+    display: none;
+    max-height: 220px;
+    overflow: auto;
+    background: #102421;
+    color: #d8f3ea;
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  #log.open { display: block; margin-top: 8px; }
+  .popup {
+    position: fixed; inset: 0;
+    background: rgba(12, 32, 28, 0.45);
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .popup.show { display: flex; }
+  .popup-card {
+    background: white;
+    border-radius: 16px;
+    padding: 18px;
+    max-width: 360px;
+  }
+  .err { color: var(--stop); min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>塔塔钓鱼</h1>
+  <p class="sub">塔塔冒险队 · 钓鱼大赛</p>
+
+  <section>
+    <div class="row">
+      <label>模拟器
+        <select id="mode">
+          <option value="mumu">MuMu</option>
+          <option value="h5">H5</option>
+        </select>
+      </label>
+      <input id="serial" placeholder="可选 127.0.0.1:7555" style="flex:1; min-width: 160px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);">
+      <button id="connect" type="button">连接模拟器</button>
+    </div>
+    <p class="status" id="connection">未连接</p>
+  </section>
+
+  <section>
+    <div class="row">
+      <label>本次钓鱼次数 <input id="count" type="number" min="1" max="9999" value="20"></label>
+      <label><input id="unlimited" type="checkbox"> 无限次数</label>
+    </div>
+    <p id="subtitle">本次钓鱼 20 次</p>
+    <label><input id="new-rod" type="checkbox"> 解锁新鱼竿自动停止</label>
+    <div class="row" style="margin-top: 8px;">
+      <label>最低幸运 <input id="min-luck" type="number" min="0" max="8" value="8"></label>
+    </div>
+    <p class="hint">左下角三叶草，满级 8。默认只在幸运达到 8 时点绿色鱼竿。低于就停止，并提示你自己补道具。忽略道具倒计时，不会自动使用道具。</p>
+    <div class="row" style="margin-top: 12px;">
+      <button id="start" class="active" type="button">开始钓鱼</button>
+      <button id="stop" class="stop" type="button">停止钓鱼</button>
+    </div>
+    <p class="status" id="run-status">待命</p>
+    <p class="err" id="error"></p>
+  </section>
+
+  <section>
+    <div class="stats">
+      <div>甩杆次数<b id="casts">0</b></div>
+      <div>成功次数<b id="success">0</b></div>
+      <div>失败次数<b id="fail">0</b></div>
+    </div>
+    <p class="note">仅统计本次钓鱼；中止或未确认成功的甩杆计入失败。</p>
+    <p>每杆消耗：<span id="rod-cost">未识别</span></p>
+    <p>大赛倒计时：<span id="timer">未识别</span></p>
+    <p>当前幸运：<span id="luck">未识别</span></p>
+    <button id="log-btn" type="button">查看日志</button>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<div id="popup" class="popup">
+  <div class="popup-card">
+    <h2 id="popup-title">请补充道具</h2>
+    <p id="popup-text"></p>
+    <button id="popup-ok" type="button">知道了</button>
+  </div>
+</div>
+
+<script>
+const unlimitedText = "无限次数 · 鱼竿用完或手动停止时结束";
+const countInput = document.querySelector("#count");
+const unlimited = document.querySelector("#unlimited");
+const subtitle = document.querySelector("#subtitle");
+
+function finiteText() {
+  const n = Math.max(1, parseInt(countInput.value || "20", 10));
+  return "本次钓鱼 " + n + " 次";
+}
+function refreshSubtitle() {
+  subtitle.textContent = unlimited.checked ? unlimitedText : finiteText();
+  countInput.disabled = unlimited.checked;
+}
+unlimited.addEventListener("change", refreshSubtitle);
+countInput.addEventListener("input", refreshSubtitle);
+
+document.querySelector("#connect").addEventListener("click", async () => {
+  const res = await fetch("/api/connect", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      mode: document.querySelector("#mode").value,
+      serial: document.querySelector("#serial").value
+    })
+  });
+  const data = await res.json();
+  document.querySelector("#connection").textContent = data.connection || data.message;
+});
+
+document.querySelector("#start").addEventListener("click", async () => {
+  const res = await fetch("/api/start", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      count: parseInt(countInput.value || "20", 10),
+      unlimited: unlimited.checked,
+      stop_on_new_rod: document.querySelector("#new-rod").checked,
+      min_luck: parseInt(document.querySelector("#min-luck").value || "8", 10)
+    })
+  });
+  const data = await res.json();
+  document.querySelector("#error").textContent = data.ok ? "" : (data.message || "");
+  if (data.status) document.querySelector("#run-status").textContent = data.status;
+  poll();
+});
+
+document.querySelector("#stop").addEventListener("click", async () => {
+  const res = await fetch("/api/stop", {method: "POST"});
+  const data = await res.json();
+  document.querySelector("#run-status").textContent = data.status || "已停止";
+  poll();
+});
+
+const log = document.querySelector("#log");
+document.querySelector("#log-btn").addEventListener("click", () => {
+  log.classList.toggle("open");
+});
+
+const popup = document.querySelector("#popup");
+document.querySelector("#popup-ok").addEventListener("click", () => popup.classList.remove("show"));
+
+async function poll() {
+  const res = await fetch("/api/status");
+  const data = await res.json();
+  document.querySelector("#connection").textContent = data.connection || "未连接";
+  document.querySelector("#run-status").textContent = data.status || "待命";
+  document.querySelector("#casts").textContent = data.casts;
+  document.querySelector("#success").textContent = data.success;
+  document.querySelector("#fail").textContent = data.fail;
+  document.querySelector("#rod-cost").textContent = data.rod_cost_text || "未识别";
+  document.querySelector("#timer").textContent = data.timer_text || "未识别";
+  document.querySelector("#luck").textContent = data.luck == null ? "未识别" : data.luck;
+  log.textContent = (data.logs || []).join("\n");
+  document.querySelector("#start").classList.toggle("active", !data.running);
+  const stop = document.querySelector("#stop");
+  stop.classList.toggle("active", !!data.running);
+  if (data.popup) {
+    document.querySelector("#popup-title").textContent = data.popup_title || "请补充道具";
+    document.querySelector("#popup-text").textContent = data.popup;
+    popup.classList.add("show");
+  }
+}
+poll();
+setInterval(poll, 700);
+</script>
+</body>
+</html>
