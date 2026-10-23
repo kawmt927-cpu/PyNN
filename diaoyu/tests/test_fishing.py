@@ -386,6 +386,17 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(app._tap_point("tap_green", det), (1, 2))
 
 
+
+class LaunchTests(unittest.TestCase):
+    def test_launch_ensure_deps_when_customtkinter_present(self):
+        import launch
+        launch._ensure_deps()
+        self.assertTrue((ROOT / "Open.bat").exists())
+        bat = (ROOT / "Open.bat").read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("cmd /k", bat)
+        self.assertIn("launch.py", bat)
+        self.assertIn("pause", bat)
+
 if __name__ == "__main__":
     os.chdir(ROOT)
     unittest.main()
