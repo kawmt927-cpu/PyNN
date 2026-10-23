@@ -1,0 +1,8 @@
+塔塔钓鱼 — 装到 D 盘
+
+1. 把整个「塔塔钓鱼」文件夹拷到你的 Windows 电脑（任意位置都行）。
+2. 双击「塔塔钓鱼\安装到D盘.bat」。
+3. 它会创建 D:\塔塔钓鱼，并把文件放进去，然后打开窗口。
+4. 以后直接双击：D:\塔塔钓鱼\Open.bat
+
+需要先安装 Python 3.11+（python.org，勾选 Add to PATH）和 adb（platform-tools）。
