@@ -1,3 +1,2 @@
-# 塔塔钓鱼 runs on the Python 3.11+ standard library.
-# OpenCV is optional; the shipped reader does not import it.
-# opencv-python-headless>=4.9
+# Desktop window. Python's own tkinter is required (included with python.org builds on Windows).
+customtkinter>=5.2

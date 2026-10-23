@@ -1,6 +1,6 @@
-"""塔塔钓鱼 — local helper for 塔塔冒险队 fishing contest."""
+"""塔塔钓鱼 — open the desktop window."""
 
-from server import serve
+from window import main
 
 if __name__ == "__main__":
-    serve()
+    main()

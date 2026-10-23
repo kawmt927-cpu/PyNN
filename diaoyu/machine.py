@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
-UNLIMITED_SUBTITLE = "无限次数 · 鱼竿用完或手动停止时结束"
+UNLIMITED_SUBTITLE = "无限次数 · 手动停止或大赛结束时结束"
 STATS_NOTE = "仅统计本次钓鱼；中止或未确认成功的甩杆计入失败。"
 LOW_LUCK_TITLE = "请补充道具"
 
@@ -40,9 +40,6 @@ class Observation:
     toast: bool = False
     luck: int | None = None
     timer_seconds: int | None = None
-    new_rod: bool = False
-    rod_empty: bool = False
-    rod_cost: str | None = None
 
 
 @dataclass
@@ -62,14 +59,12 @@ class FisherSession:
         self.phase = "idle"
         self.count = 20
         self.unlimited = False
-        self.stop_on_new_rod = False
         self.min_luck = 8
         self.casts = 0
         self.success = 0
         self.fail = 0
         self.logs: list[str] = []
         self.popup: str | None = None
-        self.rod_cost: str | None = None
         self.timer_seconds: int | None = None
         self.luck: int | None = None
         self.cast_open = False
@@ -82,7 +77,7 @@ class FisherSession:
         self._ready_streak = 0
         self._wait_after_bite = 0
 
-    def start(self, count: int, unlimited: bool, stop_on_new_rod: bool, min_luck: int) -> None:
+    def start(self, count: int, unlimited: bool, min_luck: int) -> None:
         if min_luck < 0 or min_luck > 8:
             raise ValueError("最低幸运要在 0 到 8 之间")
         if not unlimited and count < 1:
@@ -92,14 +87,12 @@ class FisherSession:
         self.phase = "idle"
         self.count = count
         self.unlimited = unlimited
-        self.stop_on_new_rod = stop_on_new_rod
         self.min_luck = min_luck
         self.casts = 0
         self.success = 0
         self.fail = 0
         self.logs = []
         self.popup = None
-        self.rod_cost = None
         self.timer_seconds = None
         self.luck = None
         self.cast_open = False
@@ -126,19 +119,11 @@ class FisherSession:
     def step(self, obs: Observation) -> Decision:
         if not self.running:
             return self._decision([])
-        if obs.rod_cost:
-            self.rod_cost = obs.rod_cost
         if obs.luck is not None:
             self.luck = obs.luck
         if obs.timer_seconds is not None:
             self.timer_seconds = obs.timer_seconds
         actions: list[str] = []
-
-        if obs.rod_empty:
-            if self.cast_open and not self.scored:
-                self._fail("鱼竿用完")
-            self._halt("鱼竿用完", "鱼竿已经用完，停止钓鱼。")
-            return self._decision([])
 
         if obs.state == "settlement":
             self._wait_after_bite = 0
@@ -156,12 +141,6 @@ class FisherSession:
             if self.cast_open and not self.scored:
                 self._fail("大赛倒计时结束")
             self._halt("大赛时间到", "大赛倒计时为 0，停止钓鱼。")
-            return self._decision([])
-
-        if self.stop_on_new_rod and obs.new_rod:
-            if self.cast_open and not self.scored:
-                self._fail("解锁新鱼竿")
-            self._halt("已停止", "解锁了新鱼竿，按设置停止。")
             return self._decision([])
 
         if obs.state == "slider":

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-import threading
+import time
 import unittest
-import urllib.request
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -22,8 +21,9 @@ from machine import (  # noqa: E402
 )
 from calibration import Calibration  # noqa: E402
 from pngutil import decode_png, fill_rect, parse_raw_screencap, solid  # noqa: E402
-from server import START_BLOCKED, App, Handler, ThreadingHTTPServer  # noqa: E402
+from runner import START_BLOCKED, App  # noqa: E402
 from vision import Detection, analyze, interval_inside  # noqa: E402
+from window import FishingWindow  # noqa: E402
 
 FIX = Path(__file__).resolve().parent / "fixtures"
 
@@ -37,7 +37,6 @@ def session_ready(**kwargs) -> FisherSession:
     fish.start(
         kwargs.get("count", 20),
         kwargs.get("unlimited", False),
-        kwargs.get("stop_on_new_rod", False),
         kwargs.get("min_luck", 8),
     )
     return fish
@@ -49,7 +48,7 @@ class VisionTests(unittest.TestCase):
         self.assertEqual(det.state, "ready")
         self.assertEqual(det.luck, 8)
         self.assertIsNotNone(det.green)
-        self.assertIsNone(det.rod_cost)
+        self.assertFalse(hasattr(det, "rod_cost"))
 
     def test_ready_luck_4(self):
         det = analyze(load("ready-4.png"))
@@ -78,7 +77,6 @@ class VisionTests(unittest.TestCase):
         self.assertTrue(det.toast)
         self.assertIsNotNone(det.screen_tap)
         self.assertLess(det.screen_tap[1], frame.height * 0.7)
-        self.assertIsNone(det.rod_cost)
         self.assertNotEqual(det.timer_seconds, 0)
 
     def test_both_settlement_titles_ignore_the_fish(self):
@@ -179,7 +177,7 @@ class MachineTests(unittest.TestCase):
         end = fish.step(Observation(state="slider", timer_seconds=0))
         self.assertFalse(end.running)
         self.assertEqual(fish.fail, 1)
-        self.assertIsNone(fish.rod_cost)
+        self.assertFalse(hasattr(fish, "rod_cost"))
         caught = session_ready()
         caught.step(Observation(state="settlement", timer_seconds=0))
         self.assertEqual(caught.success, 1)
@@ -206,84 +204,35 @@ class MachineTests(unittest.TestCase):
         self.assertEqual(fish.casts, fish.success + fish.fail)
 
     def test_subtitles(self):
-        self.assertEqual(UNLIMITED_SUBTITLE, "无限次数 · 鱼竿用完或手动停止时结束")
+        self.assertEqual(UNLIMITED_SUBTITLE, "无限次数 · 手动停止或大赛结束时结束")
         self.assertEqual(finite_subtitle(20), "本次钓鱼 20 次")
         self.assertEqual(STATS_NOTE, "仅统计本次钓鱼；中止或未确认成功的甩杆计入失败。")
 
 
-class ServerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        cls.port = cls.httpd.server_address[1]
-        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
-        cls.thread.start()
+def _widget_texts(widget) -> list[str]:
+    found: list[str] = []
+    try:
+        text = widget.cget("text")
+    except Exception:
+        text = None
+    if text:
+        found.append(str(text))
+    for child in widget.winfo_children():
+        found.extend(_widget_texts(child))
+    return found
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.httpd.shutdown()
 
-    def get(self, path: str) -> tuple[int, bytes]:
-        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as res:
-            return res.status, res.read()
-
-    def post(self, path: str, payload: dict | None = None) -> tuple[int, dict]:
-        data = json.dumps(payload or {}).encode("utf-8")
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}{path}",
-            data=data,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req) as res:
-                return res.status, json.loads(res.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
-
-    def test_panel_and_blocked_start_and_stop(self):
-        status, html = self.get("/")
-        text = html.decode("utf-8")
-        self.assertEqual(status, 200)
-        for snippet in (
-            "塔塔钓鱼",
-            "连接模拟器",
-            "开始钓鱼",
-            "停止钓鱼",
-            "本次钓鱼次数",
-            "无限次数",
-            "无限次数 · 鱼竿用完或手动停止时结束",
-            "解锁新鱼竿自动停止",
-            "查看日志",
-            "甩杆次数",
-            "成功次数",
-            "失败次数",
-            STATS_NOTE,
-            "每杆消耗",
-            "最低幸运",
-        ):
-            self.assertIn(snippet, text)
-        code, body = self.post("/api/start", {"count": 20, "unlimited": False, "min_luck": 8})
-        self.assertEqual(code, 400)
-        self.assertFalse(body["ok"])
-        self.assertIn("不能开始", body["message"])
-        self.assertIn("校准", body["message"])
-        self.assertEqual(body["message"], START_BLOCKED)
-        code, stopped = self.post("/api/stop")
-        self.assertEqual(code, 200)
+class AppTests(unittest.TestCase):
+    def test_blocked_start_and_stop(self):
+        app = App()
+        result = app.start(20, False, 8)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["message"], START_BLOCKED)
+        stopped = app.stop()
         self.assertTrue(stopped["ok"])
         self.assertEqual(stopped["status"], "已停止")
 
-    def test_preview_settlement_and_raw_screencap(self):
-        png = (FIX / "settle-record.png").read_bytes()
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/preview",
-            data=png,
-            headers={"Content-Type": "image/png"},
-        )
-        with urllib.request.urlopen(req) as res:
-            body = json.loads(res.read().decode("utf-8"))
-        self.assertEqual(body["state"], "settlement")
-        self.assertIsNone(body["rod_cost"])
+    def test_raw_screencap(self):
         raw = b"".join(
             [
                 (2).to_bytes(4, "little"),
@@ -295,6 +244,107 @@ class ServerTests(unittest.TestCase):
         frame = parse_raw_screencap(raw)
         self.assertEqual(frame.width, 2)
         self.assertEqual(frame.get(1, 1), (1, 2, 3))
+
+    def test_package_has_no_rod_stops_or_browser_ui(self):
+        banned = ("解锁新鱼竿", "鱼竿用完", "软件授权", "stop_on_new_rod", "rod_empty", "pywebview")
+        for path in ROOT.glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for word in banned:
+                self.assertNotIn(word, text, f"{path.name} contains {word}")
+        self.assertFalse((ROOT / "server.py").exists())
+        self.assertFalse((ROOT / "web").exists())
+        self.assertNotIn("8765", (ROOT / "README.md").read_text(encoding="utf-8"))
+
+
+class WindowTests(unittest.TestCase):
+    def setUp(self):
+        self.win = FishingWindow(App())
+        self.addCleanup(self._close)
+
+    def _close(self) -> None:
+        if self.win._tick_job is not None:
+            try:
+                self.win.after_cancel(self.win._tick_job)
+            except Exception:
+                pass
+        self.win.destroy()
+
+    def test_controls_unlimited_toggle_and_refused_start(self):
+        texts = "\n".join(_widget_texts(self.win))
+        for snippet in (
+            "塔塔钓鱼",
+            "连接模拟器",
+            "开始钓鱼",
+            "停止钓鱼",
+            "本次钓鱼次数",
+            "无限次数",
+            "查看日志",
+            "甩杆次数",
+            "成功次数",
+            "失败次数",
+            STATS_NOTE,
+            "最低幸运",
+        ):
+            self.assertIn(snippet, texts)
+        for banned in ("解锁新鱼竿", "鱼竿用完", "软件授权", "每杆消耗"):
+            self.assertNotIn(banned, texts)
+        self.assertEqual(self.win.mode.get(), "MuMu")
+        self.assertEqual(self.win.min_luck.get(), "8")
+        self.assertEqual(self.win.subtitle.cget("text"), "本次钓鱼 20 次")
+        self.assertTrue(self.win.start_is_active)
+        self.assertNotEqual(self.win.stop_btn.cget("fg_color"), "#c4473a")
+
+        self.win.unlimited.select()
+        self.win.refresh_subtitle()
+        self.assertEqual(self.win.subtitle.cget("text"), UNLIMITED_SUBTITLE)
+        self.assertEqual(str(self.win.count.cget("state")), "disabled")
+
+        self.win.unlimited.deselect()
+        self.win.refresh_subtitle()
+        self.win.count.delete(0, "end")
+        self.win.count.insert(0, "7")
+        self.win.refresh_subtitle()
+        self.assertEqual(self.win.subtitle.cget("text"), "本次钓鱼 7 次")
+
+        self.win.on_start()
+        self._pump_until_error()
+        self.assertEqual(self.win.error.cget("text"), START_BLOCKED)
+        self.assertTrue(self.win.start_is_active)
+        self.win.on_stop()
+        self.assertEqual(self.win.run_status.cget("text"), "已停止")
+
+        self.win.app.session.running = True
+        self.win.app.session.status = "正在钓鱼"
+        self.win.refresh()
+        self.assertFalse(self.win.start_is_active)
+        stop_color = self.win.stop_btn.cget("fg_color")
+        colors = stop_color if isinstance(stop_color, (tuple, list)) else (stop_color,)
+        self.assertIn("#c4473a", colors)
+
+        self.win.on_log()
+        self.win.update()
+        self.assertEqual(self.win.log.winfo_manager(), "pack")
+
+    def test_low_luck_dialog_once(self):
+        shown = []
+        self.win.show_luck_dialog = lambda title, text: shown.append((title, text))
+        self.win.app.session.popup = "幸运值不够。请自己补充道具。不会自动使用道具。"
+        self.win.app.session.status = "幸运不足"
+        self.win.refresh()
+        self.win.refresh()
+        self.assertEqual(shown, [("请补充道具", self.win.app.session.popup)])
+        with mock.patch("window.messagebox.showinfo") as box:
+            FishingWindow.show_luck_dialog(self.win, "请补充道具", "请自己补充道具")
+        box.assert_called_once()
+
+    def _pump_until_error(self) -> None:
+        for _ in range(40):
+            self.win.update()
+            self.win.refresh()
+            if self.win.error.cget("text"):
+                return
+            time.sleep(0.02)
+        self.fail("开始钓鱼没有把拒绝原因显示出来")
 
 
 class CalibrationTests(unittest.TestCase):

@@ -48,9 +48,6 @@ class Detection:
     timer_text: str | None = None
     bobber: Box | None = None
     zone: Box | None = None
-    new_rod: bool = False
-    rod_empty: bool = False
-    rod_cost: str | None = None
     width: int = 0
     height: int = 0
 
@@ -549,8 +546,6 @@ def analyze(frame: Frame) -> Detection:
     det.timer_seconds = read_contest_timer(frame)
     if det.timer_seconds is not None:
         det.timer_text = f"{det.timer_seconds}S"
-    # 每杆消耗 is not on these screens. Leave it unread.
-    det.rod_cost = None
 
     if _find_settlement(frame):
         det.state = "settlement"
