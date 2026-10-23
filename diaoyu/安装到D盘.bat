@@ -4,8 +4,8 @@ setlocal
 cd /d "%~dp0"
 
 if not exist D:\ (
-  echo 这台电脑上没有 D 盘，没法安装到 D:\塔塔钓鱼。
-  echo 你可以改把整个文件夹拷到任意盘，再双击 Open.bat。
+  echo 这台电脑上没有 D 盘。
+  echo 直接双击本文件夹里的 Open.bat 也能用。
   pause
   exit /b 1
 )
@@ -21,19 +21,7 @@ if errorlevel 8 (
   exit /b 1
 )
 
-where python >nul 2>&1
-if errorlevel 1 (
-  echo.
-  echo 还没装 Python。请先安装 Python 3.11 或更新版本，并勾选 Add python.exe to PATH。
-  echo 装好后双击：%DEST%\Open.bat
-  explorer "%DEST%"
-  pause
-  exit /b 1
-)
-
 echo.
-echo 已放到 %DEST%
-echo 正在打开窗口...
-start "" /D "%DEST%" python "%DEST%\app.py"
-explorer "%DEST%"
+echo 文件已复制。正在安装依赖并打开窗口…
+call "%DEST%\Open.bat"
 endlocal
