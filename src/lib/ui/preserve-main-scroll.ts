@@ -1,19 +1,25 @@
-/** 仪表盘主内容区（非 window）滚动容器 */
+/** 仪表盘主内容区（非 window）滚动容器；嵌入标签页时为 EmbedShell 滚动层 */
 export function getDashboardMainEl(): HTMLElement | null {
   if (typeof document === "undefined") return null;
-  return document.querySelector("main.min-h-0.flex-1.overflow-y-auto");
+  return (
+    document.querySelector("[data-workspace-embed-scroll]") ??
+    document.querySelector("main.min-h-0.flex-1.overflow-y-auto")
+  );
 }
 
-/** 在 router 导航前后保住 main 的 scrollTop，避免筛选/排序时跳回顶部 */
+/**
+ * 在 router 导航前后保住滚动位置。
+ * 软导航后节点可能重建，restore 时重新 query，并多拍几次以覆盖 RSC 替换时机。
+ */
 export function withPreservedMainScroll(action: () => void) {
-  const main = getDashboardMainEl();
-  const top = main?.scrollTop ?? 0;
+  const top = getDashboardMainEl()?.scrollTop ?? 0;
 
   action();
 
   const restore = () => {
-    if (main && main.scrollTop !== top) {
-      main.scrollTop = top;
+    const el = getDashboardMainEl();
+    if (el && el.scrollTop !== top) {
+      el.scrollTop = top;
     }
   };
 
@@ -21,6 +27,7 @@ export function withPreservedMainScroll(action: () => void) {
     restore();
     requestAnimationFrame(restore);
   });
-  window.setTimeout(restore, 50);
-  window.setTimeout(restore, 200);
+  for (const ms of [50, 100, 200, 400, 800, 1200]) {
+    window.setTimeout(restore, ms);
+  }
 }

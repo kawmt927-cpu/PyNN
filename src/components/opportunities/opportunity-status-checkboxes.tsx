@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import type { OpportunityStatus } from "@prisma/client";
 import {
   buildOpportunityListHref,
@@ -8,7 +7,7 @@ import {
   type OpportunityListFilters,
   type OpportunityListSort,
 } from "@/lib/opportunities/list-filters";
-import { withPreservedMainScroll } from "@/lib/ui/preserve-main-scroll";
+import { useListNavigate } from "@/lib/workspace/use-list-navigate";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -18,7 +17,13 @@ type Props = {
 };
 
 export function OpportunityStatusCheckboxes({ filters, sort, className }: Props) {
-  const router = useRouter();
+  const { navigate } = useListNavigate([
+    filters.q,
+    filters.statuses.join(","),
+    filters.stages.join(","),
+    filters.grades.join(","),
+    filters.ownerIds.join(","),
+  ]);
   const selected = new Set(filters.statuses);
 
   function toggle(status: OpportunityStatus) {
@@ -26,15 +31,12 @@ export function OpportunityStatusCheckboxes({ filters, sort, className }: Props)
     if (next.has(status)) next.delete(status);
     else next.add(status);
 
-    withPreservedMainScroll(() => {
-      router.replace(
-        buildOpportunityListHref(
-          { ...filters, statuses: [...next] as OpportunityStatus[] },
-          sort
-        ),
-        { scroll: false }
-      );
-    });
+    navigate(
+      buildOpportunityListHref(
+        { ...filters, statuses: [...next] as OpportunityStatus[] },
+        sort
+      )
+    );
   }
 
   return (

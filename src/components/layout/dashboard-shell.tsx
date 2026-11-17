@@ -14,9 +14,17 @@ import { AppSidebarClient } from "@/components/layout/app-sidebar-client";
 import type { NavItem } from "@/lib/permissions";
 import type { ImpersonationTarget } from "@/lib/auth/impersonation";
 import { cn } from "@/lib/utils";
+import {
+  useWorkspaceTabs,
+  WorkspaceTabsProvider,
+} from "@/components/workspace/workspace-tabs-context";
+import { WorkspaceTabBar } from "@/components/workspace/workspace-tab-bar";
+import { WorkspacePanes } from "@/components/workspace/workspace-panes";
+import { EmbedDirtyTracker } from "@/components/workspace/embed-dirty-tracker";
 
 type Props = {
   nav: NavItem[];
+  userId: string;
   userName: string;
   roleLabel: string;
   pendingApprovalCount?: number;
@@ -48,18 +56,15 @@ function isEmbedScheduleLayout(pathname: string) {
 /** 排班/计划全屏：标签行与内容区共享同一状态 */
 function ScheduleFullscreenProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const routeKey = `${pathname}?${searchParams.toString()}`;
   const [fullscreen, setFullscreen] = useState(false);
 
   const exit = useCallback(() => setFullscreen(false), []);
   const enter = useCallback(() => setFullscreen(true), []);
   const toggle = useCallback(() => setFullscreen((v) => !v), []);
 
-  // 切换路由/标签时退出全屏，避免状态残留盖住错误内容
   useEffect(() => {
     setFullscreen(false);
-  }, [routeKey]);
+  }, [pathname]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -87,7 +92,14 @@ function ScheduleFullscreenProvider({ children }: { children: React.ReactNode })
   );
 }
 
-function DashboardShellInner({
+function useIsEmbedMode() {
+  const searchParams = useSearchParams();
+  if (searchParams.get("embed") === "1") return true;
+  if (typeof window !== "undefined" && window.parent !== window) return true;
+  return false;
+}
+
+function DashboardShellChrome({
   nav,
   userName,
   roleLabel,
@@ -100,6 +112,8 @@ function DashboardShellInner({
 }: Props) {
   const pathname = usePathname();
   const embedSchedule = isEmbedScheduleLayout(pathname);
+  const { tabs } = useWorkspaceTabs();
+  const hasWorkspaceTabs = tabs.length > 0;
 
   return (
     <ScheduleFullscreenProvider>
@@ -114,54 +128,78 @@ function DashboardShellInner({
           impersonatorName={impersonatorName}
           showMobileSwitch={showMobileSwitch}
         />
-        <main
-          className={cn(
-            "min-h-0 flex-1 overscroll-contain",
-            embedSchedule
-              ? "overflow-hidden p-0"
-              : "overflow-y-auto p-6 [scrollbar-gutter:stable]"
-          )}
-        >
-          {children}
-        </main>
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <WorkspaceTabBar />
+          <main
+            className={cn(
+              "min-h-0 flex-1 overscroll-contain",
+              hasWorkspaceTabs
+                ? "relative flex flex-col overflow-hidden p-0"
+                : embedSchedule
+                  ? "overflow-hidden p-0"
+                  : "overflow-y-auto p-6 [scrollbar-gutter:stable]"
+            )}
+          >
+            {hasWorkspaceTabs ? (
+              <WorkspacePanes />
+            ) : (
+              children
+            )}
+          </main>
+        </div>
       </div>
     </ScheduleFullscreenProvider>
   );
 }
 
-function DashboardShellFallback({
-  nav,
-  userName,
-  roleLabel,
-  pendingApprovalCount,
-  unreadNotificationCount,
-  impersonationTargets,
-  impersonatorName,
-  showMobileSwitch,
-  children,
-}: Props) {
+function EmbedShell({ children }: { children: React.ReactNode }) {
+  // iframe 内：html/body 定高，正文区自己滚动，避免无法上下滚动
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.cssText;
+    const prevBody = body.style.cssText;
+    html.style.height = "100%";
+    html.style.overflow = "hidden";
+    body.style.height = "100%";
+    body.style.overflow = "hidden";
+    body.style.margin = "0";
+    return () => {
+      html.style.cssText = prevHtml;
+      body.style.cssText = prevBody;
+    };
+  }, []);
+
   return (
-    <div className="flex h-dvh overflow-hidden overscroll-none">
-      <AppSidebarClient
-        nav={nav}
-        userName={userName}
-        roleLabel={roleLabel}
-        pendingApprovalCount={pendingApprovalCount}
-        unreadNotificationCount={unreadNotificationCount}
-        impersonationTargets={impersonationTargets}
-        impersonatorName={impersonatorName}
-        showMobileSwitch={showMobileSwitch}
-      />
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [scrollbar-gutter:stable]">
+    <ScheduleFullscreenProvider>
+      <EmbedDirtyTracker />
+      <div
+        data-workspace-embed-scroll
+        className="box-border h-full overflow-y-auto overscroll-contain bg-background p-6 [scrollbar-gutter:stable]"
+      >
         {children}
-      </main>
-    </div>
+      </div>
+    </ScheduleFullscreenProvider>
+  );
+}
+
+function DashboardShellInner(props: Props) {
+  const isEmbed = useIsEmbedMode();
+
+  if (isEmbed) {
+    return <EmbedShell>{props.children}</EmbedShell>;
+  }
+
+  return (
+    <WorkspaceTabsProvider userId={props.userId}>
+      <DashboardShellChrome {...props} />
+    </WorkspaceTabsProvider>
   );
 }
 
 export function DashboardShell(props: Props) {
   return (
-    <Suspense fallback={<DashboardShellFallback {...props} />}>
+    <Suspense fallback={null}>
       <DashboardShellInner {...props} />
     </Suspense>
   );

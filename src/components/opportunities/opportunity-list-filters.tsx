@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useTransition } from "react";
 import {
   buildOpportunityListHref,
   EMPTY_OPPORTUNITY_LIST_FILTERS,
@@ -15,7 +13,7 @@ import { OpportunityGradeDisplay } from "@/components/opportunities/opportunity-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { withPreservedMainScroll } from "@/lib/ui/preserve-main-scroll";
+import { useListNavigate } from "@/lib/workspace/use-list-navigate";
 
 type SalesOption = { id: string; name: string };
 
@@ -36,15 +34,16 @@ export function OpportunityListFilters({
   showOwnerFilter = false,
   salesUsers = [],
 }: Props) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const { navigate } = useListNavigate([
+    filters.q,
+    filters.statuses.join(","),
+    filters.stages.join(","),
+    filters.grades.join(","),
+    filters.ownerIds.join(","),
+  ]);
 
   function applyFilters(next: OpportunityListFilters) {
-    withPreservedMainScroll(() => {
-      startTransition(() => {
-        router.replace(buildOpportunityListHref(next, sort), { scroll: false });
-      });
-    });
+    navigate(buildOpportunityListHref(next, sort));
   }
 
   return (
@@ -70,9 +69,8 @@ export function OpportunityListFilters({
               key={filters.q}
               placeholder="商机名称 / 客户"
               className="h-10"
-              disabled={pending}
             />
-            <Button type="submit" variant="secondary" size="sm" className="h-10 shrink-0" disabled={pending}>
+            <Button type="submit" variant="secondary" size="sm" className="h-10 shrink-0">
               搜索
             </Button>
           </form>
@@ -117,7 +115,6 @@ export function OpportunityListFilters({
           type="button"
           variant="outline"
           size="sm"
-          disabled={pending}
           onClick={() => applyFilters(EMPTY_OPPORTUNITY_LIST_FILTERS)}
         >
           重置

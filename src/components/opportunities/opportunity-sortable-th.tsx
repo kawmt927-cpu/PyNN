@@ -1,56 +1,36 @@
 "use client";
 
-import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import {
-  buildOpportunityListHref,
-  nextOpportunityListSort,
-  type OpportunityListFilters,
-  type OpportunityListSort,
-  type OpportunityListSortColumn,
+import type {
+  OpportunityListSort,
+  OpportunityListSortColumn,
 } from "@/lib/opportunities/list-filters";
 import { cn } from "@/lib/utils";
-import { getDashboardMainEl } from "@/lib/ui/preserve-main-scroll";
 
 type Props = {
   label: string;
   column: OpportunityListSortColumn;
-  filters: OpportunityListFilters;
   sort: OpportunityListSort;
+  onSort: (column: OpportunityListSortColumn) => void;
   className?: string;
 };
 
+/** 纯前端排序表头：不触发 router，避免 iframe 内连点卡死 */
 export function OpportunitySortableTh({
   label,
   column,
-  filters,
   sort,
+  onSort,
   className,
 }: Props) {
   const active = sort.column === column;
-  const next = nextOpportunityListSort(sort, column);
-  const href = buildOpportunityListHref(filters, next);
   const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
 
   return (
     <th className={cn("pb-2 pr-4", className)}>
-      <Link
-        href={href}
-        scroll={false}
-        onClick={() => {
-          const main = getDashboardMainEl();
-          if (!main) return;
-          const top = main.scrollTop;
-          const restore = () => {
-            if (main.scrollTop !== top) main.scrollTop = top;
-          };
-          requestAnimationFrame(() => {
-            restore();
-            requestAnimationFrame(restore);
-          });
-          window.setTimeout(restore, 50);
-          window.setTimeout(restore, 200);
-        }}
+      <button
+        type="button"
+        onClick={() => onSort(column)}
         className={cn(
           "inline-flex items-center gap-1 hover:text-foreground",
           active ? "font-medium text-foreground" : "text-muted-foreground"
@@ -66,7 +46,7 @@ export function OpportunitySortableTh({
         <span className="sr-only">
           {active ? (sort.dir === "asc" ? "升序" : "降序") : "可排序"}
         </span>
-      </Link>
+      </button>
     </th>
   );
 }

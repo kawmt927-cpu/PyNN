@@ -59,6 +59,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <DashboardShell
       nav={nav}
+      userId={session.user.id}
       userName={session.user.name}
       roleLabel={ROLE_LABELS[session.user.role]}
       pendingApprovalCount={pendingApprovalCount}

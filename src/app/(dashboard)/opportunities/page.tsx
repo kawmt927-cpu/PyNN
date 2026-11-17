@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
@@ -11,43 +10,31 @@ import {
 import { getOpportunityFunnelSummary } from "@/lib/opportunities/funnel";
 import {
   buildOpportunityListWhere,
-  buildOpportunityListHref,
   opportunityListTitle,
   parseOpportunityListFilters,
   parseOpportunityListSort,
 } from "@/lib/opportunities/list-filters";
-import { sortOpportunitiesWithVisits } from "@/lib/opportunities/list-sort";
 import { getOpportunityVisitSummaries } from "@/lib/opportunities/visit-summary";
-import { format } from "date-fns";
-import { formatExpectedCloseMonth } from "@/lib/opportunities/expected-close-date";
-import {
-  formatAbsoluteDate,
-  formatRelativeDayLabel,
-} from "@/lib/opportunities/relative-day";
 import {
   CONFIG_CATEGORY,
   getConfigOptionMaps,
   getConfigOptions,
-  labelForConfig,
 } from "@/lib/config-options";
-import { OPPORTUNITY_STATUS_LABELS } from "@/lib/permissions";
 import {
   canAbandonOpportunity,
   canAddOpportunityQuote,
   canSignOpportunity,
 } from "@/lib/opportunities/status";
 import { canEditContract } from "@/lib/contracts/access";
-import { formatAmountInWan } from "@/lib/opportunities/funnel";
 import { OpportunityFunnelSummary } from "@/components/opportunities/opportunity-funnel-summary";
-import { OpportunityListFilters as OpportunityListFiltersPanel } from "@/components/opportunities/opportunity-list-filters";
-import { OpportunityStatusCheckboxes } from "@/components/opportunities/opportunity-status-checkboxes";
-import { OpportunityGradeIcon } from "@/components/opportunities/opportunity-grade-icon";
-import { OpportunityRowActions } from "@/components/opportunities/opportunity-row-actions";
-import { OpportunitySortableTh } from "@/components/opportunities/opportunity-sortable-th";
+import {
+  OpportunityListPanel,
+  type OpportunityListRow,
+  type OpportunityListVisit,
+} from "@/components/opportunities/opportunity-list-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listSalesUsersForSelect } from "@/lib/sales/selectable-users";
 import { canManageWeeklyAssignments } from "@/lib/today-work/weekly-assignments";
-import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Props = {
   searchParams: Promise<{
@@ -58,6 +45,7 @@ type Props = {
     grade?: string;
     sort?: string;
     dir?: string;
+    q?: string;
   }>;
 };
 
@@ -77,35 +65,12 @@ function emptyMessage(filters: { statuses: string[] }) {
   return "暂无符合筛选条件的商机。";
 }
 
-function VisitRelativeCell({
-  at,
-  detail,
-  fromGrade,
-}: {
-  at: Date | null | undefined;
-  detail?: string | null;
-  fromGrade?: boolean;
-}) {
-  if (!at) return "—";
-  const absolute = formatAbsoluteDate(at);
-  const parts = [
-    fromGrade ? `星级周期 ${absolute}` : absolute,
-    detail?.trim() || null,
-  ].filter(Boolean);
-  return (
-    <span className="cursor-default" title={parts.join("\n")}>
-      {formatRelativeDayLabel(at)}
-    </span>
-  );
-}
-
 export default async function OpportunitiesPage({ searchParams }: Props) {
   const session = await requireRole(["SALES", "SALES_MANAGER", "ADMIN"]);
   const rawParams = await searchParams;
 
   const filters = parseOpportunityListFilters(rawParams);
   const sort = parseOpportunityListSort(rawParams);
-  const listPath = buildOpportunityListHref(filters, sort);
   const accessWhere = buildOpportunityListWhere(
     session.user.role,
     session.user.id,
@@ -173,15 +138,52 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
   const stageOrder = Object.fromEntries(
     stageOrderRows.map((row) => [row.value, row.sortOrder])
   );
-  const opportunities = sortOpportunitiesWithVisits(
-    opportunityRows,
-    sort,
-    visitSummaries,
-    stageOrder
-  );
-
   const stageLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_STAGE] ?? {};
   const gradeLabels = labelMaps[CONFIG_CATEGORY.OPPORTUNITY_GRADE] ?? {};
+
+  const rows: OpportunityListRow[] = opportunityRows.map((opp) => {
+    const canEdit = canEditOpportunityContent(
+      session.user.role,
+      session.user.id,
+      opp
+    );
+    return {
+      id: opp.id,
+      title: opp.title,
+      status: opp.status,
+      stage: opp.stage,
+      grade: opp.grade,
+      expectedAmount: Number(opp.expectedAmount),
+      expectedCloseDate: opp.expectedCloseDate.toISOString(),
+      createdAt: opp.createdAt.toISOString(),
+      customer: opp.customer
+        ? { id: opp.customer.id, name: opp.customer.name }
+        : null,
+      owner: { id: opp.owner.id, name: opp.owner.name },
+      canEdit,
+      canFollowUp: canFollowUpOpportunity(
+        session.user.role,
+        session.user.id,
+        opp
+      ),
+      canSign: canSignOpportunity(opp.status) && canEditContract(session.user.role),
+      canAbandon: canAbandonOpportunity(opp.status),
+      canRestore: canRestoreOpportunity(session.user.role),
+      canAddQuote: canAddOpportunityQuote(opp.status) && canEdit,
+      canAssign: canAssign && Boolean(opp.customer?.id),
+    };
+  });
+
+  const visits: Record<string, OpportunityListVisit> = {};
+  for (const [id, summary] of visitSummaries) {
+    visits[id] = {
+      lastVisitAt: summary.lastVisitAt?.toISOString() ?? null,
+      lastVisitContent: summary.lastVisitContent,
+      nextVisitAt: summary.nextVisitAt?.toISOString() ?? null,
+      nextVisitContent: summary.nextVisitContent,
+      nextVisitFromGrade: summary.nextVisitFromGrade,
+    };
+  }
 
   return (
     <div className="space-y-6">
@@ -201,168 +203,21 @@ export default async function OpportunitiesPage({ searchParams }: Props) {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-lg">
-            {opportunityListTitle(filters)}
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              ({opportunities.length})
-            </span>
-          </CardTitle>
-          <OpportunityStatusCheckboxes filters={filters} sort={sort} />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <OpportunityListFiltersPanel
-            filters={filters}
-            sort={sort}
-            stageOptions={stageOptions}
-            gradeOptions={gradeOptions}
-            showOwnerFilter={showOwnerFilter}
-            salesUsers={salesUsers}
-          />
-
-          {opportunities.length === 0 ? (
-            <p className="text-muted-foreground">{emptyMessage(filters)}</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">销售对象</th>
-                    <OpportunitySortableTh
-                      label="录入时间"
-                      column="createdAt"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="等级"
-                      column="grade"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="预计金额"
-                      column="amount"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="阶段"
-                      column="stage"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="预计成交"
-                      column="expectedClose"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="上次拜访"
-                      column="lastVisit"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <OpportunitySortableTh
-                      label="下次拜访"
-                      column="nextVisit"
-                      filters={filters}
-                      sort={sort}
-                    />
-                    <th className="pb-2 pr-4">状态</th>
-                    <th className="pb-2 pr-4">负责销售</th>
-                    <th className="pb-2">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {opportunities.map((opp) => {
-                    const visit = visitSummaries.get(opp.id);
-                    const canEdit = canEditOpportunityContent(
-                      session.user.role,
-                      session.user.id,
-                      opp
-                    );
-                    const canFollowUp = canFollowUpOpportunity(
-                      session.user.role,
-                      session.user.id,
-                      opp
-                    );
-                    const canRestore = canRestoreOpportunity(session.user.role);
-                    const isAbandoned = opp.status === "ABANDONED";
-                    const canSign =
-                      canSignOpportunity(opp.status) && canEditContract(session.user.role);
-                    const canAbandon = canAbandonOpportunity(opp.status);
-                    const canAddQuote =
-                      canAddOpportunityQuote(opp.status) && canEdit;
-                    const customerLabel = opp.customer?.name ?? "未关联客户";
-
-                    return (
-                      <tr key={opp.id} className="border-b">
-                        <td className="py-3 pr-4 font-medium">
-                          <Link
-                            href={withReturnTo(`/opportunities/${opp.id}`, listPath)}
-                            className="text-primary hover:underline"
-                            title={opp.title}
-                          >
-                            {customerLabel}
-                          </Link>
-                        </td>
-                        <td className="py-3 pr-4 tabular-nums text-muted-foreground">
-                          {format(opp.createdAt, "yyyy-MM-dd")}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <OpportunityGradeIcon
-                            grade={opp.grade}
-                            size="sm"
-                            labelMap={gradeLabels}
-                          />
-                        </td>
-                        <td className="py-3 pr-4">{formatAmountInWan(opp.expectedAmount)}</td>
-                        <td className="py-3 pr-4">{labelForConfig(stageLabels, opp.stage)}</td>
-                        <td className="py-3 pr-4 tabular-nums">
-                          {formatExpectedCloseMonth(opp.expectedCloseDate)}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <VisitRelativeCell
-                            at={visit?.lastVisitAt}
-                            detail={visit?.lastVisitContent}
-                          />
-                        </td>
-                        <td className="py-3 pr-4">
-                          <VisitRelativeCell
-                            at={visit?.nextVisitAt}
-                            detail={visit?.nextVisitContent}
-                            fromGrade={visit?.nextVisitFromGrade}
-                          />
-                        </td>
-                        <td className="py-3 pr-4">{OPPORTUNITY_STATUS_LABELS[opp.status]}</td>
-                        <td className="py-3 pr-4">{opp.owner.name}</td>
-                        <td className="py-3">
-                          <OpportunityRowActions
-                            opportunityId={opp.id}
-                            customerId={opp.customer?.id}
-                            returnTo={listPath}
-                            canEdit={canEdit}
-                            canFollowUp={canFollowUp}
-                            canSign={canSign}
-                            canAbandon={canAbandon}
-                            canManageStatus={canRestore}
-                            canAddQuote={canAddQuote}
-                            canAssign={canAssign && Boolean(opp.customer?.id)}
-                            isAbandoned={isAbandoned}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <OpportunityListPanel
+        title={opportunityListTitle(filters)}
+        emptyMessage={emptyMessage(filters)}
+        filters={filters}
+        initialSort={sort}
+        rows={rows}
+        visits={visits}
+        stageOrder={stageOrder}
+        stageLabels={stageLabels}
+        gradeLabels={gradeLabels}
+        stageOptions={stageOptions}
+        gradeOptions={gradeOptions}
+        showOwnerFilter={showOwnerFilter}
+        salesUsers={salesUsers}
+      />
     </div>
   );
 }

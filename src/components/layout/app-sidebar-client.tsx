@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, type MouseEvent } from "react";
 import { signOut } from "next-auth/react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,10 @@ import {
 import type { ImpersonationTarget } from "@/lib/auth/impersonation";
 import { AdminImpersonationPanel } from "@/components/admin/admin-impersonation-panel";
 import { ClientModeSwitch } from "@/components/layout/client-mode-switch";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
+import { useWorkspaceTabsOptional } from "@/components/workspace/workspace-tabs-context";
+import { useWorkspaceAccountSwitch } from "@/components/workspace/use-workspace-account-switch";
+import { navTabKey } from "@/lib/workspace/tab-keys";
 
 type Props = {
   nav: NavItem[];
@@ -70,6 +74,97 @@ function writeStoredOpenIds(ids: string[]) {
   }
 }
 
+function SidebarTabLink({
+  tab,
+  pathname,
+  navItemId,
+}: {
+  tab: HubTab;
+  pathname: string;
+  navItemId: string;
+}) {
+  const needsSearch = tab.href.includes("?");
+  if (!needsSearch) {
+    return (
+      <SidebarTabAnchor
+        tab={tab}
+        navItemId={navItemId}
+        active={isHubTabActive(tab.href, pathname, "")}
+      />
+    );
+  }
+  return (
+    <Suspense
+      fallback={
+        <SidebarTabAnchor
+          tab={tab}
+          navItemId={navItemId}
+          active={isHubTabActive(tab.href, pathname, "")}
+        />
+      }
+    >
+      <SidebarTabLinkWithSearch tab={tab} pathname={pathname} navItemId={navItemId} />
+    </Suspense>
+  );
+}
+
+function SidebarTabLinkWithSearch({
+  tab,
+  pathname,
+  navItemId,
+}: {
+  tab: HubTab;
+  pathname: string;
+  navItemId: string;
+}) {
+  const searchParams = useSearchParams();
+  return (
+    <SidebarTabAnchor
+      tab={tab}
+      navItemId={navItemId}
+      active={isHubTabActive(tab.href, pathname, searchParams.toString())}
+    />
+  );
+}
+
+function SidebarTabAnchor({
+  tab,
+  active,
+  navItemId,
+}: {
+  tab: HubTab;
+  active: boolean;
+  navItemId: string;
+}) {
+  const workspace = useWorkspaceTabsOptional();
+
+  function handleClick(e: MouseEvent<HTMLAnchorElement>) {
+    if (!workspace) return;
+    e.preventDefault();
+    workspace.openOrFocusTab({
+      key: navTabKey(`${navItemId}:${tab.id}`),
+      title: tab.label,
+      href: tab.href,
+    });
+  }
+
+  return (
+    <Link
+      href={tab.href}
+      prefetch
+      onClick={handleClick}
+      className={cn(
+        "block rounded-md px-3 py-1.5 text-sm",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      )}
+    >
+      <span className="truncate">{tab.label}</span>
+    </Link>
+  );
+}
+
 function AppSidebarInner({
   nav,
   userName,
@@ -79,15 +174,18 @@ function AppSidebarInner({
   impersonationTargets = [],
   impersonatorName = null,
   showMobileSwitch = false,
-  search,
-}: Props & { search: string }) {
+}: Props) {
   const pathname = usePathname();
+  const workspace = useWorkspaceTabsOptional();
+  const accountSwitch = useWorkspaceAccountSwitch();
   /** 用户手动展开的一级；各组独立，互不收起 */
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const showImpersonation =
     Boolean(impersonatorName) || impersonationTargets.length > 0;
-  const activeId = resolveActiveNavId(pathname, nav);
+  const highlightPath =
+    workspace?.activeHref?.split("?")[0] || pathname;
+  const activeId = resolveActiveNavId(highlightPath, nav);
 
   useEffect(() => {
     setOpenIds(readStoredOpenIds());
@@ -200,7 +298,20 @@ function AppSidebarInner({
                   </span>
                 </button>
               ) : (
-                <Link href={item.href} prefetch className={primaryClass}>
+                <Link
+                  href={item.href}
+                  prefetch
+                  className={primaryClass}
+                  onClick={(e) => {
+                    if (!workspace) return;
+                    e.preventDefault();
+                    workspace.openOrFocusTab({
+                      key: navTabKey(item.id),
+                      title: item.label,
+                      href: item.href,
+                    });
+                  }}
+                >
                   <span className="truncate">{item.label}</span>
                   {badge}
                 </Link>
@@ -215,24 +326,14 @@ function AppSidebarInner({
                 >
                   <div className="min-h-0 overflow-hidden">
                     <div className="ml-2 space-y-0.5 border-l pl-2 pb-0.5">
-                      {children.map((tab) => {
-                        const tabActive = isHubTabActive(tab.href, pathname, search);
-                        return (
-                          <Link
-                            key={tab.id}
-                            href={tab.href}
-                            prefetch
-                            className={cn(
-                              "block rounded-md px-3 py-1.5 text-sm transition-colors",
-                              tabActive
-                                ? "bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                            )}
-                          >
-                            <span className="truncate">{tab.label}</span>
-                          </Link>
-                        );
-                      })}
+                      {children.map((tab) => (
+                        <SidebarTabLink
+                          key={tab.id}
+                          tab={tab}
+                          pathname={highlightPath}
+                          navItemId={item.id}
+                        />
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -257,24 +358,35 @@ function AppSidebarInner({
           variant="ghost"
           size="sm"
           className="mt-2 w-full"
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          disabled={accountSwitch.confirming}
+          onClick={() =>
+            accountSwitch.guardAndRun({
+              title: "退出登录",
+              dirtyMessage:
+                "退出登录将关闭所有标签页，其中部分页面可能有未保存的更改，确定继续？关闭后未保存内容将丢失。",
+              cleanMessage: "退出登录将关闭所有打开的标签页，确定继续？",
+              action: () => {
+                void signOut({ callbackUrl: "/login" });
+              },
+            })
+          }
         >
           退出登录
         </Button>
       </div>
+      <ConfirmDestructiveDialog
+        open={accountSwitch.pendingOpen}
+        title={accountSwitch.pendingTitle}
+        message={accountSwitch.pendingMessage}
+        confirmLabel="仍要退出"
+        pending={accountSwitch.confirming}
+        onCancel={accountSwitch.cancel}
+        onConfirm={() => void accountSwitch.confirm()}
+      />
     </aside>
   );
 }
 
-function AppSidebarWithSearch(props: Props) {
-  const searchParams = useSearchParams();
-  return <AppSidebarInner {...props} search={searchParams.toString()} />;
-}
-
 export function AppSidebarClient(props: Props) {
-  return (
-    <Suspense fallback={<AppSidebarInner {...props} search="" />}>
-      <AppSidebarWithSearch {...props} />
-    </Suspense>
-  );
+  return <AppSidebarInner {...props} />;
 }

@@ -2,7 +2,10 @@ import { endOfDay, startOfDay } from "date-fns";
 import { FollowUpMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sumContractPaymentsForOwner } from "@/lib/contracts/payment-actuals";
-import { getLastInteractionBefore } from "@/lib/customers/grade-expiry";
+import {
+  countOwnedOverdueGradeExpiryCustomers,
+  getLastInteractionBefore,
+} from "@/lib/customers/grade-expiry";
 import {
   computeGradeFollowUpDueAt,
   getCustomerGradeIntervalMap,
@@ -31,13 +34,21 @@ export type ProcessComplianceActual = {
   missedCount: number;
 };
 
+/** 维护与赋能：双口径（超期库存 + 临期/超期维护动作） */
+export type MaintenanceKpiActual = {
+  /** 负向：主负责客户中已过期家数 */
+  overdue: number;
+  /** 正向：当月当面拜访时已超期或 7 天内将超期，每家客户计 1 */
+  maintained: number;
+};
+
 export type MonthlyKpiActuals = {
   channelDev: number;
   projectDev: number;
   /** 回款催收：合同回款自动累加（PaymentInstallment） */
   paymentCollection: number;
   processCompliance: ProcessComplianceActual;
-  maintenance: number;
+  maintenance: MaintenanceKpiActual;
 };
 
 export type MonthlyKpiBundle = {
@@ -65,82 +76,30 @@ function sameCalendarDay(a: Date, b: Date) {
 
 /**
  * 渠道开发口径：
- * 1) 本月新建「普通渠道」客户，且月内至少一次往来 → 计 1（按客户）
- * 2) 全国性渠道（负责人或协助人）本月首次挂上某联系人负责省 → 每省计 1
- *    （同客户同省多名联系人不重复；与 1 同一客户当月不重复）
+ * 本月在「渠道」客户下新增且已确认的联系人，每人计 1。
+ * - 同客户多个新联系人分别计（不再按客户去重）
+ * - 不强制按省；全国性/普通渠道同一套口径
+ * - 负责人或协助人均可计入其可访问的渠道客户
  */
 async function countChannelDevelopment(
   userId: string,
   start: Date,
   end: Date
 ): Promise<number> {
-  const counted = new Set<string>();
-
-  const newChannelCustomers = await prisma.customer.findMany({
+  return prisma.contact.count({
     where: {
-      ownerId: userId,
-      customerType: "CHANNEL",
-      nationwideChannel: false,
-      createdAt: { gte: start, lt: end },
-    },
-    select: { id: true },
-  });
-  if (newChannelCustomers.length > 0) {
-    const withFollowUp = await prisma.followUp.groupBy({
-      by: ["customerId"],
-      where: {
-        customerId: { in: newChannelCustomers.map((c) => c.id) },
-        followUpAt: { gte: start, lt: end },
-        confirmStatus: "CONFIRMED",
+      confirmStatus: "CONFIRMED",
+      customer: {
+        customerType: "CHANNEL",
+        OR: [{ ownerId: userId }, { assistantOwners: { some: { userId } } }],
       },
-    });
-    for (const row of withFollowUp) {
-      counted.add(`customer:${row.customerId}`);
-    }
-  }
-
-  const nationwideAccess = {
-    customerType: "CHANNEL" as const,
-    nationwideChannel: true,
-    OR: [{ ownerId: userId }, { assistantOwners: { some: { userId } } }],
-  };
-
-  const monthRows = await prisma.contactResponsibleProvince.findMany({
-    where: {
-      createdAt: { gte: start, lt: end },
-      contact: { customer: nationwideAccess },
-    },
-    select: {
-      province: true,
-      contact: { select: { customerId: true } },
+      OR: [
+        { confirmedAt: { gte: start, lt: end } },
+        // 直接建档即为确认时可能无 confirmedAt，回退 createdAt
+        { confirmedAt: null, createdAt: { gte: start, lt: end } },
+      ],
     },
   });
-
-  const pairKeys = new Map<string, { customerId: string; province: string }>();
-  for (const row of monthRows) {
-    const customerId = row.contact.customerId;
-    const key = `${customerId}:${row.province}`;
-    if (!pairKeys.has(key)) {
-      pairKeys.set(key, { customerId, province: row.province });
-    }
-  }
-
-  for (const { customerId, province } of pairKeys.values()) {
-    if (counted.has(`customer:${customerId}`)) continue;
-    const earliest = await prisma.contactResponsibleProvince.findFirst({
-      where: {
-        province,
-        contact: { customerId },
-      },
-      orderBy: { createdAt: "asc" },
-      select: { createdAt: true },
-    });
-    if (!earliest) continue;
-    if (earliest.createdAt < start || earliest.createdAt >= end) continue;
-    counted.add(`province:${customerId}:${province}`);
-  }
-
-  return counted.size;
 }
 
 /** 单次阶段变更是否算「往前推进」候选（供人工核算勾选） */
@@ -320,6 +279,16 @@ export async function computeProcessCompliance(
   return { onTimeCount, lateCount, missedCount };
 }
 
+/** 考核时点：当前月用 now；历史月用月末；未来月用月初（通常为 0） */
+function maintenanceAsOf(start: Date, end: Date, now: Date): Date {
+  if (now < start) return start;
+  if (now < end) return now;
+  return new Date(end.getTime() - 1);
+}
+
+/**
+ * 维护动作：当月当面拜访且拜访时客户已超期或处于截止日前 7 天内，每家客户计 1。
+ */
 async function countMaintenanceVisits(
   userId: string,
   start: Date,
@@ -346,10 +315,16 @@ async function countMaintenanceVisits(
   for (const visit of visits) {
     if (!visit.customerId || countedCustomers.has(visit.customerId)) continue;
 
-    const intervalDays = resolveGradeIntervalDays(visit.customer?.customerGrade, intervalMap);
+    const intervalDays = resolveGradeIntervalDays(
+      visit.customer?.customerGrade,
+      intervalMap
+    );
     if (!intervalDays) continue;
 
-    const lastBefore = await getLastInteractionBefore(visit.customerId, visit.followUpAt);
+    const lastBefore = await getLastInteractionBefore(
+      visit.customerId,
+      visit.followUpAt
+    );
     if (!lastBefore) continue;
     const dueAt = computeGradeFollowUpDueAt(lastBefore, intervalDays);
     if (!isWithinGradeExpiryWindow(visit.followUpAt, dueAt)) continue;
@@ -384,17 +359,28 @@ export async function getMonthlyKpiBundle(
 ): Promise<MonthlyKpiBundle> {
   const { start, end } = monthRange(year, month);
 
-  const [targetRow, channelDev, projectDev, paymentCollection, processCompliance, maintenance] =
-    await Promise.all([
-      prisma.salesMonthlyTarget.findUnique({
-        where: { userId_year_month: { userId, year, month } },
-      }),
-      countChannelDevelopment(userId, start, end),
-      countProjectDevelopment(userId, start, end),
-      sumPaymentCollection(userId, start, end),
-      computeProcessCompliance(userId, start, end, now),
-      countMaintenanceVisits(userId, start, end),
-    ]);
+  const [
+    targetRow,
+    channelDev,
+    projectDev,
+    paymentCollection,
+    processCompliance,
+    overdue,
+    maintained,
+  ] = await Promise.all([
+    prisma.salesMonthlyTarget.findUnique({
+      where: { userId_year_month: { userId, year, month } },
+    }),
+    countChannelDevelopment(userId, start, end),
+    countProjectDevelopment(userId, start, end),
+    sumPaymentCollection(userId, start, end),
+    computeProcessCompliance(userId, start, end, now),
+    countOwnedOverdueGradeExpiryCustomers(
+      userId,
+      maintenanceAsOf(start, end, now)
+    ),
+    countMaintenanceVisits(userId, start, end),
+  ]);
 
   return {
     year,
@@ -405,7 +391,7 @@ export async function getMonthlyKpiBundle(
       projectDev,
       paymentCollection,
       processCompliance,
-      maintenance,
+      maintenance: { overdue, maintained },
     },
   };
 }

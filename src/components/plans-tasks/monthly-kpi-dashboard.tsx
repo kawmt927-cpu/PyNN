@@ -138,6 +138,55 @@ function CountKpiCard({
   );
 }
 
+const MAINTENANCE_KPI_DETAIL = [
+  "红色「超期」：主负责客户中已过期的家数（与待跟进「过期」一致）。越少越好。",
+  "黑色「已维护」：当月当面拜访时，客户已超期或距截止日 7 天内，每家计 1 次。用于统计临期/超期维护动作。",
+  "两位销售可分别按各自考核口径看对应数字。",
+].join("\n");
+
+function MaintenanceKpiCard({
+  actual,
+  target,
+}: {
+  actual: MonthlyKpiBundle["actuals"]["maintenance"];
+  target: number | null;
+}) {
+  return (
+    <KpiCardShell label="维护与赋能" detail={MAINTENANCE_KPI_DETAIL}>
+      <div className="grid grid-cols-2 items-end gap-4">
+        <div
+          className="min-w-0"
+          title="主负责客户中已过期的家数；越少越好"
+        >
+          <p
+            className={cn(
+              "text-2xl font-bold tabular-nums",
+              actual.overdue > 0 ? "text-red-600" : "text-foreground"
+            )}
+          >
+            {formatKpiCount(actual.overdue)}
+          </p>
+          <p className="mt-0.5 text-xs text-red-600/80">超期</p>
+        </div>
+        <div
+          className="min-w-0"
+          title="当月当面拜访已超期或 7 天内将超期的客户，每家计 1"
+        >
+          <p className="text-2xl font-bold tabular-nums text-foreground">
+            {formatKpiCount(actual.maintained)}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">已维护</p>
+        </div>
+      </div>
+      <TargetBlock
+        hasTarget={target != null}
+        targetLabel={`目标 ${formatKpiCount(target ?? 0)}（按各自考核口径设定）`}
+        progress={null}
+      />
+    </KpiCardShell>
+  );
+}
+
 function AmountKpiCard({
   label,
   actual,
@@ -220,7 +269,7 @@ export function MonthlyKpiDashboard({
           label="渠道开发"
           actual={actuals.channelDev}
           target={targets?.channelDev ?? null}
-          detail="新建普通渠道且月内有往来计 1；全国性渠道本月首次挂上联系人负责省，每省计 1（同客户同省不重复）。"
+          detail="渠道客户下本月新增且已确认的联系人，每人计 1（同客户多个新联系人分别计；不按省去重）。"
         />
         <CountKpiCard
           label="项目开发"
@@ -249,11 +298,9 @@ export function MonthlyKpiDashboard({
           detail={PAYMENT_COLLECTION_KPI_NOTE}
         />
         <ComplianceKpiCard actual={actuals.processCompliance} />
-        <CountKpiCard
-          label="维护与赋能"
+        <MaintenanceKpiCard
           actual={actuals.maintenance}
           target={targets?.maintenance ?? null}
-          detail="拜访即将到期的客户（距客户等级截止日 7 天内）计次。"
         />
       </div>
     </section>
